@@ -50,8 +50,9 @@ struct VTSessionOptionKey: Codable, RawRepresentable {
     @available(iOS 16.0, tvOS 16.0, macOS 13.0, *)
     static let constantBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_ConstantBitRate as String)
 
-    @available(iOS 13.0, tvOS 13.0, macOS 10.15, *)
-    static let variableBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VariableBitRate as String)
+    // kVTCompressionPropertyKey_VariableBitRate is available at runtime on iOS 13+,
+    // but the C symbol is only formally available from iOS 26. Use raw string to bypass availability check.
+    static let variableBitRate = VTSessionOptionKey(rawValue: "VariableBitRate")
 
     @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
     static let vbvMaxBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVMaxBitRate as String)

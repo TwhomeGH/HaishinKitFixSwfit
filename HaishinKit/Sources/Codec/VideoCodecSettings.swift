@@ -30,7 +30,6 @@ public struct VideoCodecSettings: Codable, Sendable {
 
         /// The variable bit rate.
         /// - seealso: [kVTCompressionPropertyKey_VariableBitRate](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_variablebitrate)
-        @available(iOS 13.0, tvOS 13.0, macOS 10.15, *)
         public static let variable = BitRateMode(key: .variableBitRate)
 
         /// The quality-based encoding (0.0 to 1.0).
@@ -128,20 +127,16 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// Specifies the expected frame rate for an encoder. It may optimize power consumption.
     public var expectedFrameRate: Double?
 
-    /// Specifies the maximum bitrate for VBV buffer compliance.
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    /// Specifies the maximum bitrate for VBV buffer compliance (iOS 26.0+).
     public var vbvMaxBitRate: Int?
 
-    /// Specifies the VBV buffer duration in seconds.
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    /// Specifies the VBV buffer duration in seconds (iOS 26.0+).
     public var vbvBufferDuration: Double?
 
-    /// Specifies the initial buffer delay percentage for VBV.
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    /// Specifies the initial buffer delay percentage for VBV (iOS 26.0+).
     public var vbvInitialDelayPercentage: Double?
 
-    /// An estimate of the expected size in bytes of a single encoded frame.
-    @available(iOS 17.0, tvOS 17.0, macOS 14.0, *)
+    /// An estimate of the expected size in bytes of a single encoded frame (iOS 17.0+).
     public var estimatedAverageBytesPerFrame: Int?
 
     /// The desired compression quality (0.0 to 1.0). Used when bitRateMode is .quality.
