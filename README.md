@@ -4,7 +4,7 @@
 
 [中文版](./README.zh.md)
 
-This is a **maintained fork** of [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) with streaming stability fixes and enhanced bitrate control.
+This is an improved version of [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) with streaming stability fixes and enhanced bitrate control.
 
 ## 🔧 Fixes over upstream
 

@@ -4,7 +4,7 @@
 
 [English](./README.md)
 
-本專案是 [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) 的**維護分支**，修復了串流穩定性問題並增強了 bitrate 控制。
+本專案是 [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) 的**改良版本**，修復了串流穩定性問題並增強了 bitrate 控制。
 
 ## 🔧 與上游的差異
 
