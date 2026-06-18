@@ -94,6 +94,17 @@
 
 ---
 
+## 7. 移除 Logboard 外部依賴，改用 OSLog
+
+**檔案**: `Package.swift` + 所有 `Constants.swift` + 移除 `import Logboard`
+
+- 原因：Logboard (`shogo4405/Logboard`) 在 Windows 環境下 git checkout 會因檔案路徑包含 `:` 而失敗
+- Logboard 內部使用全域 pthread_mutex 保護日誌寫入，高頻 logging 時有鎖競爭
+- 每次 log 都會先 evaluate 參數字串拼接再決定是否輸出（無 lazy formatting）
+- 改用 Apple 內建 `OSLog.Logger`，零鎖競爭、lazy formatting、支援 Instruments 過濾
+
+---
+
 ## 改動檔案總覽
 
 | 檔案 | 修改類型 |
@@ -102,3 +113,4 @@
 | `Sources/Codec/VideoCodecSettings.swift` | VBR/Quality availability + 新屬性 + makeOptions/apply 擴充 |
 | `Sources/Stream/StreamBitRateStrategy.swift` | ABR 演算法重寫 |
 | `Sources/Network/NetworkMonitor.swift` | 佇列擁塞檢測加入絕對閾值 |
+| `Package.swift` + 各 module Constants.swift | Logboard → OSLog 遷移 |
