@@ -1,4 +1,4 @@
-# HaishinKitFixSwfit — 維護分支
+# HaishinKitFixSwfit — 修正版
 
 [![GitHub license](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE.md)
 
