@@ -50,8 +50,20 @@ struct VTSessionOptionKey: Codable, RawRepresentable {
     @available(iOS 16.0, tvOS 16.0, macOS 13.0, *)
     static let constantBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_ConstantBitRate as String)
 
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    @available(iOS 13.0, tvOS 13.0, macOS 10.15, *)
     static let variableBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VariableBitRate as String)
+
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    static let vbvMaxBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVMaxBitRate as String)
+
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    static let vbvBufferDuration = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVBufferDuration as String)
+
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    static let vbvInitialDelayPercentage = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVInitialDelayPercentage as String)
+
+    @available(iOS 17.0, tvOS 17.0, macOS 14.0, *)
+    static let estimatedAverageBytesPerFrame = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_EstimatedAverageBytesPerFrame as String)
 
     let rawValue: String
 

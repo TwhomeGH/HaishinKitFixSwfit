@@ -15,6 +15,9 @@ package final actor NetworkMonitor {
         }
     }
 
+    /// The default maximum queue bytes threshold for triggering insufficient bandwidth.
+    package static let defaultMaxQueueBytesThreshold = 512 * 1024
+
     public private(set) var isRunning = false
     private var timer: Task<Void, Never>? {
         didSet {
@@ -27,16 +30,19 @@ package final actor NetworkMonitor {
     private var previousTotalBytesIn = 0
     private var previousTotalBytesOut = 0
     private var previousQueueBytesOut: [Int] = []
+    private var previousQueueHighCounts: Int = 0
     private var continuation: AsyncStream<NetworkMonitorEvent>.Continuation? {
         didSet {
             oldValue?.finish()
         }
     }
     private weak var reporter: (any NetworkTransportReporter)?
+    package var maxQueueBytesThreshold: Int
 
     /// Creates a new instance.
-    package init(_ reporter: some NetworkTransportReporter) {
+    package init(_ reporter: some NetworkTransportReporter, maxQueueBytesThreshold: Int = NetworkMonitor.defaultMaxQueueBytesThreshold) {
         self.reporter = reporter
+        self.maxQueueBytesThreshold = maxQueueBytesThreshold
     }
 
     private func collect() async throws -> NetworkMonitorEvent {
@@ -58,6 +64,17 @@ package final actor NetworkMonitor {
             currentBytesInPerSecond: currentBytesInPerSecond,
             currentBytesOutPerSecond: currentBytesOutPerSecond
         )
+        // Absolute queue size threshold: if queue exceeds max for 2 consecutive intervals, trigger insufficient BW
+        if maxQueueBytesThreshold <= queueBytesOut {
+            previousQueueHighCounts += 1
+            if 2 <= previousQueueHighCounts {
+                previousQueueHighCounts = 0
+                previousQueueBytesOut.removeAll()
+                return .publishInsufficientBWOccured(report: eventReport)
+            }
+        } else {
+            previousQueueHighCounts = 0
+        }
         if measureInterval <= previousQueueBytesOut.count {
             defer {
                 previousQueueBytesOut.removeFirst()
@@ -66,10 +83,8 @@ package final actor NetworkMonitor {
             for i in 0..<previousQueueBytesOut.count - 1 where previousQueueBytesOut[i] < previousQueueBytesOut[i + 1] {
                 total += 1
             }
-            if total == measureInterval - 1 {
+            if measureInterval - 1 <= total {
                 return .publishInsufficientBWOccured(report: eventReport)
-            } else if total == 0 {
-                return .status(report: eventReport)
             }
         }
         return .status(report: eventReport)

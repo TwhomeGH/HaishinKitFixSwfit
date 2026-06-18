@@ -30,8 +30,13 @@ public struct VideoCodecSettings: Codable, Sendable {
 
         /// The variable bit rate.
         /// - seealso: [kVTCompressionPropertyKey_VariableBitRate](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_variablebitrate)
-        @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+        @available(iOS 13.0, tvOS 13.0, macOS 10.15, *)
         public static let variable = BitRateMode(key: .variableBitRate)
+
+        /// The quality-based encoding (0.0 to 1.0).
+        /// - seealso: [kVTCompressionPropertyKey_Quality](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_quality)
+        @available(iOS 8.0, tvOS 10.2, macOS 10.8, *)
+        public static let quality = BitRateMode(key: .quality)
 
         let key: VTSessionOptionKey
 
@@ -123,6 +128,25 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// Specifies the expected frame rate for an encoder. It may optimize power consumption.
     public var expectedFrameRate: Double?
 
+    /// Specifies the maximum bitrate for VBV buffer compliance.
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    public var vbvMaxBitRate: Int?
+
+    /// Specifies the VBV buffer duration in seconds.
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    public var vbvBufferDuration: Double?
+
+    /// Specifies the initial buffer delay percentage for VBV.
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    public var vbvInitialDelayPercentage: Double?
+
+    /// An estimate of the expected size in bytes of a single encoded frame.
+    @available(iOS 17.0, tvOS 17.0, macOS 14.0, *)
+    public var estimatedAverageBytesPerFrame: Int?
+
+    /// The desired compression quality (0.0 to 1.0). Used when bitRateMode is .quality.
+    public var quality: Float?
+
     package var format: Format = .h264
 
     /// Creates a new VideoCodecSettings instance.
@@ -139,7 +163,8 @@ public struct VideoCodecSettings: Codable, Sendable {
         dataRateLimits: [Double]? = [0.0, 0.0],
         isLowLatencyRateControlEnabled: Bool = false,
         isHardwareAcceleratedEnabled: Bool = true,
-        expectedFrameRate: Double? = nil
+        expectedFrameRate: Double? = nil,
+        quality: Float? = nil
     ) {
         self.videoSize = videoSize
         self.bitRate = bitRate
@@ -152,6 +177,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         self.isLowLatencyRateControlEnabled = isLowLatencyRateControlEnabled
         self.isHardwareAcceleratedEnabled = isHardwareAcceleratedEnabled
         self.expectedFrameRate = expectedFrameRate
+        self.quality = quality
         if profileLevel.contains("HEVC") {
             self.format = .hevc
         }
@@ -184,6 +210,30 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .expectedFrameRate, value: value as CFNumber)
             _ = codec.session?.setOption(option)
         }
+        if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+            if vbvMaxBitRate != rhs.vbvMaxBitRate, let vbvMaxBitRate {
+                let option = VTSessionOption(key: .vbvMaxBitRate, value: NSNumber(value: vbvMaxBitRate))
+                _ = codec.session?.setOption(option)
+            }
+            if vbvBufferDuration != rhs.vbvBufferDuration, let vbvBufferDuration {
+                let option = VTSessionOption(key: .vbvBufferDuration, value: NSNumber(value: vbvBufferDuration))
+                _ = codec.session?.setOption(option)
+            }
+            if vbvInitialDelayPercentage != rhs.vbvInitialDelayPercentage, let vbvInitialDelayPercentage {
+                let option = VTSessionOption(key: .vbvInitialDelayPercentage, value: NSNumber(value: vbvInitialDelayPercentage))
+                _ = codec.session?.setOption(option)
+            }
+        }
+        if #available(iOS 17.0, tvOS 17.0, macOS 14.0, *) {
+            if estimatedAverageBytesPerFrame != rhs.estimatedAverageBytesPerFrame, let estimatedAverageBytesPerFrame {
+                let option = VTSessionOption(key: .estimatedAverageBytesPerFrame, value: NSNumber(value: estimatedAverageBytesPerFrame))
+                _ = codec.session?.setOption(option)
+            }
+        }
+        if quality != rhs.quality, let quality {
+            let option = VTSessionOption(key: .quality, value: NSNumber(value: quality))
+            _ = codec.session?.setOption(option)
+        }
     }
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
@@ -205,6 +255,25 @@ public struct VideoCodecSettings: Codable, Sendable {
                 limits[0] = dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0]
                 limits[1] = dataRateLimits[1] == 0 ? Double(1.0) : dataRateLimits[1]
                 options.insert(.init(key: .dataRateLimits, value: limits as NSArray))
+            }
+        }
+        if bitRateMode == .quality, let quality {
+            options.insert(.init(key: .quality, value: NSNumber(value: quality)))
+        }
+        if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+            if let vbvMaxBitRate {
+                options.insert(.init(key: .vbvMaxBitRate, value: NSNumber(value: vbvMaxBitRate)))
+            }
+            if let vbvBufferDuration {
+                options.insert(.init(key: .vbvBufferDuration, value: NSNumber(value: vbvBufferDuration)))
+            }
+            if let vbvInitialDelayPercentage {
+                options.insert(.init(key: .vbvInitialDelayPercentage, value: NSNumber(value: vbvInitialDelayPercentage)))
+            }
+        }
+        if #available(iOS 17.0, tvOS 17.0, macOS 14.0, *) {
+            if let estimatedAverageBytesPerFrame {
+                options.insert(.init(key: .estimatedAverageBytesPerFrame, value: NSNumber(value: estimatedAverageBytesPerFrame)))
             }
         }
         #if os(macOS)
