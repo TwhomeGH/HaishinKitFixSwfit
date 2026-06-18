@@ -114,3 +114,46 @@
 | `Sources/Stream/StreamBitRateStrategy.swift` | ABR 演算法重寫 |
 | `Sources/Network/NetworkMonitor.swift` | 佇列擁塞檢測加入絕對閾值 |
 | `Package.swift` + 各 module Constants.swift | Logboard → OSLog 遷移 |
+| `Sources/Codec/VTDecompressionSession+Extension.swift` | decode 失敗 log（throttled） |
+| `Sources/Screen/DisplayLinkChoreographer.swift` | macOS frameInterval=0 時 fallback |
+| `Sources/Stream/MediaLink.swift` | audio clock 僅在 advancing 時使用 |
+| `Sources/RTMP/RTMPMessage.swift` | truncated RTMP User Control 防 crash |
+
+---
+
+## 8. Port: 截斷 RTMP User Control 訊息防 Crash
+
+**對應上游 PR**: [#1922](https://github.com/HaishinKit/HaishinKit.swift/pull/1922)
+
+**檔案**: `Sources/RTMP/RTMPMessage.swift`
+
+`RTMPUserControlMessage.init` 原本直接取 `header.payload[1]` 和 `payload[2..<count]` 不做長度檢查。收到少於 6 bytes（2-byte event + 4-byte value）的 malformed 訊息時，Swift bounds check 直接 SIGTRAP，crash 整個 process。
+
+### 修法
+- `Data(header.payload)` 先轉成 0-based copy（Data slice 保留 parent 的 indexing offset）
+- `guard 6 <= payload.count` 長度不足直接回 `.unknown` / `0`
+- 正常訊息行為不變
+
+---
+
+## 9. Port: WHEP playback 修復（共用模組部分）
+
+**對應上游 PR**: [#1919](https://github.com/HaishinKit/HaishinKit.swift/pull/1919)
+
+### 9.1 Decode 失敗 log
+
+**檔案**: `Sources/Extension/VTDecompressionSession+Extension.swift`
+
+原本 decompression output handler 中 `guard let imageBuffer else { return }` 靜默吞掉 decode 失敗。新增 `DecodeFailureLog`：前 5 次 + 每 300 次 log `logger.warn`，避免 flooding。
+
+### 9.2 macOS DisplayLink frameInterval=0 修正
+
+**檔案**: `Sources/Screen/DisplayLinkChoreographer.swift`
+
+`preferredFramesPerSecond = 0` 時 `frameInterval = 0`，原本的 `targetTimestamp = timestamp + frameInterval` 導致 `targetTimestamp == timestamp`，MediaLink 的 playout pacing 永遠累積不到時間，畫面卡在第一幀。改為 fallback 到顯示器真實更新週期（`videoRefreshPeriod / videoTimeScale`），保底 1/60s。
+
+### 9.3 MediaLink audio clock 修正
+
+**檔案**: `Sources/Stream/MediaLink.swift`
+
+原本總是取 `audioPlayer?.currentTime`，但未播放音訊時（video-only stream 或音訊還沒開始）回傳 `0`，導致影片時間軸被 pin 在第一幀。改為只取 `audioTime > 0` 時才用 audio clock，否則用內部 `duration` 累計。|
