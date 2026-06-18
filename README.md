@@ -1,13 +1,16 @@
-# HaishinKit for iOS, macOS, tvOS, visionOS and [Android](https://github.com/HaishinKit/HaishinKit.kt).
-[![GitHub Stars](https://img.shields.io/github/stars/HaishinKit/HaishinKit.swift?style=social)](https://github.com/HaishinKit/HaishinKit.swift/stargazers)
-[![Release](https://img.shields.io/github/v/release/HaishinKit/HaishinKit.swift)](https://github.com/HaishinKit/HaishinKit.swift/releases/latest)
-[![Platform Compatibility](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FHaishinKit%2FHaishinKit.swift%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/HaishinKit/HaishinKit.swift)
-[![Swift Compatibility](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FHaishinKit%2FHaishinKit.swift%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/HaishinKit/HaishinKit.swift)
-[![GitHub license](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://raw.githubusercontent.com/HaishinKit/HaishinKit.swift/master/LICENSE.md)
-[![GitHub Sponsor](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=ff69b4)](https://github.com/sponsors/shogo4405)
+# HaishinKitFixSwfit — Maintained Fork
 
-* Camera and Microphone streaming library via RTMP and SRT for iOS, macOS, tvOS and visionOS.
-* 10th Anniversary🎖️In development for 10 years, with 2,778 commits and 163 releases. Thank you. Since Aug 2, 2015.
+[![GitHub license](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](LICENSE.md)
+
+This is a **maintained fork** of [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) with the following fixes and enhancements:
+
+## 🔧 Fixes over upstream
+
+- **VBR availability**: `kVTCompressionPropertyKey_VariableBitRate` now available from iOS 13+ (upstream incorrectly limited to iOS 26+)
+- **New bitrate control modes**: Added `.quality` mode, VBV parameters (`vbvMaxBitRate`, `vbvBufferDuration`, `vbvInitialDelayPercentage`), `estimatedAverageBytesPerFrame`
+- **Adaptive BitRate strategy rework**: Faster recovery (5s instead of 15s), zero-byte handling now also reduces bitrate, cooldown mechanism to prevent thrashing
+- **NetworkMonitor queue detection**: Added absolute queue size threshold (512KB) — detects sustained congestion even when queue stops growing
+- See [CHANGES.md](CHANGES.md) for full details.
 
 ## 💖 Sponsors
 Do you need additional support? Technical support on Issues and Discussions is provided only to contributors and academic researchers of HaishinKit. By becoming a sponsor, I can provide the support you need.
