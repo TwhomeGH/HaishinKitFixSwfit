@@ -659,8 +659,15 @@ struct RTMPUserControlMessage: RTMPMessage {
     init(_ header: RTMPChunkMessageHeader) {
         streamId = header.messageStreamId
         timestamp = header.timestamp
-        event = Event(rawValue: header.payload[1]) ?? .unknown
-        value = Int32(data: header.payload[2..<header.payload.count]).bigEndian
+        // Re-base to 0-indexed copy (Data slice keeps parent indices)
+        let payload = Data(header.payload)
+        guard 6 <= payload.count else {
+            event = .unknown
+            value = 0
+            return
+        }
+        event = Event(rawValue: payload[1]) ?? .unknown
+        value = Int32(data: payload[2..<payload.count]).bigEndian
     }
 
     init(event: Event, value: Int32) {
