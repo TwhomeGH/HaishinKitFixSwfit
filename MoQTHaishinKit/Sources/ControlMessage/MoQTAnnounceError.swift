@@ -1,5 +1,4 @@
 import Foundation
-import Logboard
 
 /// 6.21. ANNOUNCE
 public struct MoQTAnnounceError: MoQTControlMessage, Swift.Error {

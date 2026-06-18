@@ -1,4 +1,4 @@
-import Logboard
+import OSLog
 
 public let kSRTHaishinKitIdentifier = "com.haishinkit.SRTHaishinKit"
-nonisolated(unsafe) let logger = LBLogger.with(kSRTHaishinKitIdentifier)
+nonisolated(unsafe) let logger = HaishinKitLogger(osLog: OSLog(subsystem: kSRTHaishinKitIdentifier, category: "SRT"))

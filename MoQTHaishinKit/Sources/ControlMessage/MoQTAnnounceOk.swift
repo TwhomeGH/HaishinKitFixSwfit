@@ -1,5 +1,4 @@
 import Foundation
-import Logboard
 
 public struct MoQTAnnounceOk: MoQTControlMessage {
     public let type = MoQTMessageType.announceOk

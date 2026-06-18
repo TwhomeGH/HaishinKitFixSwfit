@@ -1,3 +1,3 @@
-import Logboard
+import OSLog
 
-nonisolated(unsafe) let logger = LBLogger.with("com.haishinkit.SRTHaishinKit")
+nonisolated(unsafe) let logger = HaishinKitLogger(osLog: OSLog(subsystem: "com.haishinkit.MoQTHaishinKit", category: "MoQT"))

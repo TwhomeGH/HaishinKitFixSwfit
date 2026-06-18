@@ -1,5 +1,4 @@
 import Foundation
-import Logboard
 
 public struct MoQTSubscribe: MoQTControlMessage {
     public enum GroupOrder: Int, Sendable {

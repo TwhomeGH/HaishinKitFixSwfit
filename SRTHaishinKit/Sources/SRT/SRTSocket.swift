@@ -1,7 +1,6 @@
 import Foundation
 import HaishinKit
 import libsrt
-import Logboard
 
 final actor SRTSocket {
     static let payloadSize: Int = 1316
