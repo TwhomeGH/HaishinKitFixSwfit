@@ -4,7 +4,7 @@
 
 [中文版](./README.zh.md)
 
-This is an improved version of [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) with streaming stability fixes and enhanced bitrate control.
+This is an improved version of [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) with streaming stability fixes, enhanced bitrate control, and voice chat coexistence support.
 
 ## 🔧 Fixes over upstream
 
@@ -15,6 +15,7 @@ This is an improved version of [HaishinKit/HaishinKit.swift](https://github.com/
 - **Removed Logboard dependency**: Replaced with built-in OSLog to eliminate git checkout issues on Windows
 - **RTMP User Control crash guard**: Malformed packets under 6 bytes no longer crash
 - **WHEP playback fixes** (shared modules): decode failure logging, DisplayLink frameInterval=0 fallback, MediaLink audio clock guard
+- **Voice chat coexistence** (iOS): New `AudioRouteManager` + `MediaMixer.setVoiceChatEnabled(_:)` enables mic capture for streaming while simultaneously running a voice call (VoIP). Uses `.playAndRecord` + `.voiceChat` mode + `.mixWithOthers` so background audio keeps playing. AVAudioEngine tap feeds mic into the existing encode pipeline without duplicating ReplayKit's `.audioMic`.
 
 See [CHANGES.md](CHANGES.md) for full details.
 

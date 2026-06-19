@@ -265,6 +265,53 @@ MediaMixer.append() → VideoCaptureUnit → VideoMixer
 
 ---
 
+## 12. 支援語音通話（Voice Chat）與直播共存
+
+**新增檔案**: `Sources/Mixer/AudioRouteManager.swift`
+**修改檔案**: `Sources/Mixer/MediaMixer.swift`
+
+### 背景
+
+當直播中需要同時進行語音通話（例如 LINE 通話或自建 VoIP）時，存在兩個衝突：
+
+1. **AVAudioSession Category 衝突** — 串流 mic 需要 `.playAndRecord`，但預設會 duck 其他 app 音訊
+2. **音源衝突** — ReplayKit 的 `.audioMic` 與 AVAudioEngine 的 mic tap 會產生雙重音訊
+
+### 實作方式
+
+#### `AudioRouteManager`（iOS 限定）
+
+- **AVAudioSession** 設定為 `.playAndRecord` + `.voiceChat` mode + `.mixWithOthers` + `.allowBluetooth` + `.defaultToSpeaker` + `.allowAirPlay`
+  - 保證 mic 可錄音
+  - 不中斷背景音樂或其他 app 音訊
+  - 通話聲音走揚聲器而非聽筒
+- **AVAudioEngine** 啟動後在 `inputNode` 上安裝 tap
+  - tap callback 定期提供 `AVAudioPCMBuffer`
+  - 透過 `Task { await mixer.append(buffer, when:) }` 餵入現有 audio pipeline
+  - 沿用原本的 `AudioCaptureUnit` → `AudioMixer` → `AudioCodec` → RTMP 路徑，不需改寫編碼邏輯
+
+#### `MediaMixer.setVoiceChatEnabled(_:)`
+
+```swift
+// 啟用：語音通話 + 直播共存
+try mixer.setVoiceChatEnabled(true)
+
+// 停用：恢復純直播模式
+mixer.setVoiceChatEnabled(false)
+```
+
+- 啟用時自動設定 AVAudioSession 並啟動 AVAudioEngine tap
+- 停用時停止 engine、移除以 tap、恢復 AVAudioSession category 為 `.playback` + `.mixWithOthers`
+- `stopRunning()` 時自動 deactivate，避免 resource leak
+
+### 注意事項（App 層需處理）
+
+1. **ReplayKit mic 雙重來源** — 啟用 voice chat 時，app 應關閉 `RPScreenRecorder.isMicrophoneEnabled = false`，只讓 ReplayKit 提供 `.audioApp`，mic 由 AVAudioEngine 負責
+2. **通話音訊回放** — `voiceChat` mode 只處理 mic 上鏈，下鏈（聽對方的聲音）由 app 自行管理（e.g. `AVAudioEngine` mixer node 或 system audio unit）
+3. **Bluetooth 相容** — `.allowBluetooth` 保證藍牙耳機的 mic 可用於通話
+
+---
+
 ## 改動檔案總覽（追加）
 
 | 檔案 | 修改類型 |
@@ -274,3 +321,5 @@ MediaMixer.append() → VideoCaptureUnit → VideoMixer
 | `Sources/Extension/CMVideoFormatDescription+Extension.swift`（RTMP） | `configurationBox` 加入 AVC fallback |
 | `Sources/Codec/AVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
 | `Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
+| `Sources/Mixer/AudioRouteManager.swift` | **新增** — AVAudioSession + AVAudioEngine 管理 |
+| `Sources/Mixer/MediaMixer.swift` | 新增 `setVoiceChatEnabled(_:)`、`audioRouteManager` 屬性 |

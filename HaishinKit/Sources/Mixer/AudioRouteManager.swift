@@ -1,0 +1,60 @@
+import AVFoundation
+
+#if os(iOS)
+final class AudioRouteManager {
+    enum Mode {
+        case streaming
+        case voiceChat
+    }
+
+    private let engine = AVAudioEngine()
+    private weak var mixer: MediaMixer?
+    private var isActive = false
+    private let lockQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.AudioRouteManager.lock")
+
+    var mode: Mode = .streaming
+
+    init(mixer: MediaMixer) {
+        self.mixer = mixer
+    }
+
+    func activate() throws {
+        try lockQueue.sync {
+            guard !isActive else { return }
+            isActive = true
+        }
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker, .allowAirPlay])
+        try session.setActive(true)
+        let inputFormat = engine.inputNode.outputFormat(forBus: 0)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
+            guard let self else { return }
+            guard let mixer else {
+                stopEngine()
+                return
+            }
+            Task { [weak mixer] in
+                await mixer?.append(buffer, when: AVAudioTime(hostTime: time.hostTime))
+            }
+        }
+        try engine.start()
+    }
+
+    func deactivate() {
+        lockQueue.sync {
+            guard isActive else { return }
+            isActive = false
+        }
+        stopEngine()
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+    }
+
+    private func stopEngine() {
+        if engine.isRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+    }
+}
+#endif
