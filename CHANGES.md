@@ -136,24 +136,30 @@
 
 ---
 
-## 9. Port: WHEP playback 修復（共用模組部分）
+## 9. 修復 RTMP Chunk `.two` Header 寫入範圍錯誤
 
-**對應上游 PR**: [#1919](https://github.com/HaishinKit/HaishinKit.swift/pull/1919)
+**檔案**: `Sources/RTMP/RTMPChunk.swift:305`
 
-### 9.1 Decode 失敗 log
+```swift
+// ❌ ClosedRange — 4 bytes 範圍但只寫入 3 bytes，第 4 byte 保留舊資料
+data.replaceSubrange(position...position + 3, with: message.timestamp.bigEndian.data[1...3])
+// ✅ Half-open range — 精準 3 bytes
+data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+```
 
-**檔案**: `Sources/Extension/VTDecompressionSession+Extension.swift`
+`.zero` 與 `.one` chunk type 正確使用 `..<` half-open range，唯獨 `.two` 誤用 `...` ClosedRange。第一個 `.two` chunk 送出後下一個 chunk 的 basic header 被污染，串流資料從該點開始損毀，造成部分 RTMP 伺服器斷流。
 
-原本 decompression output handler 中 `guard let imageBuffer else { return }` 靜默吞掉 decode 失敗。新增 `DecodeFailureLog`：前 5 次 + 每 300 次 log `logger.warn`，避免 flooding。
+---
 
-### 9.2 macOS DisplayLink frameInterval=0 修正
+## 10. E-RTMP 參數改為不預設送出
 
-**檔案**: `Sources/Screen/DisplayLinkChoreographer.swift`
+**檔案**: `Sources/RTMP/RTMPConnection.swift:261-263`
 
-`preferredFramesPerSecond = 0` 時 `frameInterval = 0`，原本的 `targetTimestamp = timestamp + frameInterval` 導致 `targetTimestamp == timestamp`，MediaLink 的 playout pacing 永遠累積不到時間，畫面卡在第一幀。改為 fallback 到顯示器真實更新週期（`videoRefreshPeriod / videoTimeScale`），保底 1/60s。
+```swift
+// ❌ 預設送出 fourCcList / videoFourCcInfoMap / audioFourCcInfoMap
+fourCcList: [String]? = RTMPConnection.supportedFourCcList,
+// ✅ 改為 nil，只有明確傳入時才送
+fourCcList: [String]? = nil,
+```
 
-### 9.3 MediaLink audio clock 修正
-
-**檔案**: `Sources/Stream/MediaLink.swift`
-
-原本總是取 `audioPlayer?.currentTime`，但未播放音訊時（video-only stream 或音訊還沒開始）回傳 `0`，導致影片時間軸被 pin 在第一幀。改為只取 `audioTime > 0` 時才用 audio clock，否則用內部 `duration` 累計。|
+建制 `RTMPConnection()` 時 `fourCcList` / `videoFourCcInfoMap` / `audioFourCcInfoMap` 預設值自非 nil 改為 `nil`，connect command 中只有非 nil 時才加入。避免不支援 Enhanced RTMP 的伺服器因收到未知欄位而拒絕連線。

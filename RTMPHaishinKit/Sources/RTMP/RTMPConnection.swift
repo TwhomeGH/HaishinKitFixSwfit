@@ -258,9 +258,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         swfUrl: String? = nil,
         pageUrl: String? = nil,
         flashVer: String = RTMPConnection.defaultFlashVer,
-        fourCcList: [String]? = RTMPConnection.supportedFourCcList,
-        videoFourCcInfoMap: AMFObject? = RTMPConnection.supportedVideoFourCcInfoMap,
-        audioFourCcInfoMap: AMFObject? = RTMPConnection.supportedAudioFourCcInfoMap,
+        fourCcList: [String]? = nil,
+        videoFourCcInfoMap: AMFObject? = nil,
+        audioFourCcInfoMap: AMFObject? = nil,
         capsEx: Int = 0,
         timeout: Int = RTMPConnection.defaultTimeout,
         requestTimeout: UInt64 = RTMPConnection.defaultRequestTimeout,
@@ -586,30 +586,30 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if let query = uri.query {
             app += "?" + query
         }
+        var commandObject: [String: Any] = [
+            "objectEncoding": objectEncoding.rawValue,
+            "app": app,
+            "flashVer": flashVer,
+            "swfUrl": swfUrl,
+            "tcUrl": uri.absoluteWithoutAuthenticationString,
+            "fpad": false,
+            "capabilities": Self.defaultCapabilities,
+            "audioCodecs": SupportSound.aac.rawValue,
+            "videoCodecs": SupportVideo.h264.rawValue,
+            "videoFunction": VideoFunction.clientSeek.rawValue,
+            "pageUrl": pageUrl,
+            "capsEx": capsEx
+        ]
+        fourCcList.map { commandObject["fourCcList"] = $0 }
+        videoFourCcInfoMap.map { commandObject["videoFourCcInfoMap"] = $0 }
+        audioFourCcInfoMap.map { commandObject["audioFourCcInfoMap"] = $0 }
         return RTMPCommandMessage(
             streamId: 0,
             transactionId: Self.connectTransactionId,
             // "connect" must be a objectEncoding = 0
             objectEncoding: .amf0,
             commandName: "connect",
-            commandObject: [
-                "objectEncoding": objectEncoding.rawValue,
-                "app": app,
-                "flashVer": flashVer,
-                "swfUrl": swfUrl,
-                "tcUrl": uri.absoluteWithoutAuthenticationString,
-                "fpad": false,
-                "capabilities": Self.defaultCapabilities,
-                "audioCodecs": SupportSound.aac.rawValue,
-                "videoCodecs": SupportVideo.h264.rawValue,
-                "videoFunction": VideoFunction.clientSeek.rawValue,
-                "pageUrl": pageUrl,
-                // Enhancing NetConnection connect Command
-                "fourCcList": fourCcList,
-                "videoFourCcInfoMap": videoFourCcInfoMap,
-                "audioFourCcInfoMap": audioFourCcInfoMap,
-                "capsEx": capsEx
-            ],
+            commandObject: commandObject,
             arguments: arguments
         )
     }
