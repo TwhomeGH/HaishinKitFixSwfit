@@ -369,6 +369,7 @@ final class PublishViewModel: ObservableObject {
                 logger.info(error)
             }
             await makeSession(preference)
+            await applyFrameRate(currentFPS.frameRate)
             let isLandscape = UIDevice.current.orientation.isLandscape
             await updateVideoEncoderSize(isLandscape: isLandscape)
             let screenSize = await mixer.screen.size
@@ -509,29 +510,33 @@ final class PublishViewModel: ObservableObject {
 
     func setFrameRate(_ fps: Float64) {
         Task {
-            do {
-                try? await mixer.configuration(video: 0) { video in
-                    do {
-                        try video.setFrameRate(fps)
-                    } catch {
-                        logger.error(error)
-                    }
+            await applyFrameRate(fps)
+        }
+    }
+
+    private func applyFrameRate(_ fps: Float64) async {
+        do {
+            try? await mixer.configuration(video: 0) { video in
+                do {
+                    try video.setFrameRate(fps)
+                } catch {
+                    logger.error(error)
                 }
-                try? await mixer.configuration(video: 1) { video in
-                    do {
-                        try video.setFrameRate(fps)
-                    } catch {
-                        logger.error(error)
-                    }
-                }
-                try await mixer.setFrameRate(fps)
-                if var videoSettings = await session?.stream.videoSettings {
-                    videoSettings.expectedFrameRate = fps
-                    try? await session?.stream.setVideoSettings(videoSettings)
-                }
-            } catch {
-                logger.error(error)
             }
+            try? await mixer.configuration(video: 1) { video in
+                do {
+                    try video.setFrameRate(fps)
+                } catch {
+                    logger.error(error)
+                }
+            }
+            try await mixer.setFrameRate(fps)
+            if var videoSettings = await session?.stream.videoSettings {
+                videoSettings.expectedFrameRate = fps
+                try? await session?.stream.setVideoSettings(videoSettings)
+            }
+        } catch {
+            logger.error(error)
         }
     }
 

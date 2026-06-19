@@ -13,6 +13,8 @@ import AppKit
 typealias View = NSView
 #endif
 
+private typealias RTMPStreamOutput = @Sendable () async -> Int
+
 /// An object that provides the interface to control a one-way channel over an RTMPConnection.
 public actor RTMPStream {
     /// The error domain code.
@@ -224,6 +226,7 @@ public actor RTMPStream {
     private var expectedResponse: Code?
     package var bitRateStrategy: (any StreamBitRateStrategy)?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
+    private var outputContinuation: AsyncStream<RTMPStreamOutput>.Continuation?
     nonisolated(unsafe) private var mixerAudioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
     nonisolated(unsafe) private var mixerVideoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private(set) var id: UInt32 = RTMPStream.defaultID
@@ -277,6 +280,7 @@ public actor RTMPStream {
         self.fcPublishName = fcPublishName
         self.requestTimeout = connection.requestTimeout
         Task {
+            await self.startOutputConsumer()
             await self.startMixerInputConsumers()
             await connection.addStream(self)
             if await connection.connected {
@@ -286,6 +290,7 @@ public actor RTMPStream {
     }
 
     deinit {
+        outputContinuation?.finish()
         mixerAudioContinuation?.finish()
         mixerVideoContinuation?.finish()
         outputs.removeAll()
@@ -555,9 +560,9 @@ public actor RTMPStream {
     }
 
     func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) {
-        Task {
-            let length = await connection?.doOutput(type, chunkStreamId: chunkStreamId, message: message) ?? 0
-            info.byteCount += length
+        let connection = connection
+        outputContinuation?.yield {
+            await connection?.doOutput(type, chunkStreamId: chunkStreamId, message: message) ?? 0
         }
     }
 
@@ -717,6 +722,21 @@ public actor RTMPStream {
         mixerAudioContinuation = nil
         mixerVideoContinuation?.finish()
         mixerVideoContinuation = nil
+    }
+
+    private func startOutputConsumer() {
+        let (stream, continuation) = AsyncStream.makeStream(of: RTMPStreamOutput.self)
+        outputContinuation = continuation
+        Task {
+            for await output in stream {
+                let length = await output()
+                await appendByteCount(length)
+            }
+        }
+    }
+
+    private func appendByteCount(_ length: Int) {
+        info.byteCount += length
     }
 
     /// Creates flv metadata for a stream.

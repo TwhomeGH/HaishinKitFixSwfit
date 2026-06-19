@@ -244,7 +244,7 @@ public struct VideoCodecSettings: Codable, Sendable {
             .init(key: .realTime, value: kCFBooleanTrue),
             .init(key: .profileLevel, value: profileLevel as NSObject),
             .init(key: bitRateMode.key, value: NSNumber(value: bitRate)),
-            .init(key: .allowFrameReordering, value: (allowFrameReordering ?? !isBaseline) as NSObject),
+            .init(key: .allowFrameReordering, value: (allowFrameReordering ?? false) as NSObject),
             .init(key: .pixelTransferProperties, value: [
                 "ScalingMode": scalingMode.rawValue
             ] as NSObject)
@@ -311,7 +311,16 @@ public struct VideoCodecSettings: Codable, Sendable {
         guard 0 < maxKeyFrameIntervalDuration else {
             return nil
         }
-        let frameRate = expectedFrameRate ?? (0 < frameInterval ? 1.0 / frameInterval : 30.0)
+        let frameRate: Double
+        if 0 < frameInterval {
+            frameRate = 1.0 / frameInterval
+        } else if let expectedFrameRate, expectedFrameRate <= 30 {
+            frameRate = expectedFrameRate
+        } else if expectedFrameRate == nil {
+            frameRate = 30.0
+        } else {
+            return nil
+        }
         guard frameRate.isFinite, 0 < frameRate else {
             return nil
         }

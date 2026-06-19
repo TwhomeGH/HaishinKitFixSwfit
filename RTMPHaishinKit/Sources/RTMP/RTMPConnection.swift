@@ -235,6 +235,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
     private var windowSizeS = RTMPConnection.defaultWindowSizeS
     private var outputBuffer = RTMPChunkBuffer()
+    private var outputContinuation: AsyncStream<[Data]>.Continuation?
     private let authenticator = RTMPAuthenticator()
     private var networkMonitor: NetworkMonitor?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
@@ -280,6 +281,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     deinit {
+        outputContinuation?.finish()
         streams.removeAll()
     }
 
@@ -332,6 +334,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         guard let socket, let networkMonitor else {
             throw Error.invalidState
         }
+        startOutputConsumer(socket)
         do {
             let result: RTMPResponse = try await withCheckedThrowingContinuation { continutation in
                 Task {
@@ -413,6 +416,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 await stream.deleteStream()
             }
         }
+        outputContinuation?.finish()
+        outputContinuation = nil
         await socket?.close()
         await networkMonitor?.stopRunning()
 
@@ -436,14 +441,23 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             logger.trace("<<", message)
         }
         let chunks = Array(outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message))
-        Task {
-            await socket?.send(chunks)
-        }
+        outputContinuation?.yield(chunks)
         return message.payload.count
     }
 
     func addStream(_ stream: RTMPStream) {
         streams.append(stream)
+    }
+
+    private func startOutputConsumer(_ socket: RTMPSocket) {
+        outputContinuation?.finish()
+        let (stream, continuation) = AsyncStream.makeStream(of: [Data].self)
+        outputContinuation = continuation
+        Task {
+            for await chunks in stream {
+                await socket.send(chunks)
+            }
+        }
     }
 
     private func listen(_ data: Data) async throws {

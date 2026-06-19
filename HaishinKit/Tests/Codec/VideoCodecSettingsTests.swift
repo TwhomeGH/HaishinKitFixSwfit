@@ -30,6 +30,14 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 21)
     }
 
+    @Test func keyFrameIntervalOptions_highExpectedFrameRate() {
+        let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2, expectedFrameRate: 60)
+        let options = settings.makeKeyFrameIntervalOptions()
+
+        #expect(options.number(for: .maxKeyFrameIntervalDuration)?.int32Value == 2)
+        #expect(options.value(for: .maxKeyFrameInterval) == nil)
+    }
+
     @Test func keyFrameIntervalOptions_disabledFrameCount() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
         let options = settings.makeKeyFrameIntervalOptions()
