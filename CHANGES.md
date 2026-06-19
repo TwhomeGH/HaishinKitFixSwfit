@@ -323,3 +323,77 @@ mixer.setVoiceChatEnabled(false)
 | `Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
 | `Sources/Mixer/AudioRouteManager.swift` | **新增** — AVAudioSession + AVAudioEngine 管理 |
 | `Sources/Mixer/MediaMixer.swift` | 新增 `setVoiceChatEnabled(_:)`、`audioRouteManager` 屬性 |
+
+---
+
+## 13. AudioRouteManager 修復與完善
+
+**檔案**: `Sources/Mixer/AudioRouteManager.swift`
+
+### 13.1 `String.hasExtension` 編譯錯誤誤修復
+
+```swift
+// ❌ String 無 hasExtension method
+if Bundle.main.bundlePath.hasExtension("appex") { ... }
+
+// ✅ 使用 NSString.pathExtension
+if (Bundle.main.bundlePath as NSString).pathExtension == "appex" { ... }
+```
+
+### 13.2 AVAudioSession Category 選項衝突修復
+
+`.voiceChat` mode 與 `[.defaultToSpeaker, .allowAirPlay]` 組合會導致錯誤。
+修正為最小相容組合：`[.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP]`
+
+### 13.3 App Extension 崩潰防護
+
+Extension (`.appex` bundle) 無法呼叫 `setCategory()` / `setActive()`，會直接 crash。
+加入早期返回，Extension 模式下跳過所有 audio session 操作。
+
+### 13.4 `deactivate()` 音頻會話正確清理
+
+原本：直接改 category 再 `setActive(true)`，且 `try?` 吞錯
+修正：
+```swift
+try? session.setActive(false, options: .notifyOthersOnDeactivation)  // 先停用、通知其他 app
+try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])  // 改回播放類別
+try? session.setActive(true)  // 重新啟用 app 自己的會話
+```
+
+### 13.5 `activate()` 重啟時清理舊狀態
+
+重複啟用時會殘留舊 tap、engine running 狀態。開頭加入 `stopEngine()` 確保乾淨重啟。
+
+---
+
+## 14. 關鍵修復：AVAudioTime PTS 損壞導致音視頻不同步
+
+**檔案**: `Sources/Mixer/AudioRouteManager.swift:43`
+
+### 問題
+
+```swift
+// ❌ tap callback 的 time 已包含正確 sampleTime、sampleRate、hostTime
+// 卻只取 hostTime 重建，導致 sampleTime=0, sampleRate=0
+await mixer.append(buffer, when: AVAudioTime(hostTime: time.hostTime))
+```
+
+這導致 `AudioTime.anchor(_ time: AVAudioTime)` 初始化時：
+- `sampleRate = 0`
+- `sampleTime = 0`
+- PTS 從 0 開始計算
+
+而 video `CMSampleBuffer` 使用真實 `presentationTimeStamp`，兩者永遠對不上，表現為推流無聲、或音視頻嚴重不同步。
+
+### 修復
+
+```swift
+// ✅ 直接傳遞完整的 time（已含 sampleTime、sampleRate、hostTime）
+await mixer.append(buffer, when: time)
+```
+
+### 影響範圍
+
+- 所有經由 `AudioRouteManager`（voice chat mic tap）輸入的音訊
+- ReplayKit `.audioApp` / `.audioMic` 走 `CMSampleBuffer` 路徑**不受影響**
+- 修復後 audio PTS 與 video PTS 同一時間基準，AV sync 正常

@@ -33,15 +33,14 @@ final class AudioRouteManager {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP])
         try session.setActive(true)
+        
+        stopEngine()
+        
         let inputFormat = engine.inputNode.outputFormat(forBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
-            guard let self else { return }
-            guard let mixer else {
-                stopEngine()
-                return
-            }
+            guard let self = self, let mixer = self.mixer else { return }
             Task { [weak mixer] in
-                await mixer?.append(buffer, when: AVAudioTime(hostTime: time.hostTime))
+                await mixer.append(buffer, when: time)
             }
         }
         try engine.start()
@@ -54,7 +53,9 @@ final class AudioRouteManager {
         }
         stopEngine()
         let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
         try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? session.setActive(true)
     }
 
     private func stopEngine() {
