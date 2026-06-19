@@ -23,6 +23,13 @@ final class AudioRouteManager {
             guard !isActive else { return }
             isActive = true
         }
+
+        // 在 App Extension (Broadcast Extension) 中無法設定 AVAudioSession category
+        if Bundle.main.bundlePath.hasExtension("appex") {
+            isActive = false
+            return
+        }
+
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker, .allowAirPlay])
         try session.setActive(true)
