@@ -176,7 +176,7 @@ final class UVCViewModel: ObservableObject {
     func startRunning(_ preference: PreferenceViewModel) {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setCategory(.playAndRecord, mode: .videoRecording, options: [.mixWithOthers, .allowBluetoothHFP])
             try session.setActive(true)
         } catch {
             logger.error(error)
