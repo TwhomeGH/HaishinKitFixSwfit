@@ -180,7 +180,6 @@ public struct VideoCodecSettings: Codable, Sendable {
 
     func invalidateSession(_ rhs: VideoCodecSettings) -> Bool {
         return !(videoSize == rhs.videoSize &&
-                    maxKeyFrameIntervalDuration == rhs.maxKeyFrameIntervalDuration &&
                     scalingMode == rhs.scalingMode &&
                     allowFrameReordering == rhs.allowFrameReordering &&
                     bitRateMode == rhs.bitRateMode &&
@@ -203,6 +202,10 @@ public struct VideoCodecSettings: Codable, Sendable {
         if expectedFrameRate != rhs.expectedFrameRate {
             let value = if let expectedFrameRate { expectedFrameRate } else { 0.0 }
             let option = VTSessionOption(key: .expectedFrameRate, value: value as CFNumber)
+            _ = codec.session?.setOption(option)
+        }
+        if maxKeyFrameIntervalDuration != rhs.maxKeyFrameIntervalDuration {
+            let option = VTSessionOption(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: maxKeyFrameIntervalDuration))
             _ = codec.session?.setOption(option)
         }
         if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {

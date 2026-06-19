@@ -39,7 +39,7 @@ package final class OutgoingStream {
     }
 
     /// Specifies the video buffering count.
-    package var videoInputBufferCounts = -1
+    package var videoInputBufferCounts = 5
 
     /// The asynchronous sequence for video input buffer.
     package var videoInputStream: AsyncStream<CMSampleBuffer> {

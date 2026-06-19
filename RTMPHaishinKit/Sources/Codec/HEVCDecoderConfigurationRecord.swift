@@ -32,7 +32,9 @@ struct HEVCDecoderConfigurationRecord: DecoderConfigurationRecord {
     }
 
     func makeFormatDescription() -> CMFormatDescription? {
-        guard let vps = array[.vps], let sps = array[.sps], let pps = array[.pps] else {
+        guard let vps = array[.vps], !vps.isEmpty,
+              let sps = array[.sps], !sps.isEmpty,
+              let pps = array[.pps], !pps.isEmpty else {
             return nil
         }
         return vps[0].withUnsafeBytes { (vpsBuffer: UnsafeRawBufferPointer) -> CMFormatDescription? in

@@ -43,6 +43,9 @@ struct AVCDecoderConfigurationRecord: DecoderConfigurationRecord {
     }
 
     func makeFormatDescription() -> CMFormatDescription? {
+        guard !pictureParameterSets.isEmpty, !sequenceParameterSets.isEmpty else {
+            return nil
+        }
         return pictureParameterSets[0].withUnsafeBytes { (ppsBuffer: UnsafeRawBufferPointer) -> CMFormatDescription? in
             guard let ppsBaseAddress = ppsBuffer.baseAddress else {
                 return nil
