@@ -39,7 +39,7 @@ final class AudioRouteManager {
         let inputFormat = engine.inputNode.outputFormat(forBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, time in
             guard let self = self, let mixer = self.mixer else { return }
-            Task { [weak mixer] in
+            Task {
                 await mixer.append(buffer, when: time)
             }
         }
