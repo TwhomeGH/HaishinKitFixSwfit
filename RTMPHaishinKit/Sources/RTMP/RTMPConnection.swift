@@ -586,7 +586,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if let query = uri.query {
             app += "?" + query
         }
-        var commandObject: [String: Any] = [
+        var commandObject: AMFObject = [
             "objectEncoding": objectEncoding.rawValue,
             "app": app,
             "flashVer": flashVer,
