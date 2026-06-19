@@ -694,7 +694,10 @@ public actor RTMPStream {
 
     private func startMixerInputConsumers() {
         let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
-        let (videoStream, videoContinuation) = AsyncStream.makeStream(of: CMSampleBuffer.self)
+        let (videoStream, videoContinuation) = AsyncStream.makeStream(
+            of: CMSampleBuffer.self,
+            bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts)
+        )
         mixerAudioContinuation = audioContinuation
         mixerVideoContinuation = videoContinuation
         Task {

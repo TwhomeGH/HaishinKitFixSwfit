@@ -39,18 +39,16 @@ package final class OutgoingStream {
     }
 
     /// Specifies the video buffering count.
-    package var videoInputBufferCounts = 5
+    package var videoInputBufferCounts = 5 {
+        didSet {
+            videoInputBufferCounts = max(1, videoInputBufferCounts)
+        }
+    }
 
     /// The asynchronous sequence for video input buffer.
     package var videoInputStream: AsyncStream<CMSampleBuffer> {
-        if 0 < videoInputBufferCounts {
-            return AsyncStream(CMSampleBuffer.self, bufferingPolicy: .bufferingNewest(videoInputBufferCounts)) { continuation in
-                self.videoInputContinuation = continuation
-            }
-        } else {
-            return AsyncStream { continuation in
-                self.videoInputContinuation = continuation
-            }
+        return AsyncStream(CMSampleBuffer.self, bufferingPolicy: .bufferingNewest(videoInputBufferCounts)) { continuation in
+            self.videoInputContinuation = continuation
         }
     }
 

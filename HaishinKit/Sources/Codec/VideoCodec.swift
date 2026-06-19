@@ -28,6 +28,7 @@ final class VideoCodec {
     private var startedAt: CMTime = .zero
     private var continuation: AsyncStream<CMSampleBuffer>.Continuation?
     private var invalidateSession = true
+    private var lastKeyFramePresentationTimeStamp: CMTime?
     private var presentationTimeStamp: CMTime = .zero
     private(set) var isRunning = false
     private(set) var inputFormat: CMFormatDescription? {
@@ -42,6 +43,7 @@ final class VideoCodec {
     private(set) var session: (any VTSessionConvertible)? {
         didSet {
             oldValue?.invalidate()
+            lastKeyFramePresentationTimeStamp = nil
             invalidateSession = false
         }
     }
@@ -64,10 +66,14 @@ final class VideoCodec {
                 return
             }
             if sampleBuffer.formatDescription?.isCompressed == true {
-                try session.convert(sampleBuffer, continuation: continuation)
+                try session.convert(sampleBuffer, forceKeyFrame: false, continuation: continuation)
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
-                    try session.convert(sampleBuffer, continuation: continuation)
+                    let forceKeyFrame = shouldForceKeyFrame(sampleBuffer.presentationTimeStamp)
+                    try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: continuation)
+                    if forceKeyFrame {
+                        lastKeyFramePresentationTimeStamp = sampleBuffer.presentationTimeStamp
+                    }
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                 }
             }
@@ -104,6 +110,17 @@ final class VideoCodec {
             return true
         }
         return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
+    }
+
+    private func shouldForceKeyFrame(_ presentationTimeStamp: CMTime) -> Bool {
+        let duration = settings.maxKeyFrameIntervalDuration
+        guard 0 < duration else {
+            return false
+        }
+        guard let lastKeyFramePresentationTimeStamp else {
+            return true
+        }
+        return Double(duration) <= (presentationTimeStamp - lastKeyFramePresentationTimeStamp).seconds
     }
 
     #if os(iOS) || os(tvOS) || os(visionOS)
@@ -163,6 +180,7 @@ extension VideoCodec: Runner {
         invalidateSession = true
         inputFormat = nil
         outputFormat = nil
+        lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
         continuation?.finish()
         startedAt = .zero

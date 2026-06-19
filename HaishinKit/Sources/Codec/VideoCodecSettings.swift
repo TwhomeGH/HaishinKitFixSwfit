@@ -204,9 +204,12 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .expectedFrameRate, value: value as CFNumber)
             _ = codec.session?.setOption(option)
         }
-        if maxKeyFrameIntervalDuration != rhs.maxKeyFrameIntervalDuration {
-            let option = VTSessionOption(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: maxKeyFrameIntervalDuration))
-            _ = codec.session?.setOption(option)
+        if maxKeyFrameIntervalDuration != rhs.maxKeyFrameIntervalDuration ||
+            expectedFrameRate != rhs.expectedFrameRate ||
+            frameInterval != rhs.frameInterval {
+            for option in makeKeyFrameIntervalOptions() {
+                _ = codec.session?.setOption(option)
+            }
         }
         if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
             if vbvMaxBitRate != rhs.vbvMaxBitRate, let vbvMaxBitRate {
@@ -241,12 +244,12 @@ public struct VideoCodecSettings: Codable, Sendable {
             .init(key: .realTime, value: kCFBooleanTrue),
             .init(key: .profileLevel, value: profileLevel as NSObject),
             .init(key: bitRateMode.key, value: NSNumber(value: bitRate)),
-            .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: maxKeyFrameIntervalDuration)),
             .init(key: .allowFrameReordering, value: (allowFrameReordering ?? !isBaseline) as NSObject),
             .init(key: .pixelTransferProperties, value: [
                 "ScalingMode": scalingMode.rawValue
             ] as NSObject)
         ])
+        options.formUnion(makeKeyFrameIntervalOptions())
         if bitRateMode == .average {
             if let dataRateLimits, dataRateLimits.count == 2 {
                 var limits = [Double](repeating: 0.0, count: 2)
@@ -287,10 +290,32 @@ public struct VideoCodecSettings: Codable, Sendable {
         return options
     }
 
+    func makeKeyFrameIntervalOptions() -> Set<VTSessionOption> {
+        var options = Set<VTSessionOption>([
+            .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: maxKeyFrameIntervalDuration))
+        ])
+        if let maxKeyFrameInterval {
+            options.insert(.init(key: .maxKeyFrameInterval, value: NSNumber(value: maxKeyFrameInterval)))
+        }
+        return options
+    }
+
     func makeEncoderSpecification() -> CFDictionary? {
         if isLowLatencyRateControlEnabled {
             return [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true as CFBoolean] as CFDictionary
         }
         return nil
+    }
+
+    private var maxKeyFrameInterval: Int32? {
+        guard 0 < maxKeyFrameIntervalDuration else {
+            return nil
+        }
+        let frameRate = expectedFrameRate ?? (0 < frameInterval ? 1.0 / frameInterval : 30.0)
+        guard frameRate.isFinite, 0 < frameRate else {
+            return nil
+        }
+        let interval = (Double(maxKeyFrameIntervalDuration) * frameRate).rounded(.up)
+        return Int32(min(interval, Double(Int32.max)))
     }
 }

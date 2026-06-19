@@ -397,3 +397,63 @@ await mixer.append(buffer, when: time)
 - 所有經由 `AudioRouteManager`（voice chat mic tap）輸入的音訊
 - ReplayKit `.audioApp` / `.audioMic` 走 `CMSampleBuffer` 路徑**不受影響**
 - 修復後 audio PTS 與 video PTS 同一時間基準，AV sync 正常
+
+---
+
+## 15. 關鍵修復：Keyframe Interval 底層約束不足
+
+**檔案**:
+- `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
+- `HaishinKit/Sources/Codec/VideoCodec.swift`
+- `HaishinKit/Sources/Codec/VTSessionConvertible.swift`
+- `HaishinKit/Sources/Extension/VTCompressionSession+Extension.swift`
+- `HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift`
+- `HaishinKit/Tests/Codec/VideoCodecSettingsTests.swift`
+
+### 問題
+
+原本只設定 `kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration`（秒數），部分 VideoToolbox encoder / 硬體路徑可能沒有穩定依照秒數產生 keyframe，導致實際 GOP 漂移，例如觀察到約 5 秒 keyframe interval。
+
+### 修復
+
+- 保留既有 `maxKeyFrameIntervalDuration` API 語意。
+- 同步派生並設定 `kVTCompressionPropertyKey_MaxKeyFrameInterval`（幀數）。
+- 建立 session 與動態更新 settings 時都會重新套用 keyframe interval options。
+- 在 compression path 加入 `ForceKeyFrame` 支援。
+- 第一幀與超過 `maxKeyFrameIntervalDuration` 時主動要求 keyframe，避免只依賴 encoder 自行排程。
+- 新增測試覆蓋預設 30fps、指定 23fps、降幀 frameInterval、停用幀數限制等情境。
+
+### 影響範圍
+
+- H.264 / HEVC 透過 VideoToolbox compression 的輸出。
+- ReplayKit、RTMP、SRT、RTC 等走未壓縮 video sample 再編碼的路徑。
+- 對已壓縮 video passthrough 路徑不主動改寫 keyframe。
+
+---
+
+## 16. 性能修復：Video Input Buffer 改為有界佇列
+
+**檔案**:
+- `HaishinKit/Sources/Stream/OutgoingStream.swift`
+- `HaishinKit/Sources/Stream/StreamConvertible.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+- `SRTHaishinKit/Sources/SRT/SRTStream.swift`
+
+### 問題
+
+`setVideoInputBufferCounts(0)` 或負數時，`OutgoingStream.videoInputStream` 會退回無限制 `AsyncStream`。當 ReplayKit / camera 持續送 frame，但 encoder、actor 或網路輸出變慢時，video frame 可能在記憶體中持續堆積，造成延遲上升、記憶體壓力，嚴重時表現為卡死。
+
+此外，RTMP / SRT 的 `MediaMixer -> Stream` video 中轉佇列原本也是 unbounded，壓力可能在進入 `OutgoingStream` 前就先累積。
+
+### 修復
+
+- `videoInputBufferCounts` 最小值 clamp 到 `1`。
+- `OutgoingStream.videoInputStream` 永遠使用 `.bufferingNewest(videoInputBufferCounts)`。
+- `StreamConvertible.setVideoInputBufferCounts(_:)` 同步 clamp，避免公開 API 傳入非法值。
+- RTMP / SRT 的 mixer video 中轉 `AsyncStream` 改為 `.bufferingNewest(outgoing.videoInputBufferCounts)`。
+
+### 行為變更
+
+- 過載時會丟棄舊 video frame，保留最新 frame，以維持直播低延遲。
+- 不再支援 video input unbounded queue。
+- 音訊 queue 未在本次改動中改為 bounded，避免語音通話或直播音訊被主動丟 sample。

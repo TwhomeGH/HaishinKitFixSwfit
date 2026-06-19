@@ -80,7 +80,7 @@ extension _Stream {
     }
 
     public func setVideoInputBufferCounts(_ videoInputBufferCounts: Int) {
-        outgoing.videoInputBufferCounts = videoInputBufferCounts
+        outgoing.videoInputBufferCounts = max(1, videoInputBufferCounts)
     }
 
     public func setSoundTransform(_ soundTransform: SoundTransform) async {

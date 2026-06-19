@@ -22,7 +22,11 @@ extension VTDecompressionSession: VTSessionConvertible {
     ]
 
     @inline(__always)
-    func convert(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<CMSampleBuffer>.Continuation?) throws {
+    func convert(
+        _ sampleBuffer: CMSampleBuffer,
+        forceKeyFrame _: Bool,
+        continuation: AsyncStream<CMSampleBuffer>.Continuation?
+    ) throws {
         var flagsOut: VTDecodeInfoFlags = []
         var _: VTEncodeInfoFlags = []
         let status = VTDecompressionSessionDecodeFrame(
