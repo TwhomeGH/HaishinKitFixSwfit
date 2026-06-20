@@ -81,7 +81,7 @@ final class RTMPHandshake {
         // S1: starts at index 1
         let s1Start = 1
         // S1 timestamp: 4 bytes at offset 1
-        s1Timestamp = UInt32(bigEndian: inputBuffer[s1Start..<s1Start + 4].withUnsafeBytes { $0.load(as: UInt32.self) })
+        s1Timestamp = UInt32(inputBuffer[s1Start]) << 24 | UInt32(inputBuffer[s1Start + 1]) << 16 | UInt32(inputBuffer[s1Start + 2]) << 8 | UInt32(inputBuffer[s1Start + 3])
         // S1 random data: 1528 bytes starting at offset 9 (1 + 4 + 4)
         let randomStart = s1Start + 8
         s1RandomData = inputBuffer[randomStart..<randomStart + RTMPHandshake.sigSize - 8]

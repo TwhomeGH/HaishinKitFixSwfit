@@ -102,9 +102,9 @@ public struct SRTSocketOption: Sendable {
         case .string:
             return String(data: data, encoding: .utf8) ?? ""
         case .int32:
-            return data.withUnsafeBytes { $0.load(as: Int32.self) }.description
+            return Int32(data: data).description
         case .int64:
-            return data.withUnsafeBytes { $0.load(as: Int64.self) }.description
+            return Int64(data: data).description
         case .bool:
             return (data[0] == 1).description
         }
@@ -116,9 +116,9 @@ public struct SRTSocketOption: Sendable {
         case .string:
             return -1
         case .int32:
-            return Int(data.withUnsafeBytes { $0.load(as: Int32.self) })
+            return Int(Int32(data: data))
         case .int64:
-            return Int(data.withUnsafeBytes { $0.load(as: Int64.self) })
+            return Int(Int64(data: data))
         case .bool:
             return Int(data[0])
         }
@@ -130,9 +130,9 @@ public struct SRTSocketOption: Sendable {
         case .string:
             return false
         case .int32:
-            return Int(data.withUnsafeBytes { $0.load(as: Int32.self) }) == 1
+            return Int(Int32(data: data)) == 1
         case .int64:
-            return Int(data.withUnsafeBytes { $0.load(as: Int64.self) }) == 1
+            return Int(Int64(data: data)) == 1
         case .bool:
             return data[0] == 1
         }
