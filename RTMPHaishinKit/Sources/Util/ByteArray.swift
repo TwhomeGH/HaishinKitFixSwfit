@@ -172,13 +172,14 @@ class ByteArray: ByteArrayConvertible {
         writeBytes(UInt8(bitPattern: value).data)
     }
 
-    /// Readning an UInt16 value.
+    /// Reading an UInt16 value.
     func readUInt16() throws -> UInt16 {
         guard ByteArray.sizeOfInt16 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let result = UInt16(data[position]) << 8 | UInt16(data[position + 1])
         position += ByteArray.sizeOfInt16
-        return UInt16(data: data[position - ByteArray.sizeOfInt16..<position]).bigEndian
+        return result
     }
 
     /// Writing an UInt16 value.
@@ -192,8 +193,9 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfInt16 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let result = Int16(bitPattern: UInt16(data[position]) << 8 | UInt16(data[position + 1]))
         position += ByteArray.sizeOfInt16
-        return Int16(data: data[position - ByteArray.sizeOfInt16..<position]).bigEndian
+        return result
     }
 
     /// Reading an Int16 value.
@@ -207,8 +209,9 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfInt24 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let result = UInt32(data[position]) << 16 | UInt32(data[position + 1]) << 8 | UInt32(data[position + 2])
         position += ByteArray.sizeOfInt24
-        return UInt32(data: ByteArray.fillZero + data[position - ByteArray.sizeOfInt24..<position]).bigEndian
+        return result
     }
 
     /// Writing an UInt24 value.
@@ -222,8 +225,9 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfInt32 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let result = UInt32(data[position]) << 24 | UInt32(data[position + 1]) << 16 | UInt32(data[position + 2]) << 8 | UInt32(data[position + 3])
         position += ByteArray.sizeOfInt32
-        return UInt32(data: data[position - ByteArray.sizeOfInt32..<position]).bigEndian
+        return result
     }
 
     /// Writing an UInt32 value.
@@ -237,8 +241,9 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfInt32 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let result = Int32(bitPattern: UInt32(data[position]) << 24 | UInt32(data[position + 1]) << 16 | UInt32(data[position + 2]) << 8 | UInt32(data[position + 3]))
         position += ByteArray.sizeOfInt32
-        return Int32(data: data[position - ByteArray.sizeOfInt32..<position]).bigEndian
+        return result
     }
 
     /// Writing an Int32 value.
@@ -258,8 +263,16 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfInt64 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let b0 = UInt64(data[position]) << 56
+        let b1 = UInt64(data[position + 1]) << 48
+        let b2 = UInt64(data[position + 2]) << 40
+        let b3 = UInt64(data[position + 3]) << 32
+        let b4 = UInt64(data[position + 4]) << 24
+        let b5 = UInt64(data[position + 5]) << 16
+        let b6 = UInt64(data[position + 6]) << 8
+        let b7 = UInt64(data[position + 7])
         position += ByteArray.sizeOfInt64
-        return UInt64(data: data[position - ByteArray.sizeOfInt64..<position]).bigEndian
+        return b0 | b1 | b2 | b3 | b4 | b5 | b6 | b7
     }
 
     /// Writing an Int64 value.
@@ -272,8 +285,7 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfInt64 <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
-        position += ByteArray.sizeOfInt64
-        return Int64(data: data[position - ByteArray.sizeOfInt64..<position]).bigEndian
+        return Int64(bitPattern: try readUInt64())
     }
 
     /// Reading a Double value.
@@ -281,8 +293,9 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfDouble <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let subdata = Data(data.subdata(in: position..<position + ByteArray.sizeOfDouble).reversed())
         position += ByteArray.sizeOfDouble
-        return Double(data: Data(data.subdata(in: position - ByteArray.sizeOfDouble..<position).reversed()))
+        return subdata.withUnsafeBytes { $0.load(as: Double.self) }
     }
 
     /// Writing a Double value.
@@ -296,8 +309,9 @@ class ByteArray: ByteArrayConvertible {
         guard ByteArray.sizeOfFloat <= bytesAvailable else {
             throw ByteArray.Error.eof
         }
+        let subdata = Data(data.subdata(in: position..<position + ByteArray.sizeOfFloat).reversed())
         position += ByteArray.sizeOfFloat
-        return Float(data: Data(data.subdata(in: position - ByteArray.sizeOfFloat..<position).reversed()))
+        return subdata.withUnsafeBytes { $0.load(as: Float.self) }
     }
 
     /// Writeing a Float value.
@@ -384,7 +398,11 @@ class ByteArray: ByteArrayConvertible {
         }
         var result: [UInt32] = []
         for index in stride(from: data.startIndex.advanced(by: position), to: data.endIndex, by: size) {
-            result.append(UInt32(data: data[index..<index.advanced(by: size)]))
+            let b0 = UInt32(data[index])
+            let b1 = UInt32(data[index + 1])
+            let b2 = UInt32(data[index + 2])
+            let b3 = UInt32(data[index + 3])
+            result.append(b0 << 24 | b1 << 16 | b2 << 8 | b3)
         }
         return result
     }
