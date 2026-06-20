@@ -126,4 +126,4 @@ dependencies: [
 
 ## 授權
 
-BSD 3-Clause 授權條款 - 詳見 [LICENSE](../LICENSE)
+BSD 3-Clause 授權條款 - 詳見 [LICENSE](../LICENSE.md)
