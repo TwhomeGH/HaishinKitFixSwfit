@@ -37,39 +37,38 @@ struct HEVCDecoderConfigurationRecord: DecoderConfigurationRecord {
               let pps = array[.pps], !pps.isEmpty else {
             return nil
         }
-        return vps[0].withUnsafeBytes { (vpsBuffer: UnsafeRawBufferPointer) -> CMFormatDescription? in
-            guard let vpsBaseAddress = vpsBuffer.baseAddress else {
-                return nil
-            }
-            return sps[0].withUnsafeBytes { (spsBuffer: UnsafeRawBufferPointer) -> CMFormatDescription? in
-                guard let spsBaseAddress = spsBuffer.baseAddress else {
-                    return nil
-                }
-                return pps[0].withUnsafeBytes { (ppsBuffer: UnsafeRawBufferPointer) -> CMFormatDescription? in
-                    guard let ppsBaseAddress = ppsBuffer.baseAddress else {
-                        return nil
+        let vpsData = vps[0]
+        let spsData = sps[0]
+        let ppsData = pps[0]
+        let sizes: [Int] = [vpsData.count, spsData.count, ppsData.count]
+        let nalUnitHeaderLength: Int32 = 4
+        var formatDescriptionOut: CMFormatDescription?
+        withUnsafeMutablePointer(to: &formatDescriptionOut) { ptr in
+            vpsData.withUnsafeBytes { vpsBuf in
+                spsData.withUnsafeBytes { spsBuf in
+                    ppsData.withUnsafeBytes { ppsBuf in
+                        guard let vpsBase = vpsBuf.baseAddress,
+                              let spsBase = spsBuf.baseAddress,
+                              let ppsBase = ppsBuf.baseAddress else { return }
+                        let pointers: [UnsafePointer<UInt8>] = [
+                            vpsBase.assumingMemoryBound(to: UInt8.self),
+                            spsBase.assumingMemoryBound(to: UInt8.self),
+                            ppsBase.assumingMemoryBound(to: UInt8.self)
+                        ]
+                        CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                            allocator: kCFAllocatorDefault,
+                            parameterSetCount: pointers.count,
+                            parameterSetPointers: pointers,
+                            parameterSetSizes: sizes,
+                            nalUnitHeaderLength: nalUnitHeaderLength,
+                            extensions: nil,
+                            formatDescriptionOut: ptr
+                        )
                     }
-                    var formatDescriptionOut: CMFormatDescription?
-                    let pointers: [UnsafePointer<UInt8>] = [
-                        vpsBaseAddress.assumingMemoryBound(to: UInt8.self),
-                        spsBaseAddress.assumingMemoryBound(to: UInt8.self),
-                        ppsBaseAddress.assumingMemoryBound(to: UInt8.self)
-                    ]
-                    let sizes: [Int] = [vpsBuffer.count, spsBuffer.count, ppsBuffer.count]
-                    let nalUnitHeaderLength: Int32 = 4
-                    CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                        allocator: kCFAllocatorDefault,
-                        parameterSetCount: pointers.count,
-                        parameterSetPointers: pointers,
-                        parameterSetSizes: sizes,
-                        nalUnitHeaderLength: nalUnitHeaderLength,
-                        extensions: nil,
-                        formatDescriptionOut: &formatDescriptionOut
-                    )
-                    return formatDescriptionOut
                 }
             }
         }
+        return formatDescriptionOut
     }
 }
 
