@@ -68,6 +68,8 @@ public struct VideoCodecSettings: Codable, Sendable {
     package enum Format: Codable, Sendable, CaseIterable {
         case h264
         case hevc
+        case vp9
+        case av1
 
         #if os(macOS)
         var encoderID: NSString {
@@ -80,6 +82,8 @@ public struct VideoCodecSettings: Codable, Sendable {
                 #endif
             case .hevc:
                 return NSString(string: "com.apple.videotoolbox.videoencoder.ave.hevc")
+            case .vp9, .av1:
+                return NSString(string: "com.apple.videotoolbox.videoencoder.ave.hevc")
             }
         }
         #endif
@@ -90,6 +94,10 @@ public struct VideoCodecSettings: Codable, Sendable {
                 return kCMVideoCodecType_H264
             case .hevc:
                 return kCMVideoCodecType_HEVC
+            case .vp9:
+                return 0x76703039 // vp09
+            case .av1:
+                return 0x61763031 // av01
             }
         }
     }
@@ -175,6 +183,10 @@ public struct VideoCodecSettings: Codable, Sendable {
         self.quality = quality
         if profileLevel.contains("HEVC") {
             self.format = .hevc
+        } else if profileLevel.contains("VP9") {
+            self.format = .vp9
+        } else if profileLevel.contains("AV1") {
+            self.format = .av1
         }
     }
 

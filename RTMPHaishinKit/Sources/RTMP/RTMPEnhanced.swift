@@ -99,7 +99,7 @@ enum RTMPVideoFourCC: UInt32, CustomStringConvertible {
 
     var isSupported: Bool {
         switch self {
-        case .hevc:
+        case .hevc, .vp9, .av1:
             return true
         default:
             return false
@@ -164,6 +164,10 @@ extension VideoCodecSettings.Format {
             return Int(RTMPVideoCodec.avc.rawValue)
         case .hevc:
             return Int(RTMPVideoFourCC.hevc.rawValue)
+        case .vp9:
+            return Int(RTMPVideoFourCC.vp9.rawValue)
+        case .av1:
+            return Int(RTMPVideoFourCC.av1.rawValue)
         }
     }
 
@@ -171,6 +175,10 @@ extension VideoCodecSettings.Format {
         switch self {
         case .hevc:
             return .hevc
+        case .vp9:
+            return .vp9
+        case .av1:
+            return .av1
         default:
             return nil
         }

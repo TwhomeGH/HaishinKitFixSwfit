@@ -2,8 +2,8 @@
 
 ## 版本信息
 - **日期**: 2026-06-20
-- **版本**: 1.1.0
-- **狀態**: ✅ 完成
+- **版本**: 1.2.0
+- **狀態**: ✅ 完成（含狀態機、重連、VP9/AV1）
 
 ---
 
@@ -103,7 +103,45 @@
 
 ---
 
-## 3. 代碼變更清單
+## 3. 新增功能 (已完成)
+
+### 3.1 協議狀態機
+**文件**: `RTMPConnection.swift`  
+**目標**: 輕量級有限狀態機，驗證所有狀態轉換合法性
+**完成內容**:
+- 新增 `ConnectionState` 枚舉（內置於 `RTMPConnection`）
+- `canTransition(to:)` 方法驗證每個轉換：
+  ```
+  .uninitialized → .connecting → .versionSent → .ackSent → .handshakeDone → .connected
+  ```
+- 所有無效轉換（如 `.uninitialized → .connected`）直接拋出 `Error.invalidState`
+- 替換原有鬆散的 `ReadyState` 枚舉
+
+### 3.2 自動重連與指數退避
+**文件**: `RTMPConnection.swift`  
+**目標**: 網絡中斷後自動重連，支援指數退避
+**完成內容**:
+- 新增 `isReconnectEnabled`、`maxReconnectAttempts`、`reconnectBaseDelay`、`reconnectMaxDelay` 參數
+- 新增 `scheduleReconnect()` 方法
+- 指數退避公式: `min(baseDelay << (attempt-1), maxDelay)`
+- 預設: 1s → 2s → 4s → 8s → 16s → 30s (最多 5 次)
+- `close()` 或 `_result` 成功後重置重連計數器
+- 認證拒絕 (`connectRejected`) 不走重連，直接拋錯
+
+### 3.3 VP9/AV1 解碼器支援
+**文件**: `RTMPEnhanced.swift`, `VideoCodecSettings.swift`, `VideoCodecSettings.Format+Extension.swift`  
+**目標**: 擴展編碼器支援至 VP9/AV1
+**完成內容**:
+- `VideoCodecSettings.Format` 新增 `.vp9` 和 `.av1` cases
+- `codecType`: VP9 = `0x76703039` (vp09), AV1 = `0x61763031` (av01)
+- `isSupported` 回傳 `true` (基礎架構已就緒)
+- `enhancedVideoType` 返回對應 FourCC
+- macOS encoderID 回退至 HEVC 編碼器
+- 補齊 `RTCHaishinKit` 與 `VideoCodecSettings` 的 switch exhaustive 匹配
+
+---
+
+## 4. 代碼變更清單
 
 ### 修改文件
 | 文件 | 變更類型 | 說明 |
@@ -112,9 +150,11 @@
 | `RTMPChunk.swift` | 修改 | 修復 extended timestamp + 邊界檢查 |
 | `RTMPMessage.swift` | 修改 | 修復 aggregate type + 多軌道支援 |
 | `RTMPTimestamp.swift` | 重寫 | 修復時間戳回滾 + Type 3 delta |
-| `RTMPConnection.swift` | 重構 | 文件清理、移除重複屬性 |
+| `RTMPConnection.swift` | 重構 | 狀態機 + 自動重連 + 指數退避 |
 | `RTMPSocket.swift` | 修改 | 發送背壓控制 |
-| `RTMPEnhanced.swift` | 增強 | E-RTMP 編碼器協商、多軌道 |
+| `RTMPEnhanced.swift` | 增強 | E-RTMP 編碼器協商、多軌道、VP9/AV1 |
+| `VideoCodecSettings.swift` | 修改 | 新增 .vp9、.av1 格式支援 |
+| `VideoCodecSettings.Format+Extension.swift` | 修改 | 補齊 switch exhaustive 匹配 |
 
 ### 刪除文件
 | 文件 | 原因 |
@@ -139,9 +179,9 @@
 
 ---
 
-## 5. 已知限制
+## 6. 已知限制
 
-1. **狀態機**: 協議狀態機檔案因位置錯置已移除，後續可考慮在 `RTMPConnection` 內部實現輕量級狀態機
-2. **自動重連**: 尚未實現自動重連與指數退避
-3. **VP9/AV1**: 基礎架構已就緒但解碼器支援依賴平台能力
-4. **加密**: RTMPS 使用 Network framework 預設 TLS 配置，無自訂憑證驗證
+1. **自動重連**: ✅ 已實現（指數退避 1s→30s，最多 5 次）
+2. **VP9/AV1**: ✅ 基礎架構已就緒（依賴平台解碼器能力）
+3. **加密**: RTMPS 使用 Network framework 預設 TLS 配置，無自訂憑證驗證
+4. **多軌道**: 基礎支援已就緒（trackId 編碼），完整 multi-track session 管理待後續

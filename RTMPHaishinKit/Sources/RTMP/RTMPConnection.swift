@@ -20,6 +20,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         case requestTimedOut
         /// A request fails.
         case requestFailed(response: RTMPResponse)
+        /// Max reconnect attempts reached.
+        case reconnectFailed
     }
 
     /// The default time to wait for TCP/IP Handshake done.
@@ -44,6 +46,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public static let defaultObjectEncoding: RTMPObjectEncoding = .amf0
     /// The default an rtmp request time out value (ms).
     public static let defaultRequestTimeout: UInt64 = 3000
+    /// The default max reconnect attempts.
+    public static let defaultMaxReconnectAttempts: Int = 5
+    /// The default reconnect base delay in seconds.
+    public static let defaultReconnectBaseDelay: UInt64 = 1
+    /// The default reconnect max delay in seconds.
+    public static let defaultReconnectMaxDelay: UInt64 = 30
     /// The supported audio fourCc Information.
     public static let supportedAudioFourCcInfoMap: AMFObject = [
         RTMPAudioFourCC.opus.description: FourCcInfoMask.canEncode.rawValue
@@ -100,6 +108,34 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
         func status(_ description: String) -> RTMPStatus {
             return .init(code: rawValue, level: level, description: description)
+        }
+    }
+
+    /// Connection state machine
+    enum ConnectionState: Hashable {
+        case uninitialized
+        case connecting
+        case versionSent
+        case ackSent
+        case handshakeDone
+        case connected
+        case disconnected
+        case error
+
+        func canTransition(to newState: ConnectionState) -> Bool {
+            switch (self, newState) {
+            case (.uninitialized, .connecting),
+                 (.connecting, .versionSent),
+                 (.versionSent, .ackSent),
+                 (.ackSent, .handshakeDone),
+                 (.handshakeDone, .connected),
+                 (.connected, .disconnected),
+                 (_, .disconnected),
+                 (_, .error):
+                return true
+            default:
+                return false
+            }
         }
     }
 
@@ -174,13 +210,20 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public private(set) var uri: URL?
     /// The instance connected to server(true) or not(false).
     @Published public private(set) var connected = false
+    /// Whether auto-reconnect is enabled.
+    public private(set) var isReconnectEnabled = false
+    /// The max reconnect attempts.
+    public let maxReconnectAttempts: Int
+    /// The reconnect base delay in seconds.
+    public let reconnectBaseDelay: UInt64
+    /// The reconnect max delay in seconds.
+    public let reconnectMaxDelay: UInt64
 
     var newTransaction: Int {
         currentTransactionId += 1
         return currentTransactionId
     }
 
-    private var stateMachine: RTMPConnectionStateMachine?
     private var socket: RTMPSocket?
     private var chunks: [UInt16: RTMPChunkMessageHeader] = [:]
     private var streams: [RTMPStream] = []
@@ -205,6 +248,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     private var networkMonitor: NetworkMonitor?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
     private var currentTransactionId = RTMPConnection.connectTransactionId
+    private var state: ConnectionState = .uninitialized {
+        didSet {
+            logger.info(oldValue, "=>", state)
+            connected = (state == .connected)
+        }
+    }
+    private var command: String = ""
+    private var reconnectAttempts = 0
+    private var isReconnecting = false
 
     /// Creates a new connection with E-RTMP command parameters.
     ///
@@ -231,7 +283,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         timeout: Int = RTMPConnection.defaultTimeout,
         requestTimeout: UInt64 = RTMPConnection.defaultRequestTimeout,
         chunkSize: Int = RTMPConnection.defaultChunkSizeS,
-        qualityOfService: DispatchQoS = .userInitiated) {
+        qualityOfService: DispatchQoS = .userInitiated,
+        isReconnectEnabled: Bool = false,
+        maxReconnectAttempts: Int = RTMPConnection.defaultMaxReconnectAttempts,
+        reconnectBaseDelay: UInt64 = RTMPConnection.defaultReconnectBaseDelay,
+        reconnectMaxDelay: UInt64 = RTMPConnection.defaultReconnectMaxDelay) {
         self.swfUrl = swfUrl
         self.pageUrl = pageUrl
         self.flashVer = flashVer
@@ -243,6 +299,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.requestTimeout = requestTimeout
         self.chunkSize = chunkSize
         self.qualityOfService = qualityOfService
+        self.isReconnectEnabled = isReconnectEnabled
+        self.maxReconnectAttempts = maxReconnectAttempts
+        self.reconnectBaseDelay = reconnectBaseDelay
+        self.reconnectMaxDelay = reconnectMaxDelay
     }
 
     deinit {
@@ -278,18 +338,30 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     /// Creates a two-way connection to an application on RTMP Server.
     public func connect(_ command: String, arguments: (any Sendable)?...) async throws -> RTMPResponse {
-        guard !connected else {
+        guard state.canTransition(to: .connecting) else {
             throw Error.invalidState
         }
         guard let uri = URL(string: command), let scheme = uri.scheme, let host = uri.host, Self.supportedProtocols.contains(scheme) else {
             throw Error.unsupportedCommand(command)
         }
+        self.command = command
         self.uri = uri
         self.arguments = arguments
+        isReconnecting = false
+        reconnectAttempts = 0
+        return try await performConnect(command, arguments: arguments)
+    }
+
+    private func performConnect(_ command: String, arguments: [(any Sendable)?]) async throws -> RTMPResponse {
+        guard let uri = URL(string: command), let scheme = uri.scheme, let host = uri.host else {
+            throw Error.unsupportedCommand(command)
+        }
+        self.uri = uri
         let secure = uri.scheme == "rtmps" || uri.scheme == "rtmpts"
         handshake.clear()
         chunks.removeAll()
         sequence = 0
+        state = .connecting
         chunkSizeC = RTMPChunkMessageHeader.chunkSize
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
@@ -309,7 +381,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         return
                     }
                     do {
-                        readyState = .versionSent
+                        state = .versionSent
                         await socket.send(handshake.c0c1packet)
                         operations[Self.connectTransactionId] = continutation
                         for await data in await socket.recv() {
@@ -330,10 +402,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 await stream.dispatch(.reset)
                 await stream.createStream()
             }
+            reconnectAttempts = 0
             return result
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()
             outputContinuation = nil
+            try? await scheduleReconnect()
             switch error {
             case .connectionTimedOut:
                 throw Error.connectionTimedOut
@@ -346,31 +420,50 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             switch error {
             case .requestFailed(let response):
                 guard let status = response.status else {
+                    try? await scheduleReconnect()
                     throw error
                 }
-                // Handles an RTMP auth.
                 if status.code == RTMPConnection.Code.connectRejected.rawValue {
                     switch authenticator.makeCommand(command, status: status) {
                     case .success(let command):
                         await socket.close()
-                        return try await connect(command, arguments: arguments)
+                        return try await performConnect(command, arguments: arguments)
                     case .failure:
+                        try? await scheduleReconnect()
                         throw error
                     }
                 } else {
+                    try? await scheduleReconnect()
                     throw error
                 }
             default:
+                try? await scheduleReconnect()
                 throw error
             }
         } catch {
+            try? await scheduleReconnect()
             throw error
+        }
+    }
+
+    private func scheduleReconnect() async throws {
+        guard isReconnectEnabled && !isReconnecting && reconnectAttempts < maxReconnectAttempts else {
+            return
+        }
+        isReconnecting = true
+        reconnectAttempts += 1
+        let delay = min(reconnectBaseDelay << (reconnectAttempts - 1), reconnectMaxDelay)
+        logger.info("Reconnecting in \(delay)s (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
+        try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+        isReconnecting = false
+        if reconnectAttempts <= maxReconnectAttempts {
+            try? await performConnect(command, arguments: arguments)
         }
     }
 
     /// Closes the connection from the server.
     public func close() async throws {
-        guard readyState != .uninitialized else {
+        guard state != .uninitialized else {
             throw Error.invalidState
         }
 
@@ -387,12 +480,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         await socket?.close()
         await networkMonitor?.stopRunning()
 
-        let status = readyState == .handshakeDone ?
+        let status = state == .connected ?
             Code.connectClosed.status("") :
             Code.connectFailed.status("")
 
-        connected = false
-        readyState = .uninitialized
+        state = .disconnected
 
         for (_, operation) in operations {
             operation.resume(throwing: Error.requestFailed(response: .init(status: status)))
@@ -427,21 +519,21 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     private func listen(_ data: Data) async throws {
-        switch readyState {
+        switch state {
         case .versionSent:
             handshake.put(data)
             guard handshake.hasS0S1Packet else {
                 return
             }
             await socket?.send(handshake.c2packet())
-            readyState = .ackSent
+            state = .ackSent
             try await listen(.init())
         case .ackSent:
             handshake.put(data)
             guard handshake.hasS2Packet else {
                 return
             }
-            readyState = .handshakeDone
+            state = .handshakeDone
             guard let message = makeConnectionMessage() else {
                 try await close()
                 break
@@ -485,7 +577,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 sequence += 1
             }
         case .reset:
-            // noop
             break
         }
         for stream in streams {
@@ -525,7 +616,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 switch message.commandName {
                 case "_result":
                     if message.transactionId == Self.connectTransactionId {
-                        connected = true
+                        state = .connected
                         chunkSizeS = chunkSize
                         doOutput(.zero, chunkStreamId: .control, message: RTMPSetChunkSizeMessage(size: UInt32(chunkSizeS)))
                     }
@@ -586,7 +677,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         return RTMPCommandMessage(
             streamId: 0,
             transactionId: Self.connectTransactionId,
-            // "connect" must be a objectEncoding = 0
             objectEncoding: .amf0,
             commandName: "connect",
             commandObject: commandObject,
@@ -596,12 +686,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 }
 
 extension RTMPConnection {
-    /// The object encoding for this RTMPConnection instance.
     public var objectEncoding: RTMPObjectEncoding {
         RTMPConnection.defaultObjectEncoding
     }
 
-    /// The stream of events you receive RTMP status events from a service.
     public var status: AsyncStream<RTMPStatus> {
         AsyncStream { continuation in
             statusContinuation = continuation
@@ -616,18 +704,5 @@ extension RTMPConnection {
     private var chunkSizeS: Int {
         get { outputBuffer.chunkSize }
         set { outputBuffer.chunkSize = newValue }
-    }
-
-    private enum ReadyState {
-        case uninitialized
-        case versionSent
-        case ackSent
-        case handshakeDone
-    }
-
-    private var readyState: ReadyState = .uninitialized {
-        didSet {
-            logger.info(oldValue, "=>", readyState)
-        }
     }
 }
