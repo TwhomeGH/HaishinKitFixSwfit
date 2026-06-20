@@ -1,51 +1,51 @@
-# Network Layer
+# 網路層
 
-## Overview
+## 概述
 
-The network layer in HaishinKit.swift handles TCP/IP connections and protocol transport using Apple's Network framework (NWConnection). It provides:
+HaishinKit.swift 的網路層使用 Apple 的 Network 框架（NWConnection）處理 TCP/IP 連線與通訊協定傳輸。提供：
 
-- Secure socket connections (TLS/SSL)
-- Real-time data transmission 
-- Network monitoring and reporting
-- Connection state management
-- Buffer management
+- 安全 Socket 連線（TLS/SSL）
+- 即時資料傳輸
+- 網路監控與回報
+- 連線狀態管理
+- 緩衝區管理
 
-## Architecture
+## 架構
 
 ```
 ┌─────────────────────────────────────┐
 │      RTMPSocket                     │
-│  NWConnection wrapper              │
+│  NWConnection 包裝                  │
 ├─────────────────────────────────────┤
 │      NetworkTransportReporter       │
-│  Transport monitoring              │
+│  傳輸監控                            │
 ├─────────────────────────────────────┤
 │      NetworkMonitor                 │
-│  Connection event monitoring       │
+│  連線事件監控                        │
 └─────────────────────────────────────┘
 ```
 
 ## RTMPSocket
 
-### Core Functionality
+### 核心功能
 
 ```swift
 final actor RTMPSocket {
-    // Connect to host/port using NWConnection
+    // 使用 NWConnection 連線到主機/連接埠
     func connect(_ name: String, port: Int) async throws
     
-    // Send data chunks
+    // 發送資料
     func send(_ data: Data)
     
-    // Receive data stream
+    // 接收資料串流
     func recv() -> AsyncStream<Data>
     
-    // Close connection
+    // 關閉連線
     func close(_ error: NWError? = nil)
 }
 ```
 
-### TLS Configuration
+### TLS 設定
 
 ```swift
 init(qualityOfService: DispatchQoS, securityLevel: StreamSocketSecurityLevel) {
@@ -58,19 +58,19 @@ init(qualityOfService: DispatchQoS, securityLevel: StreamSocketSecurityLevel) {
 }
 ```
 
-### Security Levels
+### 安全等級
 
-| Level | Description |
-|-------|-------------|
-| `none` | Plain TCP connection |
-| `negotiatedSSL` | TLS negotiation |
-| `ssLv2` | SSL version 2 |
-| `ssLv3` | SSL version 3 |
-| `tlSv1` | TLS version 1 |
+| 等級 | 說明 |
+|------|------|
+| `none` | 純 TCP 連線 |
+| `negotiatedSSL` | TLS 協商 |
+| `ssLv2` | SSL 版本 2 |
+| `ssLv3` | SSL 版本 3 |
+| `tlSv1` | TLS 版本 1 |
 
 ## NetworkMonitor
 
-### Event Types
+### 事件類型
 
 ```swift
 public enum NetworkMonitorEvent {
@@ -80,23 +80,23 @@ public enum NetworkMonitorEvent {
 }
 ```
 
-### Monitoring Features
+### 監控功能
 
-- Bandwidth reporting
-- Connection status monitoring
-- Buffer management
-- Network viability checks
+- 頻寬回報
+- 連線狀態監控
+- 緩衝區管理
+- 網路可用性檢查
 
 ## NetworkTransportReporter
 
-### Transport Reporting
+### 傳輸回報
 
 ```swift
 func makeNetworkMonitor() async -> NetworkMonitor
 func makeNetworkTransportReport() -> NetworkTransportReport
 ```
 
-### Report Structure
+### 回報結構
 
 ```swift
 public struct NetworkTransportReport {
@@ -106,9 +106,9 @@ public struct NetworkTransportReport {
 }
 ```
 
-## Connection State Management
+## 連線狀態管理
 
-### NWConnection States
+### NWConnection 狀態
 
 ```swift
 public enum NWConnection.State {
@@ -122,9 +122,9 @@ public enum NWConnection.State {
 }
 ```
 
-## Buffer Management
+## 緩衝區管理
 
-### Chunk Buffering
+### Chunk 緩衝
 
 ```swift
 final class RTMPChunkBuffer {
@@ -136,19 +136,19 @@ final class RTMPChunkBuffer {
 }
 ```
 
-### Chunk Types
+### Chunk 類型
 
-| Type | Header Size | Description |
-|------|-------------|-------------|
-| 0 | 11 bytes | Full header (timestamp, length, type, stream ID) |
-| 1 | 7 bytes | Timestamp + length + type |
-| 2 | 3 bytes | Timestamp only |
-| 3 | 0 bytes | No header (continuation from previous chunk) |
+| 類型 | 標頭大小 | 說明 |
+|------|----------|------|
+| 0 | 11 bytes | 完整標頭（時間戳、長度、類型、串流 ID） |
+| 1 | 7 bytes | 時間戳 + 長度 + 類型 |
+| 2 | 3 bytes | 僅時間戳 |
+| 3 | 0 bytes | 無標頭（承接前一個 Chunk） |
 
-## Code References
+## 程式碼參考
 
-- RTMPSocket.swift: Network socket implementation
-- NetworkMonitor.swift: Connection monitoring
-- NetworkTransportReporter.swift: Transport reporting
-- RTMPChunkBuffer.swift: Chunk buffer management
-- RTMPChunk.swift: Chunking mechanism
+- RTMPSocket.swift：網路 Socket 實作
+- NetworkMonitor.swift：連線監控
+- NetworkTransportReporter.swift：傳送回報
+- RTMPChunkBuffer.swift：Chunk 緩衝管理
+- RTMPChunk.swift：Chunk 分塊機制

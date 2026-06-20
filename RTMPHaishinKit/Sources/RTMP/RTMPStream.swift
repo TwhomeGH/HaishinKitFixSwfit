@@ -621,6 +621,9 @@ public actor RTMPStream {
     }
 
     func createStream() async {
+        guard id == RTMPStream.defaultID else {
+            return
+        }
         if let fcPublishName {
             // FMLE-compatible sequences
             async let _ = connection?.call("releaseStream", arguments: fcPublishName)
@@ -841,6 +844,13 @@ extension RTMPStream: _Stream {
     }
 
     public func dispatch(_ event: NetworkMonitorEvent) async {
+        switch event {
+        case .reset:
+            id = RTMPStream.defaultID
+            readyState = .idle
+        default:
+            break
+        }
         await bitRateStrategy?.adjustBitrate(event, stream: self)
         currentFPS = frameCount
         frameCount = 0

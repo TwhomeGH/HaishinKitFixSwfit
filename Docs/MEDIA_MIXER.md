@@ -1,43 +1,43 @@
 # Media Mixer
 
-## Overview
+## 概述
 
-The MediaMixer in HaishinKit.swift is a core component responsible for managing audio and video streams from multiple sources. It provides:
+MediaMixer 是 HaishinKit.swift 的核心元件，負責管理來自多個來源的影音串流。提供：
 
-- Multi-track audio/video mixing
-- Hardware-accelerated encoding/decoding
-- Real-time effects processing
-- Screen capture capabilities
-- Stream routing to different outputs
+- 多軌影音混合
+- 硬體加速編解碼
+- 即時特效處理
+- 螢幕擷取功能
+- 串流路由到不同輸出目標
 
-## Architecture
+## 架構
 
 ```
 ┌─────────────────────────────────────┐
 │      MediaMixer                     │
-│  Core stream management             │
+│  核心串流管理                        │
 ├─────────────────────────────────────┤
 │      Audio Mixer                    │
-│  Audio track management             │
+│  音訊軌道管理                        │
 ├─────────────────────────────────────┤
 │      Video Mixer                    │
-│  Video track management             │
+│  視訊軌道管理                        │
 ├─────────────────────────────────────┤
-│      Stream Outputs                 │
-│  Stream routing to destinations     │
+│      Stream 輸出                    │
+│  串流路由到目的地                    │
 └─────────────────────────────────────┘
 ```
 
-## Key Components
+## 核心元件
 
 ### MediaMixer
 
-The main mixer class manages:
-- Multiple video/audio tracks 
-- Capture session configuration
-- Output routing
-- Stream monitoring
-- Effects processing
+主要的混合器類別管理：
+- 多個視訊/音訊軌道
+- 擷取 Session 設定
+- 輸出路由
+- 串流監控
+- 特效處理
 
 ```swift
 actor MediaMixer {
@@ -50,7 +50,7 @@ actor MediaMixer {
 
 ### VideoMixerSettings
 
-Controls video mixing parameters:
+控制視訊混合參數：
 ```swift
 public struct VideoMixerSettings {
     public var mode: VideoMixerMode
@@ -62,7 +62,7 @@ public struct VideoMixerSettings {
 
 ### AudioMixerSettings
 
-Controls audio mixing parameters:
+控制音訊混合參數：
 ```swift
 public struct AudioMixerSettings {
     public var tracks: [AudioTrackSettings]
@@ -70,15 +70,15 @@ public struct AudioMixerSettings {
 }
 ```
 
-## Stream Management
+## 串流管理
 
 ### StreamOutput
 
-Stream outputs can be:
-- RTMPStream (for publishing)
-- AVPlayer (for playback)
-- View (for display)
-- ScreenCapture (for screen recording)
+串流輸出可以是：
+- RTMPStream（發布用）
+- AVPlayer（播放用）
+- View（顯示用）
+- ScreenCapture（螢幕錄製用）
 
 ```swift
 public protocol StreamOutput {
@@ -87,66 +87,59 @@ public protocol StreamOutput {
 }
 ```
 
-## Capture Sources
+## 擷取來源
 
-### Video Capture
-
-```swift
-func attachVideo(_ device: AVCaptureDevice?, track: UInt8) async throws {
-    // Attach camera or screen capture
-}
-
-func setVideoOrientation(_ orientation: AVCaptureVideoOrientation) async throws {
-    // Set video orientation
-}
-```
-
-### Audio Capture
+### 視訊擷取
 
 ```swift
-func attachAudio(_ device: AVCaptureDevice?) async throws {
-    // Attach microphone or system audio
-}
+func attachVideo(_ device: AVCaptureDevice?, track: UInt8) async throws
+func setVideoOrientation(_ orientation: AVCaptureVideoOrientation) async throws
 ```
 
-## Effects Processing
+### 音訊擷取
 
-### VideoEffects
+```swift
+func attachAudio(_ device: AVCaptureDevice?) async throws
+```
 
-Supports various video effects:
-- Filters (blur, sharpen)
-- Transformations (rotation, scaling)
-- Overlay graphics
-- Color correction
+## 特效處理
 
-### AudioEffects
+### 視訊特效
 
-Supports audio effects:
-- Filters (low-pass, high-pass)
-- Volume control
-- Equalization
-- Noise reduction
+支援多種視訊特效：
+- 濾鏡（模糊、銳化）
+- 變換（旋轉、縮放）
+- 疊加圖形
+- 色彩校正
 
-## Hardware Acceleration
+### 音訊特效
 
-### VideoToolbox Integration
+支援音訊特效：
+- 濾波器（低通、高通）
+- 音量控制
+- 等化器
+- 降噪
 
-Uses VideoToolbox for:
-- H.264/H.265 encoding
-- VP9/AV1 decoding
-- Hardware-accelerated processing
+## 硬體加速
 
-### AudioToolbox Integration
+### VideoToolbox 整合
 
-Uses AudioToolbox for:
-- AAC/Opus encoding
-- Audio processing filters
-- Real-time audio manipulation
+使用 VideoToolbox 進行：
+- H.264/H.265 編碼
+- VP9/AV1 解碼
+- 硬體加速處理
 
-## Code References
+### AudioToolbox 整合
 
-- MediaMixer.swift: Main mixer implementation
-- VideoMixerSettings.swift: Video settings management
-- AudioMixerSettings.swift: Audio settings management
-- StreamOutput.swift: Stream output protocol
-- CaptureSession.swift: Capture session handling
+使用 AudioToolbox 進行：
+- AAC/Opus 編碼
+- 音訊處理濾波器
+- 即時音訊操作
+
+## 程式碼參考
+
+- MediaMixer.swift：主要混合器實作
+- VideoMixerSettings.swift：視訊設定管理
+- AudioMixerSettings.swift：音訊設定管理
+- StreamOutput.swift：串流輸出協定
+- CaptureSession.swift：擷取 Session 處理

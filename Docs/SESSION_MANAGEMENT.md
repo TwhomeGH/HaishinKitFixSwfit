@@ -1,32 +1,32 @@
-# Stream Session Management
+# Stream Session 管理
 
-## Overview
+## 概述
 
-StreamSession management in HaishinKit.swift provides a unified interface for handling different streaming protocols (RTMP, SRT, WebRTC, MoQ). The session lifecycle is managed through the factory pattern.
+HaishinKit.swift 的 StreamSession 管理提供統一的介面來處理不同的串流通訊協定（RTMP、SRT、WebRTC、MoQ）。Session 的生命週期透過 Factory 模式管理。
 
-## Architecture
+## 架構
 
 ```
 ┌─────────────────────────────────────┐
 │      StreamSessionBuilderFactory    │
-│  Factory registration and creation  │
+│  Factory 註冊與建立                  │
 ├─────────────────────────────────────┤
 │      StreamSessionBuilder           │
-│  URL parsing and configuration      │
+│  URL 解析與設定                      │
 ├─────────────────────────────────────┤
 │      StreamSession                  │
-│  Protocol-specific implementation   │
+│  通訊協定特定實作                    │
 └─────────────────────────────────────┘
 ```
 
-## Factory Pattern
+## Factory 模式
 
 ### StreamSessionBuilderFactory
 
-The shared factory manages protocol-specific session factories:
+共用 Factory 管理各通訊協定的 Session Factory：
 
 ```swift
-// Register factories
+// 註冊 Factory
 await StreamSessionBuilderFactory.shared.register(RTMPSessionFactory())
 await StreamSessionBuilderFactory.shared.register(SRTSessionFactory())
 await StreamSessionBuilderFactory.shared.register(RTCHaishinKit.RTCSessionFactory())
@@ -35,10 +35,10 @@ await StreamSessionBuilderFactory.shared.register(MoQTHaishinKit.MoQSessionFacto
 
 ### StreamSessionBuilder
 
-The builder creates sessions with:
-- URL parsing
-- Mode selection (publish/playback)
-- Configuration parameters
+Builder 負責建立 Session：
+- URL 解析
+- 模式選擇（publish/playback）
+- 設定參數
 
 ```swift
 let session = try await StreamSessionBuilderFactory.shared
@@ -47,48 +47,36 @@ let session = try await StreamSessionBuilderFactory.shared
     .build()
 ```
 
-## RTMP Session Implementation
+## RTMP Session 實作
 
 ### RTMPSession
 
-The RTMP-specific session implementation:
+RTMP 特定的 Session 實作：
 
 ```swift
 actor RTMPSession: StreamSession {
     private let uri: RTMPURL
     private let mode: StreamSessionMode
-    private lazy var connection: RTMPConnection = {
-        switch mode {
-        case .publish:
-            return RTMPConnection()
-        case .playback:
-            return RTMPConnection(flashVer: "MAC 9,0,124,2")
-        }
-    }()
-    private lazy var _stream: RTMPStream = {
-        switch mode {
-        case .publish:
-            return RTMPStream(connection: connection, fcPublishName: uri.streamName)
-        case .playback:
-            return RTMPStream(connection: connection)
-        }
-    }()
+    private let connection: RTMPConnection
+    private let _stream: RTMPStream
 }
 ```
 
-## Session Lifecycle
+與舊版不同，`connection` 與 `_stream` 現在改為 **eager init**（立即初始化），避免 lazy init 導致的 createStream 競態條件。
 
-### Connect Flow
+## Session 生命週期
+
+### 連線流程
 
 ```swift
 func connect(_ disconnected: @Sendable @escaping () -> Void) async throws {
-    // 1. Connect to RTMP server
+    // 1. 連線到 RTMP 伺服器
     _ = try await connection.connect(uri.command)
     
-    // 2. Create stream (if needed)
-    _ = try await _stream.createStream()
+    // 2. 確保串流已建立
+    try await _stream.createStream()
     
-    // 3. Publish/Play stream
+    // 3. 發布/播放串流
     switch mode {
     case .publish:
         _ = try await _stream.publish(uri.streamName)
@@ -96,16 +84,16 @@ func connect(_ disconnected: @Sendable @escaping () -> Void) async throws {
         _ = try await _stream.play(uri.streamName)
     }
     
-    // 4. Monitor connection status
+    // 4. 監控連線狀態
     disconnctedTask = Task {
         for await event in await connection.status {
-            // Handle disconnect events
+            // 處理斷線事件
         }
     }
 }
 ```
 
-## Stream State Management
+## 串流狀態管理
 
 ### StreamSessionReadyState
 
@@ -118,18 +106,18 @@ public enum StreamSessionReadyState: String, CaseIterable {
 }
 ```
 
-### AsyncStreamed Property
+### AsyncStreamed 屬性
 
-The ready state is managed as an async stream:
+readyState 以非同步串流管理：
 
 ```swift
 @AsyncStreamed(.closed)
 private(set) var readyState: AsyncStream<StreamSessionReadyState>
 ```
 
-## Error Handling
+## 錯誤處理
 
-### Common RTMP Errors
+### 常見 RTMP 錯誤
 
 ```swift
 public enum Error: Swift.Error {
@@ -142,7 +130,7 @@ public enum Error: Swift.Error {
 }
 ```
 
-## Configuration Parameters
+## 設定參數
 
 ### StreamSessionConfiguration
 
@@ -155,10 +143,10 @@ public protocol StreamSessionConfiguration {
 }
 ```
 
-## Code References
+## 程式碼參考
 
-- StreamSessionBuilderFactory.swift: Factory management
-- StreamSessionBuilder.swift: Session builder 
-- RTMPSession.swift: RTMP session implementation
-- RTMPStream.swift: Stream management
-- RTMPConnection.swift: Connection handling
+- StreamSessionBuilderFactory.swift：Factory 管理
+- StreamSessionBuilder.swift：Session Builder
+- RTMPSession.swift：RTMP Session 實作
+- RTMPStream.swift：串流管理
+- RTMPConnection.swift：連線處理

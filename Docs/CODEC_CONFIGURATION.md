@@ -1,19 +1,19 @@
-# Codec Configuration
+# 編解碼器設定
 
-## Overview
+## 概述
 
-Codec configuration in HaishinKit.swift provides flexible settings for both video and audio encoding. The framework supports multiple codecs with various quality levels and bitrates.
+HaishinKit.swift 的編解碼器設定提供彈性的視訊與音訊編碼選項。框架支援多種編解碼格式，具備各種品質等級與位元率。
 
-## Video Codecs
+## 視訊編解碼器
 
-### Supported Formats
+### 支援格式
 
-| Format | Description |
-|--------|-------------|
-| H.264 | Advanced Video Coding (AVC) |
-| H.265 | High Efficiency Video Coding (HEVC) |
-| VP9 | Google's video codec |
-| AV1 | Alliance for Open Media codec |
+| 格式 | 說明 |
+|------|------|
+| H.264 | 先進視訊編碼（AVC） |
+| H.265 | 高效視訊編碼（HEVC） |
+| VP9 | Google 視訊編碼 |
+| AV1 | 開放媒體聯盟編碼 |
 
 ### VideoCodecSettings
 
@@ -28,7 +28,7 @@ public struct VideoCodecSettings {
 }
 ```
 
-### Format Enum
+### Format 列舉
 
 ```swift
 public enum Format: String, CaseIterable {
@@ -39,15 +39,15 @@ public enum Format: String, CaseIterable {
 }
 ```
 
-## Audio Codecs
+## 音訊編解碼器
 
-### Supported Formats
+### 支援格式
 
-| Format | Description |
-|--------|-------------|
-| AAC | Advanced Audio Coding |
-| Opus | Internet audio codec |
-| PCM | Pulse Code Modulation |
+| 格式 | 說明 |
+|------|------|
+| AAC | 先進音訊編碼 |
+| Opus | 網際網路音訊編碼 |
+| PCM | 脈衝編碼調變 |
 
 ### AudioCodecSettings
 
@@ -60,7 +60,7 @@ public struct AudioCodecSettings {
 }
 ```
 
-### Format Enum
+### Format 列舉
 
 ```swift
 public enum Format: String, CaseIterable {
@@ -70,7 +70,7 @@ public enum Format: String, CaseIterable {
 }
 ```
 
-## Bitrate Control Modes
+## 位元率控制模式
 
 ### BitRateMode
 
@@ -82,60 +82,60 @@ public enum BitRateMode: String {
 }
 ```
 
-## Configuration Parameters
+## 設定參數
 
-### Video Settings
+### 視訊設定
 
-| Parameter | Default | Description |
-|----------|---------|-------------|
-| `videoSize` | 1280x720 | Resolution |
-| `expectedFrameRate` | 30.0 | Target FPS |
-| `bitRate` | 2000000 | Bitrate (bps) |
-| `bitRateMode` | average | Control mode |
-| `isLowLatencyRateControlEnabled` | false | Low latency |
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| `videoSize` | 1280x720 | 解析度 |
+| `expectedFrameRate` | 30.0 | 目標 FPS |
+| `bitRate` | 2000000 | 位元率（bps） |
+| `bitRateMode` | average | 控制模式 |
+| `isLowLatencyRateControlEnabled` | false | 低延遲模式 |
 
-### Audio Settings
+### 音訊設定
 
-| Parameter | Default | Description |
-|----------|---------|-------------|
-| `sampleRate` | 44100.0 | Audio sample rate |
-| `bitRate` | 128000 | Bitrate (bps) |
-| `isLowLatencyRateControlEnabled` | false | Low latency |
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| `sampleRate` | 44100.0 | 音訊取樣率 |
+| `bitRate` | 128000 | 位元率（bps） |
+| `isLowLatencyRateControlEnabled` | false | 低延遲模式 |
 
-## Codec Specific Settings
+## 編解碼器特定設定
 
-### H.264 Configuration
-
-```swift
-// Uses VideoToolbox with H.264 encoder
-// Supports baseline, main, high profiles
-```
-
-### H.265 Configuration
+### H.264 設定
 
 ```swift
-// Uses VideoToolbox with HEVC encoder
-// Supports various HEVC profiles
+// 使用 VideoToolbox H.264 編碼器
+// 支援 baseline、main、high profiles
 ```
 
-### AAC Configuration
+### H.265 設定
 
 ```swift
-// Uses AudioToolbox with AAC encoder
-// Supports various AAC profiles
+// 使用 VideoToolbox HEVC 編碼器
+// 支援各種 HEVC profiles
 ```
 
-### Opus Configuration
+### AAC 設定
 
 ```swift
-// Uses AudioToolbox with Opus encoder
-// Supports low-delay, high-quality modes
+// 使用 AudioToolbox AAC 編碼器
+// 支援各種 AAC profiles
 ```
 
-## Code References
+### Opus 設定
 
-- VideoCodecSettings.swift: Video codec settings
-- AudioCodecSettings.swift: Audio codec settings  
-- Codec.swift: Codec base implementations
-- VideoToolboxCodec.swift: Hardware video encoding
-- AudioToolboxCodec.swift: Hardware audio encoding
+```swift
+// 使用 AudioToolbox Opus 編碼器
+// 支援低延遲、高品質模式
+```
+
+## 程式碼參考
+
+- VideoCodecSettings.swift：視訊編碼設定
+- AudioCodecSettings.swift：音訊編碼設定
+- Codec.swift：編解碼器基礎實作
+- VideoToolboxCodec.swift：硬體視訊編碼
+- AudioToolboxCodec.swift：硬體音訊編碼

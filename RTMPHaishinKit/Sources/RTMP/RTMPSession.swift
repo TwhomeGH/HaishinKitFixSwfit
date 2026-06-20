@@ -19,22 +19,8 @@ actor RTMPSession: StreamSession {
     private let mode: StreamSessionMode
     private var retryCount: Int = 0
     private var maxRetryCount = kStreamSession_maxRetryCount
-    private lazy var connection: RTMPConnection = {
-        switch mode {
-        case .publish:
-            return RTMPConnection()
-        case .playback:
-            return RTMPConnection(flashVer: "MAC 9,0,124,2")
-        }
-    }()
-    private lazy var _stream: RTMPStream = {
-        switch mode {
-        case .publish:
-            return RTMPStream(connection: connection, fcPublishName: uri.streamName)
-        case .playback:
-            return RTMPStream(connection: connection)
-        }
-    }()
+    private let connection: RTMPConnection
+    private let _stream: RTMPStream
     private var disconnctedTask: Task<Void, any Error>? {
         didSet {
             oldValue?.cancel()
@@ -44,6 +30,16 @@ actor RTMPSession: StreamSession {
     init(uri: URL, mode: StreamSessionMode, configuration: (any StreamSessionConfiguration)?) {
         self.uri = RTMPURL(url: uri)
         self.mode = mode
+        switch mode {
+        case .publish:
+            let connection = RTMPConnection()
+            self.connection = connection
+            self._stream = RTMPStream(connection: connection, fcPublishName: self.uri.streamName)
+        case .playback:
+            let connection = RTMPConnection(flashVer: "MAC 9,0,124,2")
+            self.connection = connection
+            self._stream = RTMPStream(connection: connection)
+        }
     }
 
     func setMaxRetryCount(_ maxRetryCount: Int) {
@@ -72,6 +68,7 @@ actor RTMPSession: StreamSession {
         }
         do {
             retryCount = 0
+            try await _stream.createStream()
             switch mode {
             case .publish:
                 _ = try await _stream.publish(uri.streamName)

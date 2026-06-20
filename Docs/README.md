@@ -1,130 +1,129 @@
-# HaishinKit.swift Documentation
+# HaishinKit.swift 文件
 
-## Overview
+## 概述
 
-HaishinKit.swift is a comprehensive live streaming framework for iOS, macOS, tvOS, and visionOS. It provides support for multiple streaming protocols including RTMP, SRT, WebRTC, and MoQ (Media over QUIC).
+HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvOS 與 visionOS。提供多種串流通訊協定支援，包括 RTMP、SRT、WebRTC 與 MoQ（Media over QUIC）。
 
-### Key Features
+### 主要功能
 
-- **Multi-protocol Support**: RTMP/RTMPS, SRT, WebRTC, MoQ
-- **Real-time Video/Audio Encoding**: H.264, H.265 (HEVC), VP9, AV1, AAC, Opus
-- **Adaptive Bitrate Streaming**: Dynamic bitrate adjustment based on network conditions
-- **Media Mixing**: Multi-track audio/video mixing with effects
-- **Screen Capture**: Built-in screen recording and broadcasting
-- **Hardware Acceleration**: VideoToolbox-based encoding/decoding
+- **多通訊協定支援**：RTMP/RTMPS、SRT、WebRTC、MoQ
+- **即時影音編碼**：H.264、H.265 (HEVC)、VP9、AV1、AAC、Opus
+- **自適應位元率**：依據網路狀況動態調整位元率
+- **媒體混合**：多軌影音混合與特效
+- **螢幕擷取**：內建螢幕錄製與廣播
+- **硬體加速**：VideoToolbox 編解碼
 
-### Supported Platforms
+### 支援平台
 
-| Platform | Minimum Version |
-|----------|----------------|
-| iOS      | 15.0+          |
-| macOS    | 12.0+          |
-| tvOS     | 15.0+          |
-| visionOS | 1.0+           |
+| 平台 | 最低版本 |
+|------|----------|
+| iOS | 15.0+ |
+| macOS | 12.0+ |
+| tvOS | 15.0+ |
+| visionOS | 1.0+ |
 
-### Architecture
+### 架構
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Application Layer                       │
+│                      應用層                                   │
 ├─────────────────────────────────────────────────────────────┤
 │  StreamSession (RTMP/SRT/WebRTC/MoQ)                        │
 ├─────────────────────────────────────────────────────────────┤
-│  MediaMixer → Video/Audio Encoding (VideoToolbox)           │
+│  MediaMixer → 影音編碼 (VideoToolbox)                        │
 ├─────────────────────────────────────────────────────────────┤
-│  Network Layer (NWConnection / Network.framework)           │
+│  網路層 (NWConnection / Network.framework)                   │
 ├─────────────────────────────────────────────────────────────┤
-│  Protocol Implementation (RTMP Chunking / SRT / WebRTC)     │
+│  通訊協定實作 (RTMP Chunking / SRT / WebRTC)                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Module Structure
+## 模組結構
 
-| Module | Description |
-|--------|-------------|
-| `HaishinKit` | Core framework - MediaMixer, Codec, Network, Session, Stream |
-| `RTMPHaishinKit` | RTMP/RTMPS protocol implementation |
-| `SRTHaishinKit` | SRT (Secure Reliable Transport) protocol |
-| `RTCHaishinKit` | WebRTC implementation |
-| `MoQTHaishinKit` | Media over QUIC (MoQ) protocol |
-| `Examples` | Sample applications for iOS/macOS/tvOS/visionOS |
+| 模組 | 說明 |
+|------|------|
+| `HaishinKit` | 核心框架：MediaMixer、Codec、Network、Session、Stream |
+| `RTMPHaishinKit` | RTMP/RTMPS 通訊協定實作 |
+| `SRTHaishinKit` | SRT（Secure Reliable Transport）通訊協定 |
+| `RTCHaishinKit` | WebRTC 實作 |
+| `MoQTHaishinKit` | Media over QUIC（MoQ）通訊協定 |
+| `Examples` | iOS/macOS/tvOS/visionOS 範例應用 |
 
-## Quick Start
+## 快速開始
 
-### Installation
+### 安裝
 
-### Swift Package Manager
-
+**Swift Package Manager：**
 ```swift
-.package(url: "https://github.com/TwhomeGH/HaishinKitFixSwfit.git", branch: "main")
+dependencies: [
+    .package(url: "https://github.com/shogo4405/HaishinKit.swift", from: "1.0.0")
+]
 ```
 
-Or in Xcode: **File → Add Package Dependencies...** → enter `https://github.com/TwhomeGH/HaishinKitFixSwfit.git`
-
-### Basic RTMP Publishing
+### 基本 RTMP 發布
 
 ```swift
 import HaishinKit
 import RTMPHaishinKit
 
-// Register RTMP factory
+// 註冊 RTMP factory
 await StreamSessionBuilderFactory.shared.register(RTMPSessionFactory())
 
-// Create session
+// 建立 Session
 let session = try await StreamSessionBuilderFactory.shared
     .make(URL(string: "rtmp://your-server/live/streamKey")!)
     .setMode(.publish)
     .build()
 
-// Configure video settings
+// 設定視訊編碼
 var videoSettings = await session.stream.videoSettings
 videoSettings.bitRate = 2_000_000  // 2 Mbps
 videoSettings.videoSize = CGSize(width: 1280, height: 720)
 try await session.stream.setVideoSettings(videoSettings)
 
-// Start streaming
+// 開始串流
 try await session.connect {
-    print("Disconnected")
+    print("已斷線")
 }
 
-// Publish stream
+// 發布串流
 try await session.stream.publish("streamKey")
 ```
 
-## Documentation Index
+## 文件索引
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](ARCHITECTURE.md) | System architecture and data flow |
-| [RTMP Protocol](RTMP_PROTOCOL.md) | RTMP implementation details |
-| [Media Mixer](MEDIA_MIXER.md) | Audio/Video mixing and effects |
-| [Session Management](SESSION_MANAGEMENT.md) | StreamSession lifecycle |
-| [Codec Configuration](CODEC_CONFIGURATION.md) | Video/Audio codec settings |
-| [Network Layer](NETWORK_LAYER.md) | Network transport and monitoring |
-| [Development Guide](DEVELOPMENT_GUIDE.md) | Contributing and development setup |
-| [Testing](TESTING.md) | Test structure and running tests |
-| [Troubleshooting](TROUBLESHOOTING.md) | Common issues and solutions |
+| 文件 | 說明 |
+|------|------|
+| [架構](ARCHITECTURE.md) | 系統架構與資料流 |
+| [RTMP 通訊協定](RTMP_PROTOCOL.md) | RTMP 實作細節 |
+| [Media Mixer](MEDIA_MIXER.md) | 影音混合與特效 |
+| [Session 管理](SESSION_MANAGEMENT.md) | StreamSession 生命週期 |
+| [編解碼器設定](CODEC_CONFIGURATION.md) | 影音編碼設定 |
+| [網路層](NETWORK_LAYER.md) | 網路傳輸與監控 |
+| [開發指南](DEVELOPMENT_GUIDE.md) | 貢獻與開發環境設定 |
+| [測試](TESTING.md) | 測試結構與執行 |
+| [故障排除](TROUBLESHOOTING.md) | 常見問題與解決方案 |
 
-## Dependencies
+## 相依性
 
-### System Frameworks
+### 系統框架
 
-- `AVFoundation` - Media capture and encoding
-- `VideoToolbox` - Hardware video encoding/decoding
-- `AudioToolbox` - Audio processing
-- `Network` - NWConnection for TCP/UDP
-- `CoreMedia` - Media timing and formats
-- `Combine` - Reactive programming
+- `AVFoundation` - 媒體擷取與編碼
+- `VideoToolbox` - 硬體視訊編解碼
+- `AudioToolbox` - 音訊處理
+- `Network` - NWConnection TCP/UDP
+- `CoreMedia` - 媒體時間與格式
+- `Combine` - 響應式程式設計
 
-### Swift Package Dependencies
+### Swift Package 相依性
 
 ```swift
 // Package.swift
 dependencies: [
-    // No external dependencies - uses only Apple frameworks
+    // 無外部依賴 - 僅使用 Apple 框架
 ]
 ```
 
-## License
+## 授權
 
-MIT License - See [LICENSE](../LICENSE) for details.
+BSD 3-Clause 授權條款 - 詳見 [LICENSE](../LICENSE)

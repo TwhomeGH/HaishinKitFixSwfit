@@ -1,194 +1,192 @@
-# RTMP Protocol Implementation
+# RTMP 通訊協定實作
 
-## Overview
+## 概述
 
-The RTMP (Real-Time Messaging Protocol) implementation in HaishinKit.swift provides support for both RTMP and RTMPS protocols. It handles the complete RTMP protocol stack including:
+HaishinKit.swift 的 RTMP（Real-Time Messaging Protocol）實作支援 RTMP 與 RTMPS 兩種通訊協定。涵蓋完整的 RTMP 協定堆疊：
 
-- TCP/IP connection establishment
-- RTMP handshake (C0/C1/S0/S1/C2/S2)
-- Chunking mechanism with different chunk types
-- Message serialization/deserialization
-- Authentication handling
-- Stream management
+- TCP/IP 連線建立
+- RTMP Handshake（C0/C1/S0/S1/C2/S2）
+- Chunk 分塊機制（類型 0/1/2/3）
+- 訊息序列化/反序列化
+- 認證處理
+- 串流管理
 
-## Protocol Stack
+## 協定堆疊
 
 ```
 ┌─────────────────────────────────────┐
-│      Application Layer              │
-│  RTMPCommandMessage, RTMPDataMessage│
+│      應用層                          │
+│  RTMPCommandMessage, RTMPDataMessage │
 ├─────────────────────────────────────┤
-│      Message Layer                  │
-│  RTMPChunkMessageHeader             │
+│      訊息層                          │
+│  RTMPChunkMessageHeader              │
 ├─────────────────────────────────────┤
-│      Chunking Layer                 │
-│  RTMPChunkBuffer                    │
+│      Chunk 分塊層                    │
+│  RTMPChunkBuffer                     │
 ├─────────────────────────────────────┤
-│      Transport Layer                │
-│  RTMPSocket (NWConnection)          │
+│      傳輸層                          │
+│  RTMPSocket (NWConnection)           │
 └─────────────────────────────────────┘
 ```
 
-## Key Components
+## 核心元件
 
 ### RTMPConnection
 
-The `RTMPConnection` class is the core of RTMP protocol implementation. It manages:
+`RTMPConnection` 是 RTMP 通訊協定的核心類別，負責管理：
 
-- TCP/IP connection with NWConnection
-- RTMP handshake process
-- Chunking buffer management
-- Message parsing and dispatching
-- Authentication handling via RTMPAuthenticator
-- Network monitoring via NetworkMonitor
+- 使用 NWConnection 的 TCP/IP 連線
+- RTMP Handshake 程序
+- Chunk 緩衝區管理
+- 訊息解析與分派
+- 透過 RTMPAuthenticator 進行認證
+- 透過 NetworkMonitor 進行網路監控
 
 ### RTMPHandshake
 
-Handles the RTMP handshake process:
-1. C0/C1 packet (version + timestamp + random bytes)
-2. S0/S1 packet (version + timestamp + random bytes) 
-3. C2 packet (S1 timestamp + current time + S1 random)
-4. S2 packet (C1 timestamp + current time + C1 random)
+處理 RTMP Handshake 程序：
+1. C0/C1 封包（版本 + 時間戳 + 隨機位元組）
+2. S0/S1 封包（版本 + 時間戳 + 隨機位元組）
+3. C2 封包（S1 時間戳 + 當前時間 + S1 隨機資料）
+4. S2 封包（C1 時間戳 + 當前時間 + C1 隨機資料）
 
 ### RTMPChunk
 
-Implements the chunking mechanism:
-- Chunk types: 0, 1, 2, 3
-- Different header sizes for each type
-- Message length, timestamp, stream ID handling
-- Payload buffering and parsing
+實作 Chunk 分塊機制：
+- Chunk 類型：0、1、2、3
+- 不同類型對應不同標頭大小
+- 訊息長度、時間戳、串流 ID 處理
+- 酬載緩衝與解析
 
-### RTMPMessage Types
+### RTMPMessage 類型
 
-The following message types are supported:
+支援以下訊息類型：
 
-| Type | Description |
-|------|-------------|
-| 0x01 | Set Chunk Size |
-| 0x02 | Abort Message |
-| 0x03 | Acknowledgement |
-| 0x04 | User Control |
-| 0x05 | Window Acknowledgement Size |
-| 0x06 | Set Peer Bandwidth |
-| 0x08 | Audio Message |
-| 0x09 | Video Message |
-| 0x0F | AMF3 Data Message |
-| 0x10 | AMF3 Shared Object |
-| 0x11 | AMF3 Command Message |
-| 0x12 | AMF0 Data Message |
-| 0x13 | AMF0 Shared Object |
-| 0x14 | AMF0 Command Message |
-| 0x16 | Aggregate Message |
+| 類型 | 說明 |
+|------|------|
+| 0x01 | 設定 Chunk 大小 |
+| 0x02 | 中止訊息 |
+| 0x03 | 確認 |
+| 0x04 | 使用者控制 |
+| 0x05 | 視窗確認大小 |
+| 0x06 | 設定同儕頻寬 |
+| 0x08 | 音訊訊息 |
+| 0x09 | 視訊訊息 |
+| 0x0F | AMF3 資料訊息 |
+| 0x10 | AMF3 共享物件 |
+| 0x11 | AMF3 命令訊息 |
+| 0x12 | AMF0 資料訊息 |
+| 0x13 | AMF0 共享物件 |
+| 0x14 | AMF0 命令訊息 |
+| 0x16 | 聚合訊息 |
 
-## Connection Flow
+## 連線流程
 
-### 1. URL Parsing
+### 1. URL 解析
 
-The RTMP connection URL is parsed to extract:
-- Host and port
-- Scheme (rtmp/rtmps)
-- App name from path components
-- Query parameters
+RTMP 連線 URL 解析出：
+- 主機與連接埠
+- 通訊協定（rtmp/rtmps）
+- 從路徑元件解析應用名稱
+- 查詢參數
 
-### 2. Handshake Process
+### 2. Handshake 程序
 
 ```swift
-// Step 1: Send C0+C1 packet
+// 步驟 1：發送 C0+C1 封包
 await socket.send(handshake.c0c1packet)
 
-// Step 2: Receive S0+S1 packet
+// 步驟 2：接收 S0+S1 封包
 for await data in await socket.recv() {
     try await listen(data)
 }
 
-// Step 3: Send C2 packet  
+// 步驟 3：發送 C2 封包
 await socket.send(handshake.c2packet())
 
-// Step 4: Receive S2 packet
+// 步驟 4：接收 S2 封包
 for await data in await socket.recv() {
     try await listen(data)
 }
 ```
 
-### 3. Connect Command
+### 3. Connect 命令
 
-The connect command includes:
-- `app`: Application name (parsed from URL path)
-- `flashVer`: Flash version string
-- `tcUrl`: URL without authentication info
-- `swfUrl`: SWF URL if provided
-- `pageUrl`: HTTP referer URL
-- `objectEncoding`: AMF0 encoding
-- `capabilities`: Connection capabilities
-- `audioCodecs`: Supported audio codecs
-- `videoCodecs`: Supported video codecs
+connect 命令包含：
+- `app`：應用程式名稱（從 URL 路徑解析）
+- `flashVer`：Flash 版本字串
+- `tcUrl`：不含認證資訊的 URL
+- `swfUrl`：SWF URL（如有提供）
+- `pageUrl`：HTTP referer URL
+- `objectEncoding`：AMF0 編碼
+- `capabilities`：連線能力
+- `audioCodecs`：支援的音訊編解碼器
+- `videoCodecs`：支援的視訊編解碼器
 
-### 4. Stream Creation
+### 4. 建立串流
 
-After successful connection:
-1. Create stream via `createStream` command
-2. Set chunk size and window acknowledgment
-3. Publish stream with `publish` command
+成功連線後：
+1. 透過 `createStream` 命令建立串流
+2. 設定 Chunk 大小與視窗確認
+3. 使用 `publish` 命令發布串流
 
-## Restream.io Specific Considerations
+## Restream.io 特定考量
 
-Restream.io typically uses:
-- RTMPS protocol (`rtmps://live.restream.io/live/STREAM_KEY`)
-- Stream key as the final path component
-- No additional authentication in URL (uses stream key directly)
+Restream.io 通常使用：
+- RTMPS 通訊協定（`rtmps://live.restream.io/live/串流金鑰`）
+- 串流金鑰作為路徑的最後一部分
+- 不需要額外的 URL 認證（直接使用串流金鑰）
 
-### URL Format Example
+### URL 格式範例
 
 ```
-rtmps://live.restream.io/live/STREAM_KEY
+rtmps://live.restream.io/live/串流金鑰
 ```
 
-Where:
-- Host: `live.restream.io`
-- Port: 443 (default for RTMPS)
-- App: `live` 
-- Stream name: `STREAM_KEY`
+其中：
+- 主機：`live.restream.io`
+- 連接埠：443（RTMPS 預設）
+- 應用名稱：`live`
+- 串流名稱：`串流金鑰`
 
-### Potential Issues
+### 潛在問題
 
-1. **App parameter construction**: The app name should be just "live", not "live/STREAM_KEY"
-2. **Authentication handling**: Some restream servers might require authentication via URL credentials
-3. **TLS configuration**: Ensure proper TLS certificate handling for restream.io domains
-4. **Connection timeout**: Restream may have stricter connection timeouts
+1. **App 參數建構**：應用名稱應僅為 "live"，不應包含 "/串流金鑰"
+2. **TLS 設定**：確保 restream.io 網域的 TLS 憑證處理正確
+3. **連線逾時**：Restream 可能有更嚴格的連線逾時設定
 
-## Troubleshooting
+## 疑難排解
 
-### Common Error Codes
+### 常見錯誤碼
 
-| Code | Description |
-|------|-------------|
-| `NetConnection.Connect.Failed` | Connection failed (network issues) |
-| `NetConnection.Connect.Rejected` | Connection rejected (authentication required) |
-| `NetStream.Publish.BadName` | Stream name invalid |
-| `NetStream.Connect.Failed` | Stream connection failed |
+| 代碼 | 說明 |
+|------|------|
+| `NetConnection.Connect.Failed` | 連線失敗（網路問題） |
+| `NetConnection.Connect.Rejected` | 連線被拒絕（需要認證） |
+| `NetStream.Publish.BadName` | 串流名稱無效 |
 
-### Debugging Tips
+### 除錯技巧
 
-1. Check network connectivity to restream.io
-2. Verify stream key format and validity 
-3. Ensure TLS certificates are valid for restream.io domain
-4. Monitor handshake process in logs
-5. Validate chunk size and window settings
+1. 檢查到 restream.io 的網路連線
+2. 驗證串流金鑰格式與有效性
+3. 確保 restream.io 網域的 TLS 憑證有效
+4. 監控 Handshake 程序日誌
+5. 驗證 Chunk 大小與視窗設定
 
-## Configuration Parameters
+## 設定參數
 
-| Parameter | Default Value | Description |
-|----------|---------------|-------------|
-| `defaultTimeout` | 15 sec | Connection timeout |
-| `defaultWindowSizeS` | 250000 | Window size |
-| `defaultChunkSizeS` | 8192 | Chunk size |
-| `defaultCapabilities` | 239 | Connection capabilities |
-| `defaultFlashVer` | "FMLE/3.0 (compatible; FMSc/1.0)" | Flash version |
+| 參數 | 預設值 | 說明 |
+|------|--------|------|
+| `defaultTimeout` | 15 秒 | 連線逾時 |
+| `defaultWindowSizeS` | 250000 | 視窗大小 |
+| `defaultChunkSizeS` | 8192 | Chunk 大小 |
+| `defaultCapabilities` | 239 | 連線能力 |
+| `defaultFlashVer` | "FMLE/3.0 (compatible; FMSc/1.0)" | Flash 版本 |
 
-## Code References
+## 程式碼參考
 
-- RTMPConnection.swift: Main connection logic
-- RTMPHandshake.swift: Handshake implementation  
-- RTMPChunk.swift: Chunking mechanism
-- RTMPSocket.swift: Network transport
-- RTMPAuthenticator.swift: Authentication handling
+- RTMPConnection.swift：主要連線邏輯
+- RTMPHandshake.swift：Handshake 實作
+- RTMPChunk.swift：Chunk 分塊機制
+- RTMPSocket.swift：網路傳輸
+- RTMPAuthenticator.swift：認證處理
