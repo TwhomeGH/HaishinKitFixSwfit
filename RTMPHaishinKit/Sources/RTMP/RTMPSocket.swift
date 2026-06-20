@@ -168,7 +168,6 @@ final actor RTMPSocket {
         case .waiting(let error):
             logger.warn("Connection waiting:", error)
         case .setup:
-        case .setup:
             logger.debug("Connection is setting up.")
         case .preparing:
             logger.debug("Connection is preparing.")
