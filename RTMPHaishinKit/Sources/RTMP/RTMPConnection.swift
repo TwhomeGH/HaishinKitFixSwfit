@@ -146,7 +146,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         /// Reconnection succeeded.
         case succeeded
         /// Reconnection failed with an error.
-        case failed(Error)
+        case failed(any Swift.Error)
         /// All reconnect attempts exhausted.
         case exhausted
     }
