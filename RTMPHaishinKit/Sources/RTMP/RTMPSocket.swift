@@ -167,7 +167,7 @@ final actor RTMPSocket {
             self.continuation = nil
         case .waiting(let error):
             logger.warn("Connection waiting:", error)
-            close(error)
+        case .setup:
         case .setup:
             logger.debug("Connection is setting up.")
         case .preparing:
@@ -185,9 +185,6 @@ final actor RTMPSocket {
 
     private func viabilityDidChange(to viability: Bool) {
         logger.info("Connection viability changed to ", viability)
-        if viability == false {
-            close()
-        }
     }
 
     private func send(_ data: Data) async throws {
