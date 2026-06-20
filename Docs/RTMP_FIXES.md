@@ -2,8 +2,8 @@
 
 ## 版本信息
 - **日期**: 2026-06-20
-- **版本**: 1.2.0
-- **狀態**: ✅ 完成（含狀態機、重連、VP9/AV1）
+- **版本**: 1.3.0
+- **狀態**: ✅ 完成（含狀態機、重連、VP9/AV1、ReplyKit 改進）
 
 ---
 
@@ -138,6 +138,40 @@
 - `enhancedVideoType` 返回對應 FourCC
 - macOS encoderID 回退至 HEVC 編碼器
 - 補齊 `RTCHaishinKit` 與 `VideoCodecSettings` 的 switch exhaustive 匹配
+
+### 3.4 ReplyKit 通訊層改進
+**文件**: `ReplyKIT/Socket.swift`  
+**範圍**: App↔Extension 間 TCP Socket（非 RTMP）
+
+**SocketClient (Socket.swift)**:
+- 新增 `SocketState` 有限狀態機，驗證所有轉換合法性
+- 新增電路斷路器：連續 5 次失敗後停止重連 60 秒冷卻
+- 冷卻後自動恢復重連
+- `.failed` 追蹤連續失敗次數，`.cancelled` 不計入
+
+### 3.5 RTMPConnection 重連回呼（給消費方）
+**文件**: `RTMPConnection.swift`  
+**動機**: 底層既有重連機制，消費方（如 ReplyKIT 的 SampleHandler）不需獨立重試迴圈。透過回呼接收事件，只處理媒體管線協調。
+
+**新增 API**:
+- `ReconnectState` 枚舉：`.started(attempt:, maxAttempts:)` / `.succeeded` / `.failed(Error)` / `.exhausted`
+- `onReconnectStateChanged: (@Sendable (ReconnectState) async -> Void)?`
+
+**消費方使用範例（替代 `attemptReconnect`）**:
+```swift
+rtmpConnection.isReconnectEnabled = true
+rtmpConnection.onReconnectStateChanged = { state in
+    switch state {
+    case .started:
+        await mediaMixer.stopRunning()
+    case .succeeded:
+        await mediaMixer.startRunning()
+    case .exhausted:
+        showError("重連失敗")
+    default: break
+    }
+}
+```
 
 ---
 

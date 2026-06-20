@@ -139,6 +139,18 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
 
+    /// Reconnection state events for consumer callback.
+    public enum ReconnectState: Sendable {
+        /// A reconnect attempt is starting.
+        case started(attempt: Int, maxAttempts: Int)
+        /// Reconnection succeeded.
+        case succeeded
+        /// Reconnection failed with an error.
+        case failed(Error)
+        /// All reconnect attempts exhausted.
+        case exhausted
+    }
+
     enum SupportVideo: UInt16 {
         case unused = 0x0001
         case jpeg = 0x0002
@@ -218,6 +230,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public let reconnectBaseDelay: UInt64
     /// The reconnect max delay in seconds.
     public let reconnectMaxDelay: UInt64
+    /// Reconnection event callback for consumers (e.g. ReplyKIT) to coordinate media pipeline.
+    public var onReconnectStateChanged: (@Sendable (ReconnectState) async -> Void)?
 
     var newTransaction: Int {
         currentTransactionId += 1
@@ -403,23 +417,19 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 await stream.createStream()
             }
             reconnectAttempts = 0
+            await onReconnectStateChanged?(.succeeded)
             return result
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()
             outputContinuation = nil
+            await onReconnectStateChanged?(.failed(Error.socketErrorOccurred(nil)))
             try? await scheduleReconnect()
-            switch error {
-            case .connectionTimedOut:
-                throw Error.connectionTimedOut
-            case .connectionNotEstablished(let socketError):
-                throw Error.socketErrorOccurred(socketError)
-            default:
-                throw Error.socketErrorOccurred(nil)
-            }
+            throw error
         } catch let error as Error {
             switch error {
             case .requestFailed(let response):
                 guard let status = response.status else {
+                    await onReconnectStateChanged?(.failed(error))
                     try? await scheduleReconnect()
                     throw error
                 }
@@ -429,18 +439,21 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         await socket.close()
                         return try await performConnect(command, arguments: arguments)
                     case .failure:
-                        try? await scheduleReconnect()
+                        await onReconnectStateChanged?(.failed(error))
                         throw error
                     }
                 } else {
+                    await onReconnectStateChanged?(.failed(error))
                     try? await scheduleReconnect()
                     throw error
                 }
             default:
+                await onReconnectStateChanged?(.failed(error))
                 try? await scheduleReconnect()
                 throw error
             }
         } catch {
+            await onReconnectStateChanged?(.failed(error))
             try? await scheduleReconnect()
             throw error
         }
@@ -448,12 +461,16 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private func scheduleReconnect() async throws {
         guard isReconnectEnabled && !isReconnecting && reconnectAttempts < maxReconnectAttempts else {
+            if reconnectAttempts >= maxReconnectAttempts {
+                await onReconnectStateChanged?(.exhausted)
+            }
             return
         }
         isReconnecting = true
         reconnectAttempts += 1
         let delay = min(reconnectBaseDelay << (reconnectAttempts - 1), reconnectMaxDelay)
         logger.info("Reconnecting in \(delay)s (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
+        await onReconnectStateChanged?(.started(attempt: reconnectAttempts, maxAttempts: maxReconnectAttempts))
         try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
         isReconnecting = false
         if reconnectAttempts <= maxReconnectAttempts {
