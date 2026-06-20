@@ -3,7 +3,7 @@ import HaishinKit
 import Network
 
 final actor RTMPSocket {
-    static let defaultWindowSizeC = Int(UInt8.max)
+    static let defaultWindowSizeC = Int(UInt16.max)
 
     enum Error: Swift.Error {
         case invalidState
@@ -114,6 +114,7 @@ final actor RTMPSocket {
     func recv() -> AsyncStream<Data> {
         AsyncStream<Data> { continuation in
             Task {
+                defer { continuation.finish() }
                 do {
                     while connected {
                         let data = try await recv()
@@ -121,7 +122,7 @@ final actor RTMPSocket {
                         totalBytesIn += data.count
                     }
                 } catch {
-                    continuation.finish()
+                    logger.error("recv error:", error)
                 }
             }
         }
@@ -148,10 +149,17 @@ final actor RTMPSocket {
             connected = true
             let (stream, continuation) = AsyncStream<Data>.makeStream()
             Task {
-                for await data in stream where connected {
-                    try await send(data)
-                    totalBytesOut += data.count
-                    queueBytesOut -= data.count
+                for await data in stream {
+                    guard connected else { break }
+                    do {
+                        try await send(data)
+                        totalBytesOut += data.count
+                        queueBytesOut -= data.count
+                    } catch {
+                        logger.error("Failed to send data:", error)
+                        close(error as? NWError)
+                        break
+                    }
                 }
             }
             self.outputs = continuation
@@ -159,7 +167,6 @@ final actor RTMPSocket {
             self.continuation = nil
         case .waiting(let error):
             logger.warn("Connection waiting:", error)
-            close(error)
         case .setup:
             logger.debug("Connection is setting up.")
         case .preparing:
@@ -177,9 +184,6 @@ final actor RTMPSocket {
 
     private func viabilityDidChange(to viability: Bool) {
         logger.info("Connection viability changed to ", viability)
-        if viability == false {
-            close()
-        }
     }
 
     private func send(_ data: Data) async throws {

@@ -457,3 +457,8 @@ await mixer.append(buffer, when: time)
 - 過載時會丟棄舊 video frame，保留最新 frame，以維持直播低延遲。
 - 不再支援 video input unbounded queue。
 - 音訊 queue 未在本次改動中改為 bounded，避免語音通話或直播音訊被主動丟 sample。
+
+
+## 17. RTMP 底層 Socket缺陷/性能問題
+
+[**改動說明 CHANGES**](./Docs/CHANGELOG_RTMP_SOCKET.md)
