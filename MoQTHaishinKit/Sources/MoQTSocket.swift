@@ -124,15 +124,21 @@ final actor MoQTSocket {
     }
 
     private func newConnection(_ connection: NWConnection) {
-        receive(on: connection, continuation: datagramContinuation)
+        startReceiveLoop(for: connection)
         connection.start(queue: networkQueue)
     }
 
-    private nonisolated func receive(on connection: NWConnection, continuation: AsyncStream<Data>.Continuation?) {
-        connection.receive(minimumIncompleteLength: 0, maximumLength: 65558) { content, _, _, _ in
-            if let content {
-                continuation?.yield(content)
-                self.receive(on: connection, continuation: continuation)
+    private func startReceiveLoop(for connection: NWConnection) {
+        Task { [weak self] in
+            guard let self else { return }
+            while self.connected {
+                let data: Data? = await withCheckedContinuation { continuation in
+                    connection.receive(minimumIncompleteLength: 0, maximumLength: 65558) { content, _, _, _ in
+                        continuation.resume(returning: content)
+                    }
+                }
+                guard let data else { break }
+                self.datagramContinuation?.yield(data)
             }
         }
     }
