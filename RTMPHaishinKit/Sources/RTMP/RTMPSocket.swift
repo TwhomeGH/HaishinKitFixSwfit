@@ -4,6 +4,8 @@ import Network
 
 final actor RTMPSocket {
     static let defaultWindowSizeC = Int(UInt16.max)
+    /// Maximum bytes queued for send before backpressure kicks in.
+    static let maxQueueBytesOut = 5 * 1024 * 1024 // 5 MB
 
     enum Error: Swift.Error {
         case invalidState
@@ -17,7 +19,7 @@ final actor RTMPSocket {
     private var windowSizeC = RTMPSocket.defaultWindowSizeC
     private var securityLevel: StreamSocketSecurityLevel = .none
     private var totalBytesIn = 0
-    private var queueBytesOut = 0
+    private(set) var queueBytesOut = 0
     private var totalBytesOut = 0
     private var parameters: NWParameters = .tcp
     private var connection: NWConnection? {
@@ -87,6 +89,10 @@ final actor RTMPSocket {
         guard connected else {
             return
         }
+        guard queueBytesOut < Self.maxQueueBytesOut else {
+            logger.warn("Backpressure: dropping send, queue full (\(queueBytesOut) bytes)")
+            return
+        }
         queueBytesOut += data.count
         outputs?.yield(data)
     }
@@ -96,6 +102,10 @@ final actor RTMPSocket {
             return
         }
         for data in iterator {
+            guard queueBytesOut < Self.maxQueueBytesOut else {
+                logger.warn("Backpressure: dropping iterator, queue full (\(queueBytesOut) bytes)")
+                break
+            }
             queueBytesOut += data.count
             outputs?.yield(data)
         }
@@ -106,6 +116,10 @@ final actor RTMPSocket {
             return
         }
         for data in chunks {
+            guard queueBytesOut < Self.maxQueueBytesOut else {
+                logger.warn("Backpressure: dropping chunks, queue full (\(queueBytesOut) bytes)")
+                break
+            }
             queueBytesOut += data.count
             outputs?.yield(data)
         }

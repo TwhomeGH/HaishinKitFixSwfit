@@ -40,6 +40,7 @@ final class RTMPChunkMessageHeader {
     static let maxTimestamp: UInt32 = 0xFFFFFF
 
     var timestamp: UInt32 = 0
+    var isExtended = false
     var messageLength: Int = 0 {
         didSet {
             guard payload.count != messageLength else {
@@ -170,17 +171,26 @@ final class RTMPChunkBuffer {
     }
 
     func getBasicHeader() throws -> (RTMPChunkType, UInt16) {
+        if remaining < 1 {
+            throw RTMPChunkError.bufferUnderflow
+        }
         let rawValue = (data[position] & 0b11000000) >> 6
         guard let type = RTMPChunkType(rawValue: rawValue) else {
             throw RTMPChunkError.unknowChunkType(value: rawValue)
         }
         switch data[position] & 0b00111111 {
         case 0:
+            if remaining < 2 {
+                throw RTMPChunkError.bufferUnderflow
+            }
             defer {
                 position += 2
             }
             return (type, UInt16(data[position + 1]) + 64)
         case 1:
+            if remaining < 3 {
+                throw RTMPChunkError.bufferUnderflow
+            }
             defer {
                 position += 3
             }
@@ -199,24 +209,30 @@ final class RTMPChunkBuffer {
         }
         switch type {
         case .zero:
-            messageHeader.timestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            let rawTimestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            messageHeader.timestamp = rawTimestamp
+            messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
             messageHeader.messageLength = Int(Int32(data: data[position + 3..<position + 6]).bigEndian)
             messageHeader.messageTypeId = data[position + 6]
             messageHeader.messageStreamId = UInt32(data: data[position + 7..<position + 11])
             position += type.headerSize
         case .one:
-            messageHeader.timestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            let rawTimestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            messageHeader.timestamp = rawTimestamp
+            messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
             messageHeader.messageLength = Int(Int32(data: data[position + 3..<position + 6]).bigEndian)
             messageHeader.messageTypeId = data[position + 6]
             position += type.headerSize
         case .two:
-            messageHeader.timestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            let rawTimestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            messageHeader.timestamp = rawTimestamp
+            messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
             position += type.headerSize
         case .three:
             break
         }
 
-        if messageHeader.timestamp == RTMPChunkMessageHeader.maxTimestamp {
+        if messageHeader.isExtended {
             if remaining < kRTMPExtendTimestampSize {
                 throw RTMPChunkError.bufferUnderflow
             }

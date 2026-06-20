@@ -16,6 +16,9 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     private var startedAt = kRTMPTimestamp_defaultTimeInterval
     private var updatedAt = kRTMPTimestamp_defaultTimeInterval
     private var timedeltaFraction: TimeInterval = kRTMPTimestamp_defaultTimeInterval
+    private var lastRawTimestamp: UInt32 = 0
+    private var rolloverCount: UInt64 = 0
+    private var lastDelta: TimeInterval = 0
 
     mutating func update(_ value: T) throws -> UInt32 {
         guard updatedAt < value.seconds else {
@@ -39,14 +42,40 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     mutating func update(_ message: some RTMPMessage, chunkType: RTMPChunkType) {
         switch chunkType {
         case .zero:
+            let rawTimestamp = message.timestamp
             if startedAt == 0 {
-                startedAt = TimeInterval(message.timestamp) / 1000
-                updatedAt = TimeInterval(message.timestamp) / 1000
+                startedAt = TimeInterval(rawTimestamp) / 1000
+                updatedAt = TimeInterval(rawTimestamp) / 1000
+                lastRawTimestamp = rawTimestamp
+                lastDelta = 0
             } else {
-                updatedAt = TimeInterval(message.timestamp) / 1000
+                // Detect 32-bit unsigned rollover
+                if rawTimestamp < lastRawTimestamp && (lastRawTimestamp - rawTimestamp) > 0x80000000 {
+                    rolloverCount += 1
+                } else if rawTimestamp > lastRawTimestamp && (rawTimestamp - lastRawTimestamp) > 0x80000000 {
+                    // Prevent negative rollover if packets arrive slightly out of order near boundary
+                    if rolloverCount > 0 {
+                        rolloverCount -= 1
+                    }
+                }
+                
+                let continuousTimestamp = UInt64(rawTimestamp) + (rolloverCount << 32)
+                let previousUpdatedAt = updatedAt
+                updatedAt = TimeInterval(continuousTimestamp) / 1000
+                
+                // For Type 0, calculate the delta relative to the previous timestamp
+                if updatedAt > previousUpdatedAt {
+                    lastDelta = updatedAt - previousUpdatedAt
+                } else {
+                    lastDelta = 0
+                }
+                lastRawTimestamp = rawTimestamp
             }
-        default:
-            updatedAt += TimeInterval(message.timestamp) / 1000
+        case .one, .two:
+            lastDelta = TimeInterval(message.timestamp) / 1000
+            updatedAt += lastDelta
+        case .three:
+            updatedAt += lastDelta
         }
     }
 
@@ -54,6 +83,9 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         startedAt = kRTMPTimestamp_defaultTimeInterval
         updatedAt = kRTMPTimestamp_defaultTimeInterval
         timedeltaFraction = kRTMPTimestamp_defaultTimeInterval
+        lastRawTimestamp = 0
+        rolloverCount = 0
+        lastDelta = 0
     }
 }
 

@@ -10,7 +10,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public enum Error: Swift.Error {
         /// An invalid internal stare.
         case invalidState
-        /// The command isn’t supported.
+        /// The command isn't supported.
         case unsupportedCommand(_ command: String)
         /// The connection operation timed out.
         case connectionTimedOut
@@ -20,13 +20,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         case requestTimedOut
         /// A request fails.
         case requestFailed(response: RTMPResponse)
-    }
-
-    enum ReadyState: UInt8 {
-        case uninitialized
-        case versionSent
-        case ackSent
-        case handshakeDone
     }
 
     /// The default time to wait for TCP/IP Handshake done.
@@ -181,20 +174,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public private(set) var uri: URL?
     /// The instance connected to server(true) or not(false).
     @Published public private(set) var connected = false
-    /// The stream of events you receive RTMP status events from a service.
-    public var status: AsyncStream<RTMPStatus> {
-        AsyncStream { continuation in
-            statusContinuation = continuation
-        }
-    }
-    /// The object encoding for this RTMPConnection instance.
-    public let objectEncoding = RTMPConnection.defaultObjectEncoding
 
     var newTransaction: Int {
         currentTransactionId += 1
         return currentTransactionId
     }
 
+    private var stateMachine: RTMPConnectionStateMachine?
     private var socket: RTMPSocket?
     private var chunks: [UInt16: RTMPChunkMessageHeader] = [:]
     private var streams: [RTMPStream] = []
@@ -202,27 +188,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     private var bandWidth: UInt32 = 0
     private var handshake: RTMPHandshake = .init()
     private var arguments: [(any Sendable)?] = []
-    private var readyState: ReadyState = .uninitialized {
-        didSet {
-            logger.info(oldValue, "=>", readyState)
-        }
-    }
-    private var chunkSizeC = RTMPChunkMessageHeader.chunkSize {
-        didSet {
-            guard chunkSizeC != oldValue else {
-                return
-            }
-            inputBuffer.chunkSize = chunkSizeC
-        }
-    }
-    private var chunkSizeS = RTMPChunkMessageHeader.chunkSize {
-        didSet {
-            guard chunkSizeS != oldValue else {
-                return
-            }
-            outputBuffer.chunkSize = chunkSizeS
-        }
-    }
     private var operations: [Int: CheckedContinuation<RTMPResponse, any Swift.Error>] = [:]
     private var inputBuffer = RTMPChunkBuffer()
     private var windowSizeC = RTMPConnection.defaultWindowSizeS {
@@ -325,7 +290,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         handshake.clear()
         chunks.removeAll()
         sequence = 0
-        readyState = .uninitialized
         chunkSizeC = RTMPChunkMessageHeader.chunkSize
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
@@ -603,10 +567,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             app += "?" + query
         }
         var commandObject: AMFObject = [
-            "objectEncoding": objectEncoding.rawValue,
             "app": app,
             "flashVer": flashVer,
-            "swfUrl": swfUrl,
             "tcUrl": uri.absoluteWithoutAuthenticationString,
             "fpad": false,
             "capabilities": Self.defaultCapabilities,
@@ -614,8 +576,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             "videoCodecs": SupportVideo.h264.rawValue,
             "videoFunction": VideoFunction.clientSeek.rawValue,
             "pageUrl": pageUrl,
-            "capsEx": capsEx
         ]
+        commandObject["swfUrl"] = swfUrl
+        commandObject["objectEncoding"] = objectEncoding.rawValue
+        commandObject["capsEx"] = capsEx
         fourCcList.map { commandObject["fourCcList"] = $0 }
         videoFourCcInfoMap.map { commandObject["videoFourCcInfoMap"] = $0 }
         audioFourCcInfoMap.map { commandObject["audioFourCcInfoMap"] = $0 }
@@ -628,5 +592,42 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             commandObject: commandObject,
             arguments: arguments
         )
+    }
+}
+
+extension RTMPConnection {
+    /// The object encoding for this RTMPConnection instance.
+    public var objectEncoding: RTMPObjectEncoding {
+        RTMPConnection.defaultObjectEncoding
+    }
+
+    /// The stream of events you receive RTMP status events from a service.
+    public var status: AsyncStream<RTMPStatus> {
+        AsyncStream { continuation in
+            statusContinuation = continuation
+        }
+    }
+
+    private var chunkSizeC: Int {
+        get { inputBuffer.chunkSize }
+        set { inputBuffer.chunkSize = newValue }
+    }
+
+    private var chunkSizeS: Int {
+        get { outputBuffer.chunkSize }
+        set { outputBuffer.chunkSize = newValue }
+    }
+
+    private enum ReadyState {
+        case uninitialized
+        case versionSent
+        case ackSent
+        case handshakeDone
+    }
+
+    private var readyState: ReadyState = .uninitialized {
+        didSet {
+            logger.info(oldValue, "=>", readyState)
+        }
     }
 }

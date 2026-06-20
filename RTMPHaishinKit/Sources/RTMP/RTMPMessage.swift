@@ -387,7 +387,7 @@ struct RTMPAudioMessage: RTMPMessage {
         payload = header.payload
     }
 
-    init?(streamId: UInt32, timestamp: UInt32, formatDescription: CMFormatDescription?) {
+    init?(streamId: UInt32, timestamp: UInt32, formatDescription: CMFormatDescription?, trackId: UInt8? = nil) {
         self.streamId = streamId
         self.timestamp = timestamp
         switch formatDescription?.mediaSubType {
@@ -397,6 +397,10 @@ struct RTMPAudioMessage: RTMPMessage {
             }
             var buffer = Data([RTMPAudioCodec.exheader.rawValue << 4 | RTMPAudioPacketType.sequenceStart.rawValue])
             buffer.append(contentsOf: RTMPAudioFourCC.opus.rawValue.bigEndian.data)
+            if let trackId, trackId != UInt8.max {
+                // MultiTrack encoding: append track ID before payload
+                buffer.append(trackId)
+            }
             buffer.append(header.payload)
             self.payload = buffer
         default:
@@ -409,7 +413,7 @@ struct RTMPAudioMessage: RTMPMessage {
         }
     }
 
-    init?(streamId: UInt32, timestamp: UInt32, audioBuffer: AVAudioCompressedBuffer?) {
+    init?(streamId: UInt32, timestamp: UInt32, audioBuffer: AVAudioCompressedBuffer?, trackId: UInt8? = nil) {
         guard let audioBuffer else {
             return nil
         }
@@ -419,6 +423,9 @@ struct RTMPAudioMessage: RTMPMessage {
         case .opus:
             var buffer = Data([RTMPAudioCodec.exheader.rawValue << 4 | RTMPAudioPacketType.codedFrames.rawValue])
             buffer.append(contentsOf: RTMPAudioFourCC.opus.rawValue.bigEndian.data)
+            if let trackId, trackId != UInt8.max {
+                buffer.append(trackId)
+            }
             buffer.append(audioBuffer.data.assumingMemoryBound(to: UInt8.self), count: Int(audioBuffer.byteLength))
             self.payload = buffer
         default:
@@ -503,7 +510,7 @@ struct RTMPVideoMessage: RTMPMessage {
         self.payload = header.payload
     }
 
-    init?(streamId: UInt32, timestamp: UInt32, formatDescription: CMFormatDescription?) {
+    init?(streamId: UInt32, timestamp: UInt32, formatDescription: CMFormatDescription?, trackId: UInt8? = nil) {
         guard let formatDescription else {
             return nil
         }
@@ -522,6 +529,9 @@ struct RTMPVideoMessage: RTMPMessage {
                 return nil
             }
             var buffer = Data([0b10000000 | RTMPFrameType.key.rawValue << 4 | RTMPVideoPacketType.sequenceStart.rawValue, 0x68, 0x76, 0x63, 0x31])
+            if let trackId, trackId != UInt8.max {
+                buffer.append(trackId)
+            }
             buffer.append(configurationBox)
             payload = buffer
         default:
@@ -529,7 +539,7 @@ struct RTMPVideoMessage: RTMPMessage {
         }
     }
 
-    init?(streamId: UInt32, timestamp: UInt32, sampleBuffer: CMSampleBuffer?) {
+    init?(streamId: UInt32, timestamp: UInt32, sampleBuffer: CMSampleBuffer?, trackId: UInt8? = nil) {
         guard let sampleBuffer, let data = try? sampleBuffer.dataBuffer?.dataBytes() else {
             return nil
         }
@@ -607,7 +617,7 @@ struct RTMPVideoMessage: RTMPMessage {
  */
 struct RTMPAggregateMessage: RTMPMessage {
     // MARK: RTMPMessage
-    let type: RTMPMessageType = .windowAck
+    let type: RTMPMessageType = .aggregate
     let streamId: UInt32
     let timestamp: UInt32
     let payload: Data
