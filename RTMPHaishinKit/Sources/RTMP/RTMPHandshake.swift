@@ -53,14 +53,17 @@ final class RTMPHandshake {
         packet.reserveCapacity(RTMPHandshake.sigSize)
 
         // S1 timestamp (4 bytes, big endian)
-        packet.append(contentsOf: withUnsafeBytes(of: s1Timestamp.bigEndian) { Data($0) })
+        var ts = s1Timestamp.bigEndian
+        packet.append(Data(bytes: &ts, count: MemoryLayout<UInt32>.size))
 
         // Client current timestamp (4 bytes, big endian)
-        let clientTime = UInt32(Date().timeIntervalSince1970 * 1000).bigEndian
-        packet.append(contentsOf: withUnsafeBytes(of: clientTime) { Data($0) })
+        var ct = UInt32(Date().timeIntervalSince1970 * 1000).bigEndian
+        packet.append(Data(bytes: &ct, count: MemoryLayout<UInt32>.size))
 
         // S1 random data (1528 bytes)
-        packet.append(s1RandomData)
+        if !s1RandomData.isEmpty {
+            packet.append(s1RandomData)
+        }
 
         return packet
     }
