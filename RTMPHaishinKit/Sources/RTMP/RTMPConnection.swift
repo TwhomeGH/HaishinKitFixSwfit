@@ -350,6 +350,17 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
 
+    /// Enable or disable auto-reconnect.
+    public func setReconnectEnabled(_ enabled: Bool) {
+        isReconnectEnabled = enabled
+    }
+
+    /// Set the reconnection state callback.
+    /// - Parameter handler: Called when reconnection state changes (started, succeeded, failed, exhausted).
+    public func setOnReconnectStateChanged(_ handler: (@Sendable (ReconnectState) async -> Void)?) {
+        onReconnectStateChanged = handler
+    }
+
     /// Creates a two-way connection to an application on RTMP Server.
     public func connect(_ command: String, arguments: (any Sendable)?...) async throws -> RTMPResponse {
         guard state.canTransition(to: .connecting) else {
