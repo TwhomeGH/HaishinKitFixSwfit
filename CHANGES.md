@@ -462,3 +462,39 @@ await mixer.append(buffer, when: time)
 ## 17. RTMP 底層 Socket缺陷/性能問題
 
 [**改動說明 CHANGES**](./Docs/CHANGELOG_RTMP_SOCKET.md)
+
+---
+
+## 18. 移除無效的 AudioRouteManager / Voice Chat 功能
+
+**檔案**:
+- `Sources/Mixer/AudioRouteManager.swift` — 已刪除
+- `Sources/Mixer/MediaMixer.swift` — 移除 `setVoiceChatEnabled()`, `audioRouteManager` 屬性與 `deactivate()` 呼叫
+
+### 刪除內容
+1. 整個 `AudioRouteManager` class（AVAudioEngine tap 擷取麥克風）
+2. `MediaMixer.audioRouteManager` 延遲屬性
+3. `MediaMixer.setVoiceChatEnabled()` 公開方法
+4. `stopRunning()` 中的 `audioRouteManager.deactivate()` 呼叫
+
+### 原因
+`AudioRouteManager` 在 Broadcast Extension 中完全無效：
+- AVAudioSession category 無法在 extension 設定，方法直接跳過無作用
+- AVAudioEngine 無法在 extension 正常啟動 input tap
+- 與 `RPScreenRecorder.isMicrophoneEnabled = false` 搭配會導致麥克風音訊完全靜音
+
+### 替代方案
+直接使用 ReplayKit 提供的 `.audioMic` / `.audioApp` buffer，透過 `AudioMixer` 混合兩軌，已由 `AudioProcessor` 實作。
+
+---
+
+## 19. VideoCaptureUnit AsyncStream 改為有界佇列
+
+**檔案**: `Sources/Mixer/VideoCaptureUnit.swift`
+
+### 改動
+- `inputs` AsyncStream: `.unbounded` → `.bufferingNewest(30)`
+- `output` AsyncStream: `.unbounded` → `.bufferingNewest(30)`
+
+### 原因
+原本的 unbounded 策略會讓 frame 在 consumer 慢的時候無限堆積，導致記憶體膨脹及關閉時暴衝 flush。改成保留最新 30 幀，自動丟棄舊幀，符合直播低延遲需求。

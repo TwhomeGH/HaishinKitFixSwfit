@@ -131,10 +131,6 @@ public final actor MediaMixer {
     private lazy var session: (any CaptureSessionConvertible) = captureSessionMode.makeSession()
     @ScreenActor
     private lazy var displayLink = DisplayLinkChoreographer()
-    #if os(iOS)
-    private lazy var audioRouteManager = AudioRouteManager(mixer: self)
-    #endif
-
     /// Creates a new instance.
     ///
     /// - Parameters:
@@ -307,23 +303,6 @@ public final actor MediaMixer {
     public func setMonitoringEnabled(_ monitoringEnabled: Bool) {
         audioIO.isMonitoringEnabled = monitoringEnabled
     }
-
-    #if os(iOS)
-    /// Enables or disables voice chat coexistence mode.
-    ///
-    /// When enabled, the audio session is reconfigured for `.playAndRecord` + `.voiceChat` mode
-    /// with `.mixWithOthers` so that microphone capture and background audio playback coexist.
-    /// An AVAudioEngine tap feeds the mic audio into the existing encode pipeline.
-    /// - Attention: The app layer should disable `RPScreenRecorder.isMicrophoneEnabled` when this is active
-    ///              to avoid duplicate mic audio from ReplayKit.
-    public func setVoiceChatEnabled(_ enabled: Bool) throws {
-        if enabled {
-            try audioRouteManager.activate()
-        } else {
-            audioRouteManager.deactivate()
-        }
-    }
-    #endif
 
     /// Starts capturing from input devices.
     ///
@@ -577,9 +556,6 @@ extension MediaMixer: AsyncRunner {
         videoIO.finish()
         subscriptions.forEach { $0.cancel() }
         subscriptions.removeAll()
-        #if os(iOS)
-        audioRouteManager.deactivate()
-        #endif
         // Wait for the task to finish to prevent memory leaks.
         await Task { @ScreenActor in
             displayLink.stopRunning()
