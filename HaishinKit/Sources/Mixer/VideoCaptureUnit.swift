@@ -54,10 +54,10 @@ final class VideoCaptureUnit: CaptureUnit {
     }
     #endif
 
-    @AsyncStreamedFlow
+    @AsyncStreamedFlow(.bufferingNewest(30))
     var inputs: AsyncStream<(UInt8, CMSampleBuffer)>
 
-    @AsyncStreamedFlow
+    @AsyncStreamedFlow(.bufferingNewest(30))
     var output: AsyncStream<CMSampleBuffer>
 
     var dynamicRangeMode: DynamicRangeMode = .sdr {
