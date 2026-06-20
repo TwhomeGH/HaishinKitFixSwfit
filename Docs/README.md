@@ -54,11 +54,14 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 ### 安裝
 
 **Swift Package Manager：**
+
 ```swift
-dependencies: [
-    .package(url: "https://github.com/shogo4405/HaishinKit.swift", from: "1.0.0")
-]
+.package(url: "https://github.com/TwhomeGH/HaishinKitFixSwfit.git", branch: "main")
 ```
+
+或在 Xcode 中：**File → Add Package Dependencies...** → 輸入 `https://github.com/TwhomeGH/HaishinKitFixSwfit.git`
+
+
 
 ### 基本 RTMP 發布
 
