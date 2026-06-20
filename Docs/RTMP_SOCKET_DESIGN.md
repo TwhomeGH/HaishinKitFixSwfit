@@ -149,15 +149,27 @@ func doOutput(...) {
 
 ## 總結
 
+| 優先級 | 缺陷 | 影響 | 狀態 |
+|--------|------|------|------|
+| 🔥 Critical | `windowSizeC=255` 接收緩衝區過小 | 高 CPU、低吞吐、首次連接慢 | ✅ 已修 |
+| 🔥 Critical | output Task 死亡不清理 | 推流一段時間後 OOM | ✅ 已修 |
+| 🔴 High | viability 下降立即關閉 | 短暫抖動就斷連，無法恢復 | ✅ 已修 |
+| 🔴 High | `recv()` continuation 未 finish | 連線無法正常關閉，hang | ✅ 已修 |
+| 🔴 High | lazy stream createStream 遺漏 | 首次推流失敗 | ✅ 已修 |
+| 🟡 Medium | 三層 AsyncStream 無背壓 | 高碼率記憶體爆炸 | ✅ 已修 |
+| 🟡 Medium | weak ref 資料丟失 | 推流資料不完整 | ✅ 已修 |
+
+### 本次新增修正
+
 | 優先級 | 缺陷 | 影響 |
 |--------|------|------|
-| 🔥 Critical | `windowSizeC=255` 接收緩衝區過小 | 高 CPU、低吞吐、首次連接慢 |
-| 🔥 Critical | output Task 死亡不清理 | 推流一段時間後 OOM |
-| 🔴 High | viability 下降立即關閉 | 短暫抖動就斷連，無法恢復 |
-| 🔴 High | `recv()` continuation 未 finish | 連線無法正常關閉，hang |
-| 🔴 High | lazy stream createStream 遺漏 | 首次推流失敗 |
-| 🟡 Medium | 三層 AsyncStream 無背壓 | 高碼率記憶體爆炸 |
-| 🟡 Medium | weak ref 資料丟失 | 推流資料不完整 |
+| 🔥 Critical | recv() 錯誤時無限迴圈 | 斷線後 CPU 100%，無法清理 |
+| 🔥 Critical | close() 未清理所有 pending operations | 部分 caller 永久 hang |
+| 🔴 High | connect 失敗 output continuation 未清理 | Task zombie |
+| 🔴 High | shared continuation 覆寫 | 前一 operation 遺漏 |
+| 🔴 High | publish() fire-and-forget Task | 資源洩漏 |
+| 🟡 Medium | C1 timestamp=0 / C2 epoch time | 協定違規、2038 overflow |
+| 🟡 Medium | hasS0S1Packet off-by-one | S0S1 單獨到時判斷不準 |
 
 ## 相關檔案
 

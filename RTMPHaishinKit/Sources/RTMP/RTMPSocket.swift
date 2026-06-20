@@ -123,6 +123,7 @@ final actor RTMPSocket {
                     }
                 } catch {
                     logger.error("recv error:", error)
+                    connected = false
                 }
             }
         }
@@ -147,7 +148,7 @@ final actor RTMPSocket {
         case .ready:
             logger.info("Connection is ready.")
             connected = true
-            let (stream, continuation) = AsyncStream<Data>.makeStream()
+            let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(256))
             Task {
                 for await data in stream {
                     guard connected else { break }

@@ -227,6 +227,7 @@ public actor RTMPStream {
     package var bitRateStrategy: (any StreamBitRateStrategy)?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
     private var outputContinuation: AsyncStream<RTMPStreamOutput>.Continuation?
+    private var tasks: [Task<Void, Never>] = []
     nonisolated(unsafe) private var mixerAudioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
     nonisolated(unsafe) private var mixerVideoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private(set) var id: UInt32 = RTMPStream.defaultID
@@ -313,6 +314,7 @@ public actor RTMPStream {
             let response = try await withCheckedThrowingContinuation { continuation in
                 readyState = .play
                 expectedResponse = Code.playStart
+                self.continuation?.resume(throwing: Error.invalidState)
                 self.continuation = continuation
                 Task {
                     await incoming.startRunning()
@@ -374,6 +376,7 @@ public actor RTMPStream {
             let response = try await withCheckedThrowingContinuation { continuation in
                 readyState = .publish
                 expectedResponse = Code.publishStart
+                self.continuation?.resume(throwing: Error.invalidState)
                 self.continuation = continuation
                 Task {
                     try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
@@ -400,21 +403,21 @@ public actor RTMPStream {
             outgoing.startRunning()
             stopMixerInputConsumers()
             startMixerInputConsumers()
-            Task {
+            tasks.append(Task {
                 for await audio in outgoing.audioOutputStream {
                     append(audio.0, when: audio.1)
                 }
-            }
-            Task {
+            })
+            tasks.append(Task {
                 for await video in outgoing.videoOutputStream {
                     append(video)
                 }
-            }
-            Task {
+            })
+            tasks.append(Task {
                 for await video in outgoing.videoInputStream {
                     outgoing.append(video: video)
                 }
-            }
+            })
             return response
         } catch {
             readyState = .idle
@@ -431,6 +434,7 @@ public actor RTMPStream {
         startMixerInputConsumers()
         outgoing.stopRunning()
         return try await withCheckedThrowingContinuation { continutation in
+            self.continuation?.resume(throwing: Error.invalidState)
             self.continuation = continutation
             switch readyState {
             case .playing:
@@ -533,6 +537,7 @@ public actor RTMPStream {
         }
         let response = try await withCheckedThrowingContinuation { continuation in
             expectedResponse = isPaused ? Code.pauseNotify : Code.unpauseNotify
+            self.continuation?.resume(throwing: Error.invalidState)
             self.continuation = continuation
             Task {
                 try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
@@ -560,9 +565,11 @@ public actor RTMPStream {
     }
 
     func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) {
-        let connection = connection
-        outputContinuation?.yield {
-            await connection?.doOutput(type, chunkStreamId: chunkStreamId, message: message) ?? 0
+        guard let connection else {
+            return
+        }
+        outputContinuation?.yield { [connection] in
+            await connection.doOutput(type, chunkStreamId: chunkStreamId, message: message)
         }
     }
 
@@ -708,16 +715,16 @@ public actor RTMPStream {
         )
         mixerAudioContinuation = audioContinuation
         mixerVideoContinuation = videoContinuation
-        Task {
+        tasks.append(Task {
             for await (buffer, when) in audioStream {
                 append(buffer, when: when)
             }
-        }
-        Task {
+        })
+        tasks.append(Task {
             for await sampleBuffer in videoStream {
                 append(sampleBuffer)
             }
-        }
+        })
     }
 
     private func stopMixerInputConsumers() {
@@ -725,10 +732,12 @@ public actor RTMPStream {
         mixerAudioContinuation = nil
         mixerVideoContinuation?.finish()
         mixerVideoContinuation = nil
+        tasks.forEach { $0.cancel() }
+        tasks.removeAll()
     }
 
     private func startOutputConsumer() {
-        let (stream, continuation) = AsyncStream.makeStream(of: RTMPStreamOutput.self)
+        let (stream, continuation) = AsyncStream.makeStream(of: RTMPStreamOutput.self, bufferingPolicy: .bufferingOldest(128))
         outputContinuation = continuation
         Task {
             for await output in stream {

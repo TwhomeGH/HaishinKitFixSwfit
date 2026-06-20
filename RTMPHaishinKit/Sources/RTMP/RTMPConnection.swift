@@ -368,6 +368,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
             return result
         } catch let error as RTMPSocket.Error {
+            outputContinuation?.finish()
+            outputContinuation = nil
             switch error {
             case .connectionTimedOut:
                 throw Error.connectionTimedOut
@@ -428,11 +430,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         connected = false
         readyState = .uninitialized
 
-        if let operation = operations.removeValue(forKey: Self.connectTransactionId) {
+        for (_, operation) in operations {
             operation.resume(throwing: Error.requestFailed(response: .init(status: status)))
-        } else {
-            statusContinuation?.yield(status)
         }
+        operations.removeAll()
+        statusContinuation?.yield(status)
     }
 
     @discardableResult
@@ -451,7 +453,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(of: [Data].self)
+        let (stream, continuation) = AsyncStream.makeStream(of: [Data].self, bufferingPolicy: .bufferingOldest(128))
         outputContinuation = continuation
         Task {
             for await chunks in stream {

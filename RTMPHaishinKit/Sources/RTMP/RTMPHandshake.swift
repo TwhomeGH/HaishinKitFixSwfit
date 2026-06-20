@@ -8,7 +8,7 @@ final class RTMPHandshake {
     var timestamp: TimeInterval = 0
 
     var hasS0S1Packet: Bool {
-        RTMPHandshake.sigSize + 1 < inputBuffer.count
+        RTMPHandshake.sigSize + 1 <= inputBuffer.count
     }
 
     var hasS2Packet: Bool {
@@ -45,6 +45,6 @@ final class RTMPHandshake {
 
     func clear() {
         inputBuffer = .init()
-        timestamp = 0
+        timestamp = Date().timeIntervalSince1970
     }
 }
