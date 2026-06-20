@@ -8,14 +8,14 @@ package extension ExpressibleByIntegerLiteral {
     }
 
     init(data: Data) {
-        let diff: Int = MemoryLayout<Self>.size - data.count
-        if 0 < diff {
-            var buffer = Data(repeating: 0, count: diff)
-            buffer.append(data)
-            self = buffer.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: Self.self).pointee }
-            return
+        let count = min(data.count, MemoryLayout<Self>.size)
+        var result: Self = 0
+        withUnsafeMutableBytes(of: &result) { dest in
+            let src = data.withUnsafeBytes { $0 }
+            guard let base = src.baseAddress else { return }
+            dest.copyMemory(from: UnsafeRawBufferPointer(start: base, count: count))
         }
-        self = data.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: Self.self).pointee }
+        self = result
     }
 
     init(data: Slice<Data>) {
