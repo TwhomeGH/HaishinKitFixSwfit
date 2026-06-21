@@ -30,6 +30,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public static let defaultWindowSizeS: Int64 = 250000
     /// The supported protocols are rtmp, rtmps, rtmpt and rtmps.
     public static let supportedProtocols: Set<String> = ["rtmp", "rtmps"]
+    /// The default capsEx value for E-RTMP compatibility.
+    public static let defaultCapsEx: Int = 0x01
     /// The supported fourCcList.
     public static let supportedFourCcList = [RTMPVideoFourCC.hevc.description, RTMPAudioFourCC.opus.description]
     /// The default RTMP port is 1935.
@@ -293,7 +295,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         fourCcList: [String]? = RTMPConnection.supportedFourCcList,
         videoFourCcInfoMap: AMFObject? = RTMPConnection.supportedVideoFourCcInfoMap,
         audioFourCcInfoMap: AMFObject? = RTMPConnection.supportedAudioFourCcInfoMap,
-        capsEx: Int = EnhancedRTMPCapability.supportsEnhancedRTMP,
+        capsEx: Int = RTMPConnection.defaultCapsEx,
         timeout: Int = RTMPConnection.defaultTimeout,
         requestTimeout: UInt64 = RTMPConnection.defaultRequestTimeout,
         chunkSize: Int = RTMPConnection.defaultChunkSizeS,
