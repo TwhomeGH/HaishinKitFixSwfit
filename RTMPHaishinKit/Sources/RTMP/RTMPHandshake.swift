@@ -30,7 +30,7 @@ final class RTMPHandshake {
         packet.append(RTMPHandshake.protocolVersion)
 
         // C1: 1536 bytes
-        let c1Timestamp = UInt32(timestamp).bigEndian
+        let c1Timestamp = UInt32(truncatingIfNeeded: Int64(timestamp)).bigEndian
         packet.append(contentsOf: withUnsafeBytes(of: c1Timestamp) { Data($0) })
         packet.append(Data(count: 4)) // Zero padding
         for _ in 0..<RTMPHandshake.sigSize - 8 {
@@ -57,7 +57,7 @@ final class RTMPHandshake {
         packet.append(Data(bytes: &ts, count: MemoryLayout<UInt32>.size))
 
         // Client current timestamp (4 bytes, big endian)
-        var ct = UInt32(Date().timeIntervalSince1970 * 1000).bigEndian
+        var ct = UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 1000)).bigEndian
         packet.append(Data(bytes: &ct, count: MemoryLayout<UInt32>.size))
 
         // S1 random data (1528 bytes)
