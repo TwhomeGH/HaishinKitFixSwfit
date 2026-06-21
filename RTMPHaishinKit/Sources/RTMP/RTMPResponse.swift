@@ -1,7 +1,13 @@
 import Foundation
 
 /// The metadata  associated with the response to an RTMP protocol request.
-public struct RTMPResponse: Sendable {
+public struct RTMPResponse: Sendable, CustomStringConvertible {
+    public var description: String {
+        if let status {
+            return "\(status.code) \(status.level): \(status.description)"
+        }
+        return "no status"
+    }
     /// The RTMP response status.
     public let status: RTMPStatus?
     /// The RTMP response arguments.
