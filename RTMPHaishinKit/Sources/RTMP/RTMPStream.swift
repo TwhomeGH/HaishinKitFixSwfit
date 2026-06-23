@@ -400,16 +400,19 @@ public actor RTMPStream {
             metadata = makeMetadata()
             readyState = .publishing
             try? send("@setDataFrame", arguments: "onMetaData", metadata)
+            // Ensure output streams are initialized before encoder starts
+            let videoOutput = outgoing.videoOutputStream
+            let audioOutput = outgoing.audioOutputStream
             outgoing.startRunning()
             stopMixerInputConsumers()
             startMixerInputConsumers()
             tasks.append(Task {
-                for await audio in outgoing.audioOutputStream {
+                for await audio in audioOutput {
                     append(audio.0, when: audio.1)
                 }
             })
             tasks.append(Task {
-                for await video in outgoing.videoOutputStream {
+                for await video in videoOutput {
                     append(video)
                 }
             })
