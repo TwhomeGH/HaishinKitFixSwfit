@@ -440,6 +440,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             for stream in streams {
                 await stream.dispatch(.reset)
                 await stream.createStream()
+                await stream.resumePublishing()
             }
             reconnectAttempts = 0
             await onReconnectStateChanged?(.succeeded)

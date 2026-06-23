@@ -398,8 +398,6 @@ public actor RTMPStream {
             }
             info.resourceName = name
             howToPublish = type
-            lastPublishName = name
-            lastPublishType = type
             startedAt = .init()
             metadata = makeMetadata()
             readyState = .publishing
@@ -437,7 +435,6 @@ public actor RTMPStream {
         guard readyState == .playing || readyState == .publishing else {
             throw Error.invalidState
         }
-        lastPublishName = nil
         stopMixerInputConsumers()
         startMixerInputConsumers()
         outgoing.stopRunning()
@@ -872,17 +869,6 @@ extension RTMPStream: _Stream {
         currentFPS = frameCount
         frameCount = 0
         info.update()
-    }
-
-    func resumePublishing() async {
-        guard let name = lastPublishName, readyState == .idle else {
-            return
-        }
-        do {
-            try await publish(name, type: lastPublishType)
-        } catch {
-            logger.error("Auto-republish failed:", error)
-        }
     }
 }
 
