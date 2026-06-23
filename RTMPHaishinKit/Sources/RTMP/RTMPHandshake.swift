@@ -13,8 +13,9 @@ final class RTMPHandshake {
     }
 
     // S2 (1536 bytes)
+    // After c2packet() removes S0+S1, inputBuffer contains only S2 data
     var hasS2Packet: Bool {
-        RTMPHandshake.sigSize <= inputBuffer.count - 1 - RTMPHandshake.sigSize
+        RTMPHandshake.sigSize <= inputBuffer.count
     }
 
     private(set) var s0Version: UInt8 = 0

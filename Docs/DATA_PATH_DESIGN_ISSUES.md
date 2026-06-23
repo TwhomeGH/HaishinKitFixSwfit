@@ -193,28 +193,94 @@ for stream in streams {
 
 ---
 
-## 5. 總結
+## 5. S2 封包檢測公式錯誤
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPHandshake.swift:16-18`
+
+### 問題
+
+`hasS2Packet` 的公式完全錯誤，導致 handshake **永遠卡在 S2 等待階段**，connect command 永遠不會送出。
+
+### 原始公式
+
+```swift
+var hasS2Packet: Bool {
+    RTMPHandshake.sigSize <= inputBuffer.count - 1 - RTMPHandshake.sigSize
+    // = 1536 <= inputBuffer.count - 1537
+}
+```
+
+`c2packet()` 被呼叫後會從 `inputBuffer` 移除 S0（1 byte）+ S1（1536 bytes）。移除後 `inputBuffer` 只剩下 S2 資料（最多 1536 bytes）。
+
+代入公式：`1536 <= inputBuffer.count - 1537`
+- 要成立需要 `inputBuffer.count >= 3073`
+- 但此時 `inputBuffer.count` 最多只有 1536（僅 S2）
+- **結果永遠為 false**
+
+### 影響
+
+```
+Client recv() 收到 S0+S1+S2 (同一個 TCP packet)
+  → listen(.versionSent): handshake.put(data) → hasS0S1Packet = true
+  → parseS0S1() 讀取 S0+S1
+  → c2packet() 傳送 C2，並從 inputBuffer 移除 S0+S1
+  → state = .ackSent
+  → listen(.ackSent): handshake.put(Data()) // 空資料
+  → hasS2Packet = false（公式錯誤！）
+  → 回傳，繼續等待更多資料
+  → 伺服端已送出 S2，正在等待 connect command
+  → ⛔ 雙方 Deadlock！
+  → 3s 後客戶端 requestTimeout → Error.requestTimedOut
+  → close() → 伺服端 30s 後 "expect connect app response : timeout 30000 ms"
+```
+
+### 關鍵錯誤鏈
+
+| 環節 | 結果 |
+|------|------|
+| 握手成功（S0+S1+S2 已完整收到） | ✅ |
+| S2 檢測公式 bug | ❌ `hasS2Packet` 永遠 false |
+| Handshake 無法 transition 到 `.handshakeDone` | ❌ |
+| "connect" command 永不發送 | ❌ |
+| 伺服端等待 30s 後 timeout | ❌ |
+| 客戶端等待 3s 後 timeout | ❌ |
+
+### 修復
+
+```swift
+// ✅ 正確：只需檢查 buffer 中是否有完整 S2 (1536 bytes)
+var hasS2Packet: Bool {
+    RTMPHandshake.sigSize <= inputBuffer.count
+}
+```
+
+---
+
+## 6. 總結
 
 ### 問題嚴重性
 
-| # | 問題 | 嚴重性 | 影響範圍 |
-|---|------|--------|----------|
-| 1 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 |
-| 2 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 |
-| 3 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 |
-| 4 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 |
+| # | 問題 | 嚴重性 | 影響範圍 | 類別 |
+|---|------|--------|----------|------|
+| 0 | S2 封包檢測公式錯誤 | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
+| 1 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
+| 2 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
+| 3 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
+| 4 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
 
 ### 修復狀態
 
-| # | 修復 | 檔案 | PR |
-|---|------|------|-----|
-| 1 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` | - |
-| 2 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` | - |
-| 3 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` | - |
-| 4 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` | - |
+| # | 修復 | 檔案 |
+|---|------|------|
+| 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
+| 1 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` |
+| 2 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
+| 3 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
+| 4 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
 
 ### 建議測試項目
 
 1. 模擬 encoder 輸出與 consumer task 啟動之間的競爭條件
 2. 斷線重連後驗證 format packet（AVC sequence header）正確送出
 3. 長時間串流測試，確認無 frame 因 continuation nil 而丟棄
+4. 驗證 handshake S2 檢測：C0C1 → S0S1S2 → C2 → connect command 完整流程
