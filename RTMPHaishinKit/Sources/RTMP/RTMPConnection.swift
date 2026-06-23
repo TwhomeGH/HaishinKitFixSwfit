@@ -32,6 +32,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public static let supportedProtocols: Set<String> = ["rtmp", "rtmps"]
     /// The default capsEx value for E-RTMP compatibility.
     public static let defaultCapsEx: Int = 0x01
+    /// Whether enhanced RTMP (E-RTMP) features are enabled by default.
+    public static let defaultUseEnhancedRTMP: Bool = true
+    /// Whether enhanced RTMP (E-RTMP) features are enabled by default.
+    public static let defaultUseEnhancedRTMP: Bool = true
     /// The supported fourCcList.
     public static let supportedFourCcList = [RTMPVideoFourCC.hevc.description, RTMPAudioFourCC.opus.description]
     /// The default RTMP port is 1935.
@@ -282,17 +286,14 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     ///
     /// ## Example code:
     /// ```swift
-    /// let connection = RTMPConnection(
-    ///  fourCcList: nil,
-    ///  videoFourCcInfoMap: nil,
-    ///  audioFourCcInfoMap: nil,
-    ///  capsEx: 0
-    /// )
+    /// // Disable E-RTMP for servers that don't support it
+    /// let connection = RTMPConnection(useEnhancedRTMP: false)
     /// ```
     public init(
         swfUrl: String? = nil,
         pageUrl: String? = nil,
         flashVer: String = RTMPConnection.defaultFlashVer,
+        useEnhancedRTMP: Bool = RTMPConnection.defaultUseEnhancedRTMP,
         fourCcList: [String]? = RTMPConnection.supportedFourCcList,
         videoFourCcInfoMap: AMFObject? = RTMPConnection.supportedVideoFourCcInfoMap,
         audioFourCcInfoMap: AMFObject? = RTMPConnection.supportedAudioFourCcInfoMap,
@@ -309,10 +310,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.pageUrl = pageUrl
         self.flashVer = flashVer
         self.timeout = timeout
-        self.fourCcList = fourCcList
-        self.videoFourCcInfoMap = videoFourCcInfoMap
-        self.audioFourCcInfoMap = audioFourCcInfoMap
-        self.capsEx = capsEx
+        self.fourCcList = useEnhancedRTMP ? fourCcList : nil
+        self.videoFourCcInfoMap = useEnhancedRTMP ? videoFourCcInfoMap : nil
+        self.audioFourCcInfoMap = useEnhancedRTMP ? audioFourCcInfoMap : nil
+        self.capsEx = useEnhancedRTMP ? capsEx : 0
         self.requestTimeout = requestTimeout
         self.chunkSize = chunkSize
         self.qualityOfService = qualityOfService

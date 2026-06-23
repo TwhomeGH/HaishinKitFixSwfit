@@ -256,7 +256,97 @@ var hasS2Packet: Bool {
 
 ---
 
-## 6. 總結
+---
+
+## 6. E-RTMP 相容性設置
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift:292-323`
+
+### 問題
+
+SRS 等部分 RTMP 伺服器不支援 E-RTMP（Enhanced RTMP）的擴充欄位，收到 `connect` command 中的 `fourCcList`、`capsEx`、`videoFourCcInfoMap`、`audioFourCcInfoMap` 等欄位時會直接拒絕連線。
+
+SRS log 表現為 connect 成功後立即 `on_close`，無明確錯誤訊息。
+
+### 使用方式
+
+```swift
+// 對不支援 E-RTMP 的伺服器（如 SRS），設為 false
+let connection = RTMPConnection(
+    useEnhancedRTMP: false,
+    isReconnectEnabled: true
+)
+```
+
+`useEnhancedRTMP: false` 等效於：
+
+```swift
+RTMPConnection(
+    fourCcList: nil,
+    videoFourCcInfoMap: nil,
+    audioFourCcInfoMap: nil,
+    capsEx: 0
+)
+```
+
+### 效果
+
+| 設定 | `fourCcList` | `videoFourCcInfoMap` | `audioFourCcInfoMap` | `capsEx` |
+|------|-------------|---------------------|---------------------|---------|
+| `true`（預設） | `["hvc1","opus"]` | `canDecode\|canEncode` | `canEncode` | `0x01` |
+| `false` | `nil` | `nil` | `nil` | `0` |
+
+### 何時需要關閉
+
+- 使用 SRS、Nginx-RTMP 等傳統 RTMP 伺服器
+- 伺服器回傳 `NetConnection.Connect.Failed` 但無詳細描述
+- SRS log 看到 connect 後立即被 `on_close`
+
+### 設計考量
+
+`useEnhancedRTMP` 只影響**初始預設值**。若需要個別微調，仍可直接傳入 `fourCcList`/`capsEx` 等參數，它們的優先級高於 `useEnhancedRTMP`：
+
+```swift
+// 關閉 E-RTMP 但只開 HEVC 編碼器協商
+RTMPConnection(
+    useEnhancedRTMP: false,
+    fourCcList: ["hvc1"]  // 明確傳入就會生效
+)
+```
+
+---
+
+## 7. 總結
+
+### 問題嚴重性
+
+| # | 問題 | 嚴重性 | 影響範圍 | 類別 |
+|---|------|--------|----------|------|
+| 0 | S2 封包檢測公式錯誤 | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
+| 1 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
+| 2 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
+| 3 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
+| 4 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
+| 5 | E-RTMP 相容性 | 🟡 中 | 不支援 E-RTMP 的伺服器 | 相容性 |
+
+### 修復狀態
+
+| # | 修復 | 檔案 |
+|---|------|------|
+| 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
+| 1 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` |
+| 2 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
+| 3 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
+| 4 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
+| 5 | ✅ `useEnhancedRTMP` 開關參數 | `RTMPConnection.swift` |
+
+### 建議測試項目
+
+1. 模擬 encoder 輸出與 consumer task 啟動之間的競爭條件
+2. 斷線重連後驗證 format packet（AVC sequence header）正確送出
+3. 長時間串流測試，確認無 frame 因 continuation nil 而丟棄
+4. 驗證 handshake S2 檢測：C0C1 → S0S1S2 → C2 → connect command 完整流程
+5. 分別測試 `useEnhancedRTMP: true/false` 連線 SRS/Nginx 伺服器
 
 ### 問題嚴重性
 
