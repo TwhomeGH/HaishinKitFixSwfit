@@ -407,7 +407,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
-        socket?.setOnLog { [weak self] event in
+        await socket?.setOnLog { [weak self] event in
             Task { await self?.onLog?(event) }
         }
         networkMonitor = await socket?.makeNetworkMonitor()
