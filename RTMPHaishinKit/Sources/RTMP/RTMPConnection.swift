@@ -236,6 +236,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public let reconnectMaxDelay: UInt64
     /// Reconnection event callback for consumers (e.g. ReplyKIT) to coordinate media pipeline.
     public var onReconnectStateChanged: (@Sendable (ReconnectState) async -> Void)?
+    /// Diagnostic log callback. ReplyKit can set this to receive real-time internal events.
+    public var onLog: (@Sendable (RTMPLogEvent) -> Void)?
 
     var newTransaction: Int {
         currentTransactionId += 1
@@ -270,6 +272,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         didSet {
             logger.info(oldValue, "=>", state)
             connected = (state == .connected)
+            log(.info, "State: \(oldValue) => \(state)")
         }
     }
     private var command: String = ""
@@ -404,6 +407,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
+        socket?.onLog = { [weak self] event in
+            Task { await self?.onLog?(event) }
+        }
         networkMonitor = await socket?.makeNetworkMonitor()
         guard let socket, let networkMonitor else {
             throw Error.invalidState
@@ -413,12 +419,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             let result: RTMPResponse = try await withCheckedThrowingContinuation { continutation in
                 Task {
                     do {
+                        log(.info, "TCP connecting", detail: "\(host):\(uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))")
                         try await socket.connect(host, port: uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))
                     } catch {
+                        log(.error, "TCP connect failed", detail: "\(error)")
                         continutation.resume(throwing: error)
                         return
                     }
                     do {
+                        log(.info, "TCP connected, sending C0C1")
                         state = .versionSent
                         await socket.send(handshake.c0c1packet)
                         operations[Self.connectTransactionId] = continutation
@@ -514,6 +523,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             throw Error.invalidState
         }
 
+        log(.info, "Close requested, state=\(state)")
         reconnectionTask?.cancel()
         reconnectionTask = nil
         uri = nil
@@ -576,12 +586,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
             guard handshake.s0Version >= 3 else {
                 try await close()
+                log(.error, "S0 version mismatch", detail: "got \(handshake.s0Version)")
                 throw Error.requestFailed(response: .init(status: .init(code: Code.connectFailed.rawValue, level: "error", description: "Unsupported RTMP protocol version: \(handshake.s0Version)")))
             }
+            log(.debug, "S0S1 received, sending C2")
             await socket?.send(handshake.c2packet())
             state = .ackSent
             try await listen(.init())
         case .ackSent:
+            log(.debug, "Waiting for S2")
             handshake.put(data)
             guard handshake.hasS2Packet else {
                 return
@@ -750,6 +763,11 @@ extension RTMPConnection {
         }
     }
 
+    nonisolated func log(_ level: RTMPLogLevel, _ message: String, detail: String? = nil, file: String = #file, line: Int = #line) {
+        let event = RTMPLogEvent(level: level, message: message, detail: detail, file: file, line: line)
+        onLog?(event)
+    }
+
     private var chunkSizeC: Int {
         get { inputBuffer.chunkSize }
         set { inputBuffer.chunkSize = newValue }
@@ -758,5 +776,20 @@ extension RTMPConnection {
     private var chunkSizeS: Int {
         get { outputBuffer.chunkSize }
         set { outputBuffer.chunkSize = newValue }
+    }
+}
+
+extension RTMPConnection.ConnectionState: @retroactive CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .uninitialized: return "uninitialized"
+        case .connecting: return "connecting"
+        case .versionSent: return "versionSent"
+        case .ackSent: return "ackSent"
+        case .handshakeDone: return "handshakeDone"
+        case .connected: return "connected"
+        case .disconnected: return "disconnected"
+        case .error: return "error"
+        }
     }
 }

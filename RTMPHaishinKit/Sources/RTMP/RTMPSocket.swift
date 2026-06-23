@@ -14,6 +14,7 @@ final actor RTMPSocket {
         case connectionNotEstablished(_ error: NWError?)
     }
 
+    var onLog: (@Sendable (RTMPLogEvent) -> Void)?
     private var timeout: UInt64 = 15
     private var connected = false
     private var windowSizeC = RTMPSocket.defaultWindowSizeC
@@ -87,13 +88,17 @@ final actor RTMPSocket {
 
     func send(_ data: Data) {
         guard connected else {
+            onLog?(.init(level: .warn, message: "Send dropped: not connected", detail: "size=\(data.count)"))
             return
         }
         guard queueBytesOut < Self.maxQueueBytesOut else {
             logger.warn("Backpressure: dropping send, queue full (\(queueBytesOut) bytes)")
+            onLog?(.init(level: .warn, message: "Backpressure: send dropped", detail: "queueBytesOut=\(queueBytesOut) max=\(Self.maxQueueBytesOut)"))
             return
         }
         queueBytesOut += data.count
+        totalBytesOut += data.count
+        onLog?(.init(level: .trace, message: "Socket send", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut)"))
         outputs?.yield(data)
     }
 
@@ -107,20 +112,24 @@ final actor RTMPSocket {
                 break
             }
             queueBytesOut += data.count
+            totalBytesOut += data.count
             outputs?.yield(data)
         }
     }
 
     func send(_ chunks: [Data]) {
         guard connected else {
+            onLog?(.init(level: .warn, message: "Send chunks dropped: not connected"))
             return
         }
         for data in chunks {
             guard queueBytesOut < Self.maxQueueBytesOut else {
                 logger.warn("Backpressure: dropping chunks, queue full (\(queueBytesOut) bytes)")
+                onLog?(.init(level: .warn, message: "Backpressure: chunks dropped", detail: "queueBytesOut=\(queueBytesOut)"))
                 break
             }
             queueBytesOut += data.count
+            totalBytesOut += data.count
             outputs?.yield(data)
         }
     }
@@ -137,6 +146,7 @@ final actor RTMPSocket {
                     }
                 } catch {
                     logger.error("recv error:", error)
+                    onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
                 }
             }
         }
@@ -150,6 +160,7 @@ final actor RTMPSocket {
             continuation.resume(throwing: Error.connectionNotEstablished(error))
             self.continuation = nil
         }
+        onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
         connected = false
         outputs = nil
         connection = nil
@@ -160,6 +171,7 @@ final actor RTMPSocket {
         switch state {
         case .ready:
             logger.info("Connection is ready.")
+            onLog?(.init(level: .info, message: "Socket ready", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) queueBytesOut=\(queueBytesOut)"))
             connected = true
             let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(256))
             Task {
@@ -181,16 +193,18 @@ final actor RTMPSocket {
             self.continuation = nil
         case .waiting(let error):
             logger.warn("Connection waiting:", error)
+            onLog?(.init(level: .warn, message: "Socket waiting", detail: "\(error)"))
         case .setup:
             logger.debug("Connection is setting up.")
         case .preparing:
             logger.debug("Connection is preparing.")
         case .failed(let error):
             logger.warn("Connection failed:", error)
+            onLog?(.init(level: .error, message: "Socket failed", detail: "\(error)"))
             close(error)
         case .cancelled:
             logger.info("Connection cancelled.")
-            close()
+            onLog?(.init(level: .info, message: "Socket cancelled"))
         @unknown default:
             logger.error("Unknown connection state.")
         }

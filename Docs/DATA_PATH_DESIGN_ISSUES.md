@@ -354,7 +354,75 @@ if 0 < capsEx {
 
 ---
 
-## 7. 總結
+## 7. 診斷日誌接口
+
+**新增檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPLogEvent.swift`  
+**修改檔案**: `RTMPConnection.swift`, `RTMPSocket.swift`
+
+### 設計目標
+
+讓 ReplyKit 可以**即時取得 HaishinKit 內部完整運行情況**，而不需要依賴 Xcode 主控台或 macOS Console.app。
+
+### API
+
+```swift
+// ReplyKit 端設定回呼
+connection.onLog = { event in
+    // event.level: .trace / .debug / .info / .warn / .error
+    // event.message: 簡短描述（如 "State: versionSent => ackSent"）
+    // event.detail: 詳細資料（如 "totalBytesIn=3461 totalBytesOut=3962"）
+    // event.timestamp: 事件時間
+    // event.file / event.line: 原始碼位置
+    await socket.send(event)
+}
+```
+
+### 提供的診斷事件
+
+| 位置 | 事件 | 時機 |
+|------|------|------|
+| `RTMPConnection.state.didSet` | `State: old => new` | 每次連線狀態轉換 |
+| `performConnect` | `TCP connecting` | TCP 連線前 |
+| | `TCP connect failed` | TCP 連線失敗 |
+| | `TCP connected, sending C0C1` | TCP 連線成功 |
+| | `S0S1 received, sending C2` | 收到伺服器握手回應 |
+| | `S2 received, handshake done` | 握手完成 |
+| | `Connect success` | 收到 `_result` |
+| | `Connect failed` | 收到 `_error` |
+| `close()` | `Close requested` | 連線關閉 |
+| `RTMPSocket.stateDidChange` | `Socket ready` | NWConnection 就緒 |
+| | `Socket waiting` | NWConnection 等待中 |
+| | `Socket failed` | NWConnection 失敗 |
+| | `Socket cancelled` | NWConnection 取消 |
+| `send()` | `Socket send` | 每次發送資料 (含 size/queue) |
+| | `Send dropped: not connected` | 未連線時嘗試發送 |
+| | `Backpressure: ...` | 發送佇列滿 |
+| `close()` | `Socket close` | Socket 關閉 (含 bytes in/out) |
+| `recv()` | `recv error` | 接收錯誤 |
+
+### 使用方式
+
+```swift
+let connection = RTMPConnection(useEnhancedRTMP: false)
+
+connection.onLog = { event in
+    // 透過 ReplyKit Socket 送回主 app 顯示
+    await ReplyKitSocket.shared.send([
+        "level": "\(event.level)",
+        "message": event.message,
+        "detail": event.detail ?? "",
+        "time": event.timestamp.timeIntervalSince1970
+    ])
+}
+
+connection.onReconnectStateChanged = { state in
+    // 處理重連
+}
+```
+
+---
+
+## 8. 總結
 
 ### 問題嚴重性
 
@@ -365,7 +433,7 @@ if 0 < capsEx {
 | 2 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
 | 3 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
 | 4 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
-| 5 | E-RTMP 相容性 | 🟡 中 | 不支援 E-RTMP 的伺服器 | 相容性 |
+| 5 | E-RTMP 相容性（含 `capsEx: 0` bug） | 🟡 中 | 不支援 E-RTMP 的伺服器 | 相容性 |
 
 ### 修復狀態
 
@@ -376,7 +444,8 @@ if 0 < capsEx {
 | 2 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
 | 3 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
 | 4 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
-| 5 | ✅ `useEnhancedRTMP` 開關參數 | `RTMPConnection.swift` |
+| 5 | ✅ `useEnhancedRTMP` 開關 + `capsEx` 條件式送出 | `RTMPConnection.swift` |
+| 6 | ✅ 診斷日誌 `RTMPLogEvent` + `onLog` | `RTMPLogEvent.swift`, `RTMPConnection.swift`, `RTMPSocket.swift` |
 
 ### 建議測試項目
 
@@ -385,30 +454,4 @@ if 0 < capsEx {
 3. 長時間串流測試，確認無 frame 因 continuation nil 而丟棄
 4. 驗證 handshake S2 檢測：C0C1 → S0S1S2 → C2 → connect command 完整流程
 5. 分別測試 `useEnhancedRTMP: true/false` 連線 SRS/Nginx 伺服器
-
-### 問題嚴重性
-
-| # | 問題 | 嚴重性 | 影響範圍 | 類別 |
-|---|------|--------|----------|------|
-| 0 | S2 封包檢測公式錯誤 | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
-| 1 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
-| 2 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
-| 3 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
-| 4 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
-
-### 修復狀態
-
-| # | 修復 | 檔案 |
-|---|------|------|
-| 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
-| 1 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` |
-| 2 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
-| 3 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
-| 4 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
-
-### 建議測試項目
-
-1. 模擬 encoder 輸出與 consumer task 啟動之間的競爭條件
-2. 斷線重連後驗證 format packet（AVC sequence header）正確送出
-3. 長時間串流測試，確認無 frame 因 continuation nil 而丟棄
-4. 驗證 handshake S2 檢測：C0C1 → S0S1S2 → C2 → connect command 完整流程
+6. 啟用 `onLog` 回呼驗證完整連線生命週期事件鏈
