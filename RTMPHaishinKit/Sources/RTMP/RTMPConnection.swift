@@ -237,7 +237,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// Reconnection event callback for consumers (e.g. ReplyKIT) to coordinate media pipeline.
     public var onReconnectStateChanged: (@Sendable (ReconnectState) async -> Void)?
     /// Diagnostic log callback. ReplyKit can set this to receive real-time internal events.
-    public var onLog: (@Sendable (RTMPLogEvent) -> Void)?
+    public private(set) var onLog: (@Sendable (RTMPLogEvent) -> Void)?
+
+    /// Set the diagnostic log callback. Must be called with await from outside the actor.
+    public func setOnLog(_ handler: (@Sendable (RTMPLogEvent) -> Void)?) {
+        onLog = handler
+    }
 
     var newTransaction: Int {
         currentTransactionId += 1

@@ -366,8 +366,8 @@ if 0 < capsEx {
 ### API
 
 ```swift
-// ReplyKit 端設定回呼
-connection.onLog = { event in
+// ReplyKit 端設定回呼（需 await，因 RTMPConnection 是 actor）
+await connection.setOnLog { event in
     // event.level: .trace / .debug / .info / .warn / .error
     // event.message: 簡短描述（如 "State: versionSent => ackSent"）
     // event.detail: 詳細資料（如 "totalBytesIn=3461 totalBytesOut=3962"）
@@ -405,7 +405,7 @@ connection.onLog = { event in
 ```swift
 let connection = RTMPConnection(useEnhancedRTMP: false)
 
-connection.onLog = { event in
+await connection.setOnLog { event in
     // 透過 ReplyKit Socket 送回主 app 顯示
     await ReplyKitSocket.shared.send([
         "level": "\(event.level)",
