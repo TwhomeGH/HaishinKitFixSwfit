@@ -407,7 +407,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
-        socket?.onLog = { [weak self] event in
+        socket?.setOnLog { [weak self] event in
             Task { await self?.onLog?(event) }
         }
         networkMonitor = await socket?.makeNetworkMonitor()
@@ -763,7 +763,7 @@ extension RTMPConnection {
         }
     }
 
-    nonisolated func log(_ level: RTMPLogLevel, _ message: String, detail: String? = nil, file: String = #file, line: Int = #line) {
+    func log(_ level: RTMPLogLevel, _ message: String, detail: String? = nil, file: String = #file, line: Int = #line) {
         let event = RTMPLogEvent(level: level, message: message, detail: detail, file: file, line: line)
         onLog?(event)
     }
@@ -779,7 +779,7 @@ extension RTMPConnection {
     }
 }
 
-extension RTMPConnection.ConnectionState: @retroactive CustomStringConvertible {
+extension RTMPConnection.ConnectionState: CustomStringConvertible {
     public var description: String {
         switch self {
         case .uninitialized: return "uninitialized"

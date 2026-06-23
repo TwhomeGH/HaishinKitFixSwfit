@@ -167,6 +167,10 @@ final actor RTMPSocket {
         continuation = nil
     }
 
+    func setOnLog(_ handler: @Sendable @escaping (RTMPLogEvent) -> Void) {
+        onLog = handler
+    }
+
     private func stateDidChange(to state: NWConnection.State) {
         switch state {
         case .ready:
