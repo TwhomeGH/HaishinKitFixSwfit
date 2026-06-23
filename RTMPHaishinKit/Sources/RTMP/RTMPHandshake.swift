@@ -17,6 +17,7 @@ final class RTMPHandshake {
         RTMPHandshake.sigSize <= inputBuffer.count - 1 - RTMPHandshake.sigSize
     }
 
+    private(set) var s0Version: UInt8 = 0
     private var inputBuffer: Data = .init()
     private var s1RandomData: Data = .init()
     private var s1Timestamp: UInt32 = 0
@@ -30,7 +31,7 @@ final class RTMPHandshake {
         packet.append(RTMPHandshake.protocolVersion)
 
         // C1: 1536 bytes
-        let c1Timestamp = UInt32(truncatingIfNeeded: Int64(timestamp)).bigEndian
+        let c1Timestamp = UInt32(truncatingIfNeeded: Int64(timestamp * 1000)).bigEndian
         packet.append(contentsOf: withUnsafeBytes(of: c1Timestamp) { Data($0) })
         packet.append(Data(count: 4)) // Zero padding
         for _ in 0..<RTMPHandshake.sigSize - 8 {
@@ -80,7 +81,7 @@ final class RTMPHandshake {
     private func parseS0S1() {
         guard inputBuffer.count >= 1 + RTMPHandshake.sigSize else { return }
 
-        // S0: protocol version (1 byte) - at index 0
+        s0Version = inputBuffer[0]
         // S1: starts at index 1
         let s1Start = 1
         // S1 timestamp: 4 bytes at offset 1
@@ -94,6 +95,7 @@ final class RTMPHandshake {
         inputBuffer = .init()
         s1RandomData = .init()
         s1Timestamp = 0
+        s0Version = 0
         timestamp = Date().timeIntervalSince1970
     }
 }

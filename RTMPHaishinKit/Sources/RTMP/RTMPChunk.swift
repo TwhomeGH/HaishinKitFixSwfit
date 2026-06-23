@@ -300,9 +300,14 @@ final class RTMPChunkBuffer {
     }
 
     private func putMessageHeader(_ chunkType: RTMPChunkType, length: Int, message: some RTMPMessage) {
+        let extended = message.timestamp >= RTMPChunkMessageHeader.maxTimestamp
         switch chunkType {
         case .zero:
-            data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+            if extended {
+                data.replaceSubrange(position..<position + 3, with: RTMPChunkMessageHeader.maxTimestamp.bigEndian.data[1...3])
+            } else {
+                data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+            }
             position += 3
             data.replaceSubrange(position..<position + 3, with: UInt32(length).bigEndian.data[1...3])
             position += 3
@@ -310,16 +315,36 @@ final class RTMPChunkBuffer {
             position += 1
             data.replaceSubrange(position..<position + 4, with: message.streamId.littleEndian.data)
             position += 4
+            if extended {
+                data.replaceSubrange(position..<position + kRTMPExtendTimestampSize, with: message.timestamp.bigEndian.data)
+                position += kRTMPExtendTimestampSize
+            }
         case .one:
-            data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+            if extended {
+                data.replaceSubrange(position..<position + 3, with: RTMPChunkMessageHeader.maxTimestamp.bigEndian.data[1...3])
+            } else {
+                data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+            }
             position += 3
             data.replaceSubrange(position..<position + 3, with: UInt32(length).bigEndian.data[1...3])
             position += 3
             data[position] = message.type.rawValue
             position += 1
+            if extended {
+                data.replaceSubrange(position..<position + kRTMPExtendTimestampSize, with: message.timestamp.bigEndian.data)
+                position += kRTMPExtendTimestampSize
+            }
         case .two:
-            data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+            if extended {
+                data.replaceSubrange(position..<position + 3, with: RTMPChunkMessageHeader.maxTimestamp.bigEndian.data[1...3])
+            } else {
+                data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
+            }
             position += 3
+            if extended {
+                data.replaceSubrange(position..<position + kRTMPExtendTimestampSize, with: message.timestamp.bigEndian.data)
+                position += kRTMPExtendTimestampSize
+            }
         case .three:
             break
         }

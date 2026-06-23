@@ -574,6 +574,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             guard handshake.hasS0S1Packet else {
                 return
             }
+            guard handshake.s0Version >= 3 else {
+                try await close()
+                throw Error.requestFailed(response: .init(status: .init(code: Code.connectFailed.rawValue, level: "error", description: "Unsupported RTMP protocol version: \(handshake.s0Version)")))
+            }
             await socket?.send(handshake.c2packet())
             state = .ackSent
             try await listen(.init())
@@ -643,7 +647,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 chunkSizeC = Int(message.size)
             case let message as RTMPWindowAcknowledgementSizeMessage:
                 windowSizeC = Int64(message.size)
-                windowSizeS = Int64(message.size)
             case let message as RTMPSetPeerBandwidthMessage:
                 bandWidth = message.size
             case let message as RTMPCommandMessage:
