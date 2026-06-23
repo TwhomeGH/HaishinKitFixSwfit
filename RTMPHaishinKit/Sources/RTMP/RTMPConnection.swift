@@ -34,8 +34,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public static let defaultCapsEx: Int = 0x01
     /// Whether enhanced RTMP (E-RTMP) features are enabled by default.
     public static let defaultUseEnhancedRTMP: Bool = true
-    /// Whether enhanced RTMP (E-RTMP) features are enabled by default.
-    public static let defaultUseEnhancedRTMP: Bool = true
     /// The supported fourCcList.
     public static let supportedFourCcList = [RTMPVideoFourCC.hevc.description, RTMPAudioFourCC.opus.description]
     /// The default RTMP port is 1935.
