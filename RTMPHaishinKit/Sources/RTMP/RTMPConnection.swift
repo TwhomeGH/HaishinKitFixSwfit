@@ -722,7 +722,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         ]
         commandObject["swfUrl"] = swfUrl
         commandObject["objectEncoding"] = objectEncoding.rawValue
-        commandObject["capsEx"] = capsEx
+        if 0 < capsEx {
+            commandObject["capsEx"] = capsEx
+        }
         fourCcList.map { commandObject["fourCcList"] = $0 }
         videoFourCcInfoMap.map { commandObject["videoFourCcInfoMap"] = $0 }
         audioFourCcInfoMap.map { commandObject["audioFourCcInfoMap"] = $0 }
