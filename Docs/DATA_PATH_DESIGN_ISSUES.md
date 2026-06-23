@@ -314,6 +314,44 @@ RTMPConnection(
 )
 ```
 
+### `capsEx: 0` 仍可能造成 SRS timeout
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift:725`
+
+即使 `useEnhancedRTMP: false` 將 `capsEx` 設為 `0`，但原本的程式碼**仍會**將 `capsEx: 0` 寫入 connect command 的 AMF Object：
+
+```swift
+commandObject["capsEx"] = capsEx  // capsEx = 0 時仍送出
+```
+
+部分 SRS 版本遇到不認識的 `capsEx` 欄位時，即使值為 `0`，仍可能導致：
+1. AMF 解析異常 → SRS 無法辨識這個連線請求為有效的 connect command
+2. SRS 進入 `identify_client` 等待更多資料 → 30 秒後 timeout
+3. Client 端也因收不到 `_result`/`_error` 在 3 秒後 timeout
+
+SRS log 表現為：
+```
+recv identify message : read basic header : timeout 30000 ms
+```
+
+#### 修復
+
+```swift
+// 只有當 capsEx > 0 時才送出，避免干擾不支援的伺服器
+if 0 < capsEx {
+    commandObject["capsEx"] = capsEx
+}
+```
+
+#### 驗證方式
+
+| 測試條件 | SRS log 結果 | 連線 |
+|---------|-------------|------|
+| E-RTMP 開啟 + `capsEx: 1`（修正前） | `connect app, tcUrl=...` + 立即 `on_close` | ❌ |
+| E-RTMP 關閉 + `capsEx: 0` **仍送出**（修正前） | `timeout 30000 ms`，無 `connect app` log | ❌ |
+| E-RTMP 關閉 + `capsEx` 不送出（修正後） | 待測試 | ❓ |
+| E-RTMP 完全關閉 `useEnhancedRTMP: false`（修正後） | 待測試 | ❓ |
+
 ---
 
 ## 7. 總結
