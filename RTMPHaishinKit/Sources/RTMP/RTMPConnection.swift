@@ -273,6 +273,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     private var command: String = ""
     private var reconnectAttempts = 0
     private var isReconnecting = false
+    private var reconnectionTask: Task<Void, Never>?
 
     /// Creates a new connection with E-RTMP command parameters.
     ///
@@ -323,6 +324,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     deinit {
         outputContinuation?.finish()
+        reconnectionTask?.cancel()
         streams.removeAll()
     }
 
@@ -376,7 +378,17 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.arguments = arguments
         isReconnecting = false
         reconnectAttempts = 0
-        return try await performConnect(command, arguments: arguments)
+        reconnectionTask?.cancel()
+        reconnectionTask = nil
+        do {
+            return try await performConnect(command, arguments: arguments)
+        } catch {
+            if isReconnectEnabled {
+                let task = Task { await self.startReconnection() }
+                reconnectionTask = task
+            }
+            throw error
+        }
     }
 
     private func performConnect(_ command: String, arguments: [(any Sendable)?]) async throws -> RTMPResponse {
@@ -435,15 +447,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()
             outputContinuation = nil
-            await onReconnectStateChanged?(.failed(Error.socketErrorOccurred(nil)))
-            try? await scheduleReconnect()
             throw error
         } catch let error as Error {
             switch error {
             case .requestFailed(let response):
                 guard let status = response.status else {
-                    await onReconnectStateChanged?(.failed(error))
-                    try? await scheduleReconnect()
                     throw error
                 }
                 if status.code == RTMPConnection.Code.connectRejected.rawValue {
@@ -452,43 +460,52 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         await socket.close()
                         return try await performConnect(command, arguments: arguments)
                     case .failure:
-                        await onReconnectStateChanged?(.failed(error))
                         throw error
                     }
                 } else {
-                    await onReconnectStateChanged?(.failed(error))
-                    try? await scheduleReconnect()
                     throw error
                 }
             default:
-                await onReconnectStateChanged?(.failed(error))
-                try? await scheduleReconnect()
                 throw error
             }
         } catch {
-            await onReconnectStateChanged?(.failed(error))
-            try? await scheduleReconnect()
             throw error
         }
     }
 
-    private func scheduleReconnect() async throws {
-        guard isReconnectEnabled && !isReconnecting && reconnectAttempts < maxReconnectAttempts else {
-            if reconnectAttempts >= maxReconnectAttempts {
-                await onReconnectStateChanged?(.exhausted)
-            }
+    private func startReconnection() async {
+        guard !isReconnecting else {
             return
         }
         isReconnecting = true
-        reconnectAttempts += 1
-        let delay = min(reconnectBaseDelay << (reconnectAttempts - 1), reconnectMaxDelay)
-        logger.info("Reconnecting in \(delay)s (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
-        await onReconnectStateChanged?(.started(attempt: reconnectAttempts, maxAttempts: maxReconnectAttempts))
-        try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
-        isReconnecting = false
-        if reconnectAttempts <= maxReconnectAttempts {
-            try? await performConnect(command, arguments: arguments)
+        defer {
+            isReconnecting = false
+            reconnectionTask = nil
         }
+        while isReconnectEnabled && reconnectAttempts < maxReconnectAttempts {
+            guard !Task.isCancelled else {
+                return
+            }
+            reconnectAttempts += 1
+            let delay = min(reconnectBaseDelay << (reconnectAttempts - 1), reconnectMaxDelay)
+            logger.info("Reconnecting in \(delay)s (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
+            await onReconnectStateChanged?(.started(attempt: reconnectAttempts, maxAttempts: maxReconnectAttempts))
+            do {
+                try await Task.sleep(nanoseconds: delay * 1_000_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            do {
+                try await performConnect(command, arguments: arguments)
+                return
+            } catch {
+                await onReconnectStateChanged?(.failed(error))
+            }
+        }
+        await onReconnectStateChanged?(.exhausted)
     }
 
     /// Closes the connection from the server.
@@ -497,6 +514,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             throw Error.invalidState
         }
 
+        reconnectionTask?.cancel()
+        reconnectionTask = nil
         uri = nil
         for stream in streams {
             if await stream.fcPublishName == nil {
