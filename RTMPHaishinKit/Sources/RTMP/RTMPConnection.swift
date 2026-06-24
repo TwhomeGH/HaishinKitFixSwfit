@@ -3,6 +3,9 @@ import Combine
 import Foundation
 import HaishinKit
 
+/// File-level constant to avoid lazy static init recursion on cooperative thread.
+private let kRTMPSupportedProtocols: Set<String> = ["rtmp", "rtmps"]
+
 // MARK: -
 /// The RTMPConnection class create a two-way RTMP connection.
 public actor RTMPConnection: HaishinKit.NetworkConnection {
@@ -28,8 +31,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public static let defaultTimeout: Int = 15 // sec
     /// The default network's window size for RTMPConnection.
     public static let defaultWindowSizeS: Int64 = 250000
-    /// The supported protocols are rtmp, rtmps, rtmpt and rtmps.
-    public static var supportedProtocols: Set<String> { ["rtmp", "rtmps"] }
     /// The default capsEx value for E-RTMP compatibility.
     public static let defaultCapsEx: Int = 0x01
     /// Whether enhanced RTMP (E-RTMP) features are enabled by default.
@@ -377,7 +378,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         guard state.canTransition(to: .connecting) else {
             throw Error.invalidState
         }
-        guard let uri = URL(string: command), let scheme = uri.scheme, let host = uri.host, Self.supportedProtocols.contains(scheme) else {
+        guard let uri = URL(string: command), let scheme = uri.scheme, let host = uri.host, kRTMPSupportedProtocols.contains(scheme) else {
             throw Error.unsupportedCommand(command)
         }
         self.command = command
