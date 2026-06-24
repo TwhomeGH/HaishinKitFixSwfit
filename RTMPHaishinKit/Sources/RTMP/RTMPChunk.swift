@@ -209,22 +209,22 @@ final class RTMPChunkBuffer {
         }
         switch type {
         case .zero:
-            let rawTimestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            let rawTimestamp = UInt32(data[position]) << 16 | UInt32(data[position + 1]) << 8 | UInt32(data[position + 2])
             messageHeader.timestamp = rawTimestamp
             messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
-            messageHeader.messageLength = Int(Int32(data: data[position + 3..<position + 6]).bigEndian)
+            messageHeader.messageLength = Int(Int32(data[position + 3]) << 16 | Int32(data[position + 4]) << 8 | Int32(data[position + 5]))
             messageHeader.messageTypeId = data[position + 6]
             messageHeader.messageStreamId = UInt32(data: data[position + 7..<position + 11])
             position += type.headerSize
         case .one:
-            let rawTimestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            let rawTimestamp = UInt32(data[position]) << 16 | UInt32(data[position + 1]) << 8 | UInt32(data[position + 2])
             messageHeader.timestamp = rawTimestamp
             messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
-            messageHeader.messageLength = Int(Int32(data: data[position + 3..<position + 6]).bigEndian)
+            messageHeader.messageLength = Int(Int32(data[position + 3]) << 16 | Int32(data[position + 4]) << 8 | Int32(data[position + 5]))
             messageHeader.messageTypeId = data[position + 6]
             position += type.headerSize
         case .two:
-            let rawTimestamp = UInt32(data: data[position..<position + 3]).bigEndian
+            let rawTimestamp = UInt32(data[position]) << 16 | UInt32(data[position + 1]) << 8 | UInt32(data[position + 2])
             messageHeader.timestamp = rawTimestamp
             messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
             position += type.headerSize
