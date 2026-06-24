@@ -416,6 +416,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             Task { await self?.onLog?(event) }
         }
         networkMonitor = await socket?.makeNetworkMonitor()
+        log(.info, "HaishinKit revision", detail: kHaishinKitRevision)
         guard let socket, let networkMonitor else {
             throw Error.invalidState
         }

@@ -2,6 +2,9 @@ import OSLog
 
 public let kHaishinKitIdentifier = "com.haishinkit.HaishinKit"
 
+/// Current HaishinKit revision. Updated by CI or manually.
+public let kHaishinKitRevision = "3481fce"
+
 public enum LogLevel: Comparable {
     case trace, debug, info, warn, error
 }

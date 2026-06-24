@@ -434,6 +434,22 @@ connection.onReconnectStateChanged = { state in
 }
 ```
 
+### HaishinKit 版本識別
+
+```swift
+// 連線時自動輸出診斷 log：
+// [RTMP] info HaishinKit revision rev=3481fce
+
+// 可在任何地方讀取目前編譯的版本：
+let rev = kHaishinKitRevision  // "3481fce"
+```
+
+CI 流程（`.github/workflows/build.yml`）會自動：
+1. `xcodebuild -resolvePackageDependencies` 解析最新相依套件
+2. 從 `Package.resolved` 提取 `revision` hash
+3. 寫入 `Constants.swift` 的 `kHaishinKitRevision`
+4. 建置時該常數即反映真實使用的 commit
+
 ---
 
 ## 8. Chunk Header 3-byte Big-Endian 讀取錯誤
