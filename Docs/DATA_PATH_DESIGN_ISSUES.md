@@ -365,6 +365,12 @@ if 0 < capsEx {
 
 ### API
 
+
+> [!TIP]
+> setOnLog裡內部呼叫 如果使用到是全局共用件之類的
+> 
+> 不是限於class裡的東西 不需要捕獲self 
+
 ```swift
 // event.level: .trace / .debug / .info / .warn / .error
 // event.message: 簡短描述（如 "State: versionSent => ackSent"）
