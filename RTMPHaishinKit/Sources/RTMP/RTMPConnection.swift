@@ -29,7 +29,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// The default network's window size for RTMPConnection.
     public static let defaultWindowSizeS: Int64 = 250000
     /// The supported protocols are rtmp, rtmps, rtmpt and rtmps.
-    public static let supportedProtocols: Set<String> = ["rtmp", "rtmps"]
+    public static var supportedProtocols: Set<String> { ["rtmp", "rtmps"] }
     /// The default capsEx value for E-RTMP compatibility.
     public static let defaultCapsEx: Int = 0x01
     /// Whether enhanced RTMP (E-RTMP) features are enabled by default.
