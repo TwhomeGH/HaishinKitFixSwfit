@@ -375,6 +375,14 @@ await connection.setOnLog { event in
     // event.file / event.line: 原始碼位置
     await socket.send(event)
 }
+
+// 若不在 async 上下文中，用 Task 包裹：
+// weak self 只在 Task 捕獲一次，內層 closure 直接用 self? 即可
+Task { [weak self] in
+    await self?.rtmpConnection?.setOnLog { event in
+        self?.sendlog("[RTMP] \(event.level) \(event.message) \(event.detail ?? "")")
+    }
+}
 ```
 
 ### 提供的診斷事件
