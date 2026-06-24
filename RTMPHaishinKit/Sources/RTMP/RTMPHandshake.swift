@@ -100,11 +100,3 @@ final class RTMPHandshake {
         timestamp = Date().timeIntervalSince1970
     }
 }
-
-extension Data {
-    func withUnsafeBytes<T>(_ body: (UnsafeRawBufferPointer) throws -> T) rethrows -> T {
-        try self.withUnsafeBytes { buffer in
-            try body(buffer)
-        }
-    }
-}
