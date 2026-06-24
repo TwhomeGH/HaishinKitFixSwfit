@@ -103,11 +103,17 @@ extension HEVCDecoderConfigurationRecord: DataConvertible {
                 temporalIdNested = b & 0x6 >> 1
                 lengthSizeMinusOne = b & 0x3
                 numberOfArrays = try buffer.readUInt8()
+                guard numberOfArrays <= 64 else {
+                    throw ByteArray.Error.parse
+                }
                 for _ in 0..<numberOfArrays {
                     let a = try buffer.readUInt8()
                     let nalUnitType = HEVCNALUnitType(rawValue: a & 0b00111111) ?? .unspec
                     array[nalUnitType] = []
                     let numNalus = try buffer.readUInt16()
+                    guard numNalus <= 128 else {
+                        throw ByteArray.Error.parse
+                    }
                     for _ in 0..<numNalus {
                         let length = try buffer.readUInt16()
                         array[nalUnitType]?.append(try buffer.readBytes(Int(length)))
