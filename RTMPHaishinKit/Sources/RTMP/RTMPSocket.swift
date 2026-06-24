@@ -64,7 +64,7 @@ final actor RTMPSocket {
             self.connection = connection
             try await withCheckedThrowingContinuation { (checkedContinuation: CheckedContinuation<Void, Swift.Error>) in
                 self.continuation = checkedContinuation
-                Task {
+                Task.detached(priority: .utility) {
                     try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
                     guard let continuation else {
                         return
@@ -74,10 +74,10 @@ final actor RTMPSocket {
                     close()
                 }
                 connection.stateUpdateHandler = { state in
-                    Task { await self.stateDidChange(to: state) }
+                    Task.detached(priority: .utility) { await self.stateDidChange(to: state) }
                 }
                 connection.viabilityUpdateHandler = { viability in
-                    Task { await self.viabilityDidChange(to: viability) }
+                    Task.detached(priority: .utility) { await self.viabilityDidChange(to: viability) }
                 }
                 connection.start(queue: networkQueue)
             }
@@ -136,7 +136,7 @@ final actor RTMPSocket {
 
     func recv() -> AsyncStream<Data> {
         AsyncStream<Data> { continuation in
-            Task {
+            Task.detached(priority: .utility) {
                 defer { continuation.finish() }
                 do {
                     while connected {
@@ -179,7 +179,7 @@ final actor RTMPSocket {
             onLog?(.init(level: .info, message: "Socket ready", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) queueBytesOut=\(queueBytesOut)"))
             connected = true
             let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(256))
-            Task {
+            Task.detached(priority: .utility) {
                 for await data in stream {
                     guard connected else { break }
                     do {

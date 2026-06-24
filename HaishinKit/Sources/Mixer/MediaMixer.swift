@@ -253,7 +253,7 @@ public final actor MediaMixer {
             setVideoRenderingMode(settings.mode)
         }
         videoIO.mixerSettings = settings
-        Task { @ScreenActor in
+        Task.detached(priority: .utility) { @ScreenActor in
             screen.videoTrackScreenObject.track = settings.mainTrack
         }
     }
@@ -273,7 +273,7 @@ public final actor MediaMixer {
                 try videoIO.devices.first?.value.setFrameRate(frameRate)
             }
         case .offscreen:
-            Task { @ScreenActor in
+            Task.detached(priority: .utility) { @ScreenActor in
                 displayLink.preferredFramesPerSecond = Int(frameRate)
             }
         }
@@ -287,7 +287,7 @@ public final actor MediaMixer {
         guard self.dynamicRangeMode != dynamicRangeMode else {
             return
         }
-        Task { @ScreenActor in
+        Task.detached(priority: .utility) { @ScreenActor in
             screen.dynamicRangeMode = dynamicRangeMode
         }
         videoIO.dynamicRangeMode = dynamicRangeMode
@@ -315,10 +315,10 @@ public final actor MediaMixer {
         }
         session.startRunning()
         let synchronizationClock = session.synchronizationClock
-        Task { @ScreenActor in
+        Task.detached(priority: .utility) { @ScreenActor in
             screen.synchronizationClock = synchronizationClock
         }
-        Task {
+        Task.detached(priority: .utility) {
             for await runtimeError in session.runtimeError {
                 await sessionRuntimeErrorOccured(runtimeError)
             }
@@ -332,7 +332,7 @@ public final actor MediaMixer {
             return
         }
         session.stopRunning()
-        Task { @ScreenActor in
+        Task.detached(priority: .utility) { @ScreenActor in
             screen.synchronizationClock = nil
         }
     }
@@ -374,11 +374,11 @@ public final actor MediaMixer {
         }
         switch mode {
         case .passthrough:
-            Task { @ScreenActor in
+            Task.detached(priority: .utility) { @ScreenActor in
                 displayLink.stopRunning()
             }
         case .offscreen:
-            Task { @ScreenActor in
+            Task.detached(priority: .utility) { @ScreenActor in
                 displayLink.preferredFramesPerSecond = await Int(frameRate)
                 displayLink.startRunning()
                 for await updateFrame in displayLink.updateFrames {
@@ -485,11 +485,11 @@ extension MediaMixer: AsyncRunner {
         if #available(tvOS 17.0, *) {
             startCapturing()
         }
-        Task {
+        Task.detached(priority: .utility) {
             for await inputs in videoIO.inputs {
                 let videoMixerSettings = await self.videoMixerSettings
                 if videoMixerSettings.mode == .offscreen {
-                    Task { @ScreenActor in
+                    Task.detached(priority: .utility) { @ScreenActor in
                         let sampleBuffer = inputs.1
                         screen.append(inputs.0, buffer: sampleBuffer)
                         if videoMixerSettings.mainTrack == inputs.0 {
@@ -502,14 +502,14 @@ extension MediaMixer: AsyncRunner {
                 }
             }
         }
-        Task {
+        Task.detached(priority: .utility) {
             for await video in videoIO.output {
                 for output in outputs where await output.videoTrackId == UInt8.max {
                     output.mixer(self, didOutput: video)
                 }
             }
         }
-        Task {
+        Task.detached(priority: .utility) {
             for await audio in audioIO.output {
                 for output in outputs where await output.audioTrackId == UInt8.max {
                     output.mixer(self, didOutput: audio.0, when: audio.1)
@@ -517,14 +517,14 @@ extension MediaMixer: AsyncRunner {
             }
         }
         #if os(iOS) || os(tvOS) || os(visionOS)
-        subscriptions.append(Task {
+        subscriptions.append(Task.detached(priority: .utility) {
             for await _ in NotificationCenter.default.notifications(
                 named: UIApplication.didEnterBackgroundNotification
             ) {
                 setInBackground(true)
             }
         })
-        subscriptions.append(Task {
+        subscriptions.append(Task.detached(priority: .utility) {
             for await _ in NotificationCenter.default.notifications(
                 named: UIApplication.willEnterForegroundNotification
             ) {
@@ -532,7 +532,7 @@ extension MediaMixer: AsyncRunner {
             }
         })
         if #available(tvOS 17.0, *) {
-            subscriptions.append(Task {
+            subscriptions.append(Task.detached(priority: .utility) {
                 for await notification in NotificationCenter.default.notifications(
                     named: AVAudioSession.interruptionNotification,
                     object: AVAudioSession.sharedInstance()
@@ -556,7 +556,7 @@ extension MediaMixer: AsyncRunner {
         subscriptions.forEach { $0.cancel() }
         subscriptions.removeAll()
         // Wait for the task to finish to prevent memory leaks.
-        await Task { @ScreenActor in
+        await Task.detached(priority: .utility) { @ScreenActor in
             displayLink.stopRunning()
             screen.reset()
         }.value
