@@ -668,7 +668,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if message.streamId == 0 {
             switch message {
             case let message as RTMPSetChunkSizeMessage:
-                chunkSizeC = Int(message.size)
+                chunkSizeC = min(Int(message.size), RTMPChunkBuffer.defaultMaxBufferSize)
             case let message as RTMPWindowAcknowledgementSizeMessage:
                 windowSizeC = Int64(message.size)
             case let message as RTMPSetPeerBandwidthMessage:

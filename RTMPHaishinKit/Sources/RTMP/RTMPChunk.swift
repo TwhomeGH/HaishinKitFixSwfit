@@ -122,6 +122,7 @@ final class RTMPChunkMessageHeader {
 
 final class RTMPChunkBuffer {
     static let headerSize = 3 + 11 + 4
+    static let defaultMaxBufferSize = 10 * 1024 * 1024
 
     var payload: Data {
         data[position..<length]
@@ -129,12 +130,12 @@ final class RTMPChunkBuffer {
 
     var chunkSize = RTMPChunkMessageHeader.chunkSize {
         didSet {
-            guard oldValue < chunkSize else {
+            guard oldValue < chunkSize, chunkSize <= Self.defaultMaxBufferSize else {
                 return
             }
-            let length = chunkSize - data.count
-            if 0 < length {
-                data += Data(count: length + Self.headerSize)
+            let needed = chunkSize - data.count
+            if 0 < needed {
+                data.reserveCapacity(data.count + needed + Self.headerSize)
             }
         }
     }
@@ -244,8 +245,17 @@ final class RTMPChunkBuffer {
     }
 
     func put(_ data: Data) {
+        guard !data.isEmpty else {
+            return
+        }
         let payload = payload
         let length = payload.count
+        if Self.defaultMaxBufferSize < length + data.count {
+            self.data = data
+            position = 0
+            self.length = data.count
+            return
+        }
         if self.data.count < data.count + length {
             self.data = Data(count: data.count + length)
         }

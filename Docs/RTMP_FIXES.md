@@ -43,7 +43,17 @@
 - 情況 0 (2字節) 需要至少 2 字節剩餘
 - 情況 1 (3字節) 需要至少 3 字節剩餘
 
-### 1.5 時間戳回滾與 Type 3 Chunk 增量計算 (P1)
+### 1.6 RTMPChunkBuffer 無限增長導致 `EXC_BREAKPOINT` 崩潰 (P0)
+**文件**: `RTMPChunk.swift`, `RTMPConnection.swift`  
+**問題**: 伺服器發送 `SetChunkSize` 訊息時，`chunkSizeC = Int(message.size)` 觸發 `inputBuffer.chunkSize.didSet`，執行 `data += Data(count: chunkSize - data.count + headerSize)`。若 `message.size` 異常巨大（如 `UInt32.max`），`Data(count:)` 嘗試分配 GB 級記憶體，Foundation 的 `ensureUniqueBufferReference` 觸發 `_assertionFailure` 崩潰。
+
+此外 `RTMPChunkBuffer.put(_:)` 無上限增長 buffer，每次收到網路資料都重新分配 `data.count + remaining` 大小的 Data，若消費速度跟不上接收速度，buffer 持續膨脹。
+
+**修復**:
+- `RTMPChunkBuffer` 新增 `defaultMaxBufferSize = 10MB` 常量
+- `put(_:)`: 當未讀資料 + 新資料超過上限時，直接以新資料取代（放棄舊資料，防止 OOM）
+- `chunkSize.didSet`: 加入 `chunkSize <= defaultMaxBufferSize` 驗證，超出範圍跳過擴容；改為 `reserveCapacity` 避免不必要的分配
+- `RTMPConnection.dispatch`: `chunkSizeC = min(Int(message.size), RTMPChunkBuffer.defaultMaxBufferSize)` 限制伺服器端 chunk size
 **文件**: `RTMPTimestamp.swift:20-58`  
 **問題**: 
 - 32 位時間戳在 49.7 天後回滾，現有邏輯拋出 `invalidSequence`
