@@ -613,17 +613,20 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             doOutput(.zero, chunkStreamId: .command, message: message)
         case .handshakeDone:
             inputBuffer.put(data)
+            log(.trace, "Input data", detail: "size=\(data.count) buffer=\(inputBuffer.remaining)")
             var rollbackPosition = inputBuffer.position
             do {
                 while inputBuffer.hasRemaining {
                     rollbackPosition = inputBuffer.position
                     let (chunkType, chunkStreamId) = try inputBuffer.getBasicHeader()
+                    log(.trace, "Chunk header", detail: "type=\(chunkType.rawValue) streamId=\(chunkStreamId)")
                     if chunks[chunkStreamId] == nil {
                         chunks[chunkStreamId] = RTMPChunkMessageHeader()
                     }
                     if let messageHeader = chunks[chunkStreamId] {
                         try inputBuffer.getMessageHeader(chunkType, messageHeader: messageHeader)
                         if let message = messageHeader.makeMessage() {
+                            log(.trace, "Message dispatched", detail: "type=\(message.type.rawValue) streamId=\(message.streamId)")
                             await dispatch(message, type: chunkType)
                             messageHeader.reset()
                         }
@@ -631,8 +634,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 }
             } catch RTMPChunkError.unknowChunkType(let value) {
                 logger.error("Received unknow chunk type =", value)
+                log(.error, "Unknown chunk type", detail: "\(value)")
                 try await close()
             } catch RTMPChunkError.bufferUnderflow {
+                log(.trace, "Buffer underflow, waiting for more data", detail: "position=\(rollbackPosition) remaining=\(inputBuffer.remaining)")
                 inputBuffer.position = rollbackPosition
             }
         default:
@@ -675,6 +680,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     }
                 }
                 guard let responder = operations.removeValue(forKey: message.transactionId) else {
+                    log(.trace, "No responder", detail: "cmd=\(message.commandName) txn=\(message.transactionId)")
                     switch message.commandName {
                     case "close":
                         try? await close()
@@ -683,15 +689,18 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     }
                     return
                 }
+                log(.info, "Response: \(message.commandName)", detail: "txn=\(message.transactionId)")
                 switch message.commandName {
                 case "_result":
                     if message.transactionId == Self.connectTransactionId {
+                        log(.info, "Connect success")
                         state = .connected
                         chunkSizeS = chunkSize
                         doOutput(.zero, chunkStreamId: .control, message: RTMPSetChunkSizeMessage(size: UInt32(chunkSizeS)))
                     }
                     responder.resume(returning: response)
                 default:
+                    log(.error, "Command error", detail: "\(response)")
                     responder.resume(throwing: Error.requestFailed(response: response))
                 }
             case let message as RTMPSharedObjectMessage:

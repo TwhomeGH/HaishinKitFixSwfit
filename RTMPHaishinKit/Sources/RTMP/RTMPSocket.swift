@@ -141,6 +141,7 @@ final actor RTMPSocket {
                 do {
                     while connected {
                         let data = try await recv()
+                        onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(data.count) totalIn=\(totalBytesIn + data.count)"))
                         continuation.yield(data)
                         totalBytesIn += data.count
                     }
