@@ -436,30 +436,117 @@ connection.onReconnectStateChanged = { state in
 
 ---
 
-## 8. 總結
+## 8. Chunk Header 3-byte Big-Endian 讀取錯誤
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPChunk.swift:212-230`
+
+### 問題
+
+`getMessageHeader()` 中使用 `UInt32(data: data[a..<b]).bigEndian` 來讀取 3-byte 的 big-endian 整數（時間戳與訊息長度），但這個公式在 **little-endian 架構（所有 Apple 裝置）上完全錯誤**。
+
+### 數學分析
+
+```
+Wire 3 bytes (big-endian):  [0x00, 0x01, 0x90]  → 實際值 = 0x190 = 400
+
+UInt32(data:) 在 LE 機器上：
+  → bytes[0]=0x00, bytes[1]=0x01, bytes[2]=0x90, bytes[3]=0x00
+  → LE numeric value = 0x00900100
+
+.bigEndian (byte swap):
+  → 0x00900100 → 0x00019000 = 102400 ❌ (256 倍！)
+  
+正確讀法：
+  → UInt32(data[p]) << 16 | UInt32(data[p+1]) << 8 | UInt32(data[p+2])
+  → 0x00 << 16 | 0x01 << 8 | 0x90 = 400 ✅
+```
+
+### 影響
+
+| 欄位 | Wire 上為 3 bytes BE | 被誤讀為 | 實際應為 | 倍率 |
+|------|---------------------|---------|---------|------|
+| `messageLength` | `[0x00,0x00,0x50]` (= 80) | 20480 | 80 | 256x |
+| `timestamp` | `[0x00,0x00,0x01]` (= 1ms) | 256 | 1 | 256x |
+
+### 連鎖反應
+
+```
+SRS 回應 889 bytes（含 _result + 控制訊息）
+  → Type0 chunk header 讀取 messageLength = 實際值 × 256
+    → 例如 80 bytes → 讀成 20480 bytes
+  → payload 被 allocate 20KB（但 buffer 只有 889 bytes）
+  → put() 拷貝 128 bytes → 續傳 chunk 拷貝 128 bytes → ...
+  → 幾次續傳後 bufferUnderflow（buffer 已讀完）
+  → makeMessage() 永遠不回傳（position < payload.count）
+  → _result 永遠不會被 dispatch
+  → Connect 的 continuation 永不 resolved
+  → 30 秒後 SRS timeout → 關連線
+  → Client 收到 endOfStream → close() 回拋 Connect.Failed
+```
+
+### SRS 端與 Client 端 log 交叉比對
+
+| SRS log | Client log | 意義 |
+|---------|-----------|------|
+| `simple handshake success` | `Socket recv size=3073` | 握手完成 |
+| `connect app, tcUrl=...` | `State: ackSent => handshakeDone` | Connect command 送出 |
+| `send_bytes=3962` (含回應) | `Socket recv size=16 + 873` | SRS 回應已收到 |
+| **`timeout 30000 ms`** | `Chunk header type=0 streamId=3` → `streamId=64`... | Chunk 解析崩潰！ |
+| | `endOfStream` → `Connect.Failed` | 30 秒後 timeout |
+
+### 為什麼 `streamId=64` 和 `46` 會出現？
+
+因為 messageLength 被放大 256 倍後，payload 永遠無法讀完。buffer 內的資料被當成 chunk header 來解析，AMF payload 的二進位資料被誤認為 chunk type/streamId，產生了 stream 64、46 等不存在的串流 ID。
+
+### 修復
+
+```swift
+// ❌ 錯誤（3-byte BE on LE machine）
+let rawTimestamp = UInt32(data: data[p..<p+3]).bigEndian
+messageHeader.messageLength = Int(Int32(data: data[p+3..<p+6]).bigEndian)
+
+// ✅ 正確
+let rawTimestamp = UInt32(data[p]) << 16 | UInt32(data[p+1]) << 8 | UInt32(data[p+2])
+messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8 | Int32(data[p+5]))
+```
+
+### 受影響的讀取點
+
+| 行號 | 欄位 | 位元組數 | Wire Endian | 修正前 |
+|------|------|---------|------------|--------|
+| 212, 220, 227 | timestamp | 3 | Big | ❌ `data[...].bigEndian` |
+| 215, 223 | messageLength | 3 | Big | ❌ `data[...].bigEndian` |
+| 239 | extended timestamp | 4 | Big | ✅ 4-byte 是對的 |
+| 217 | messageStreamId | 4 | Little | ✅ 沒有 `.bigEndian` 正確 |
+
+---
+
+## 9. 總結
 
 ### 問題嚴重性
 
 | # | 問題 | 嚴重性 | 影響範圍 | 類別 |
 |---|------|--------|----------|------|
 | 0 | S2 封包檢測公式錯誤 | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
-| 1 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
-| 2 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
-| 3 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
-| 4 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
-| 5 | E-RTMP 相容性（含 `capsEx: 0` bug） | 🟡 中 | 不支援 E-RTMP 的伺服器 | 相容性 |
+| 🔥 1 | **Chunk 3-byte BE 讀取錯誤** | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
+| 2 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
+| 3 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
+| 4 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
+| 5 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
+| 6 | E-RTMP 相容性（含 `capsEx: 0` bug） | 🟡 中 | 不支援 E-RTMP 的伺服器 | 相容性 |
 
 ### 修復狀態
 
 | # | 修復 | 檔案 |
 |---|------|------|
 | 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
-| 1 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` |
-| 2 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
-| 3 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
-| 4 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
-| 5 | ✅ `useEnhancedRTMP` 開關 + `capsEx` 條件式送出 | `RTMPConnection.swift` |
-| 6 | ✅ 診斷日誌 `RTMPLogEvent` + `onLog` | `RTMPLogEvent.swift`, `RTMPConnection.swift`, `RTMPSocket.swift` |
+| 🔥 1 | ✅ `UInt32(data:...).bigEndian` → 手動 shift | `RTMPChunk.swift` |
+| 2 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` |
+| 3 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
+| 4 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
+| 5 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
+| 6 | ✅ `useEnhancedRTMP` 開關 + `capsEx` 條件式送出 | `RTMPConnection.swift` |
+| 7 | ✅ 診斷日誌 `RTMPLogEvent` + `onLog` | `RTMPLogEvent.swift`, `RTMPConnection.swift`, `RTMPSocket.swift` |
 
 ### 建議測試項目
 
