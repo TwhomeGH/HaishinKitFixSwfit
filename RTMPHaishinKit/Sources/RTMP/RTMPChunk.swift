@@ -212,7 +212,7 @@ final class RTMPChunkBuffer {
             let rawTimestamp = UInt32(data[position]) << 16 | UInt32(data[position + 1]) << 8 | UInt32(data[position + 2])
             messageHeader.timestamp = rawTimestamp
             messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
-            messageHeader.messageLength = Int(Int32(data[position + 3]) << 16 | Int32(data[position + 4]) << 8 | Int32(data[position + 5]))
+            messageHeader.messageLength = Int(UInt32(data[position + 3]) << 16 | UInt32(data[position + 4]) << 8 | UInt32(data[position + 5]))
             messageHeader.messageTypeId = data[position + 6]
             messageHeader.messageStreamId = UInt32(data: data[position + 7..<position + 11])
             position += type.headerSize
@@ -220,7 +220,7 @@ final class RTMPChunkBuffer {
             let rawTimestamp = UInt32(data[position]) << 16 | UInt32(data[position + 1]) << 8 | UInt32(data[position + 2])
             messageHeader.timestamp = rawTimestamp
             messageHeader.isExtended = (rawTimestamp == RTMPChunkMessageHeader.maxTimestamp)
-            messageHeader.messageLength = Int(Int32(data[position + 3]) << 16 | Int32(data[position + 4]) << 8 | Int32(data[position + 5]))
+            messageHeader.messageLength = Int(UInt32(data[position + 3]) << 16 | UInt32(data[position + 4]) << 8 | UInt32(data[position + 5]))
             messageHeader.messageTypeId = data[position + 6]
             position += type.headerSize
         case .two:
