@@ -282,7 +282,7 @@ public actor RTMPStream {
         self.connection = connection
         self.fcPublishName = fcPublishName
         self.requestTimeout = connection.requestTimeout
-        Task.detached(priority: .utility) {
+        Task {
             await self.startOutputConsumer()
             await self.startMixerInputConsumers()
             await connection.addStream(self)
@@ -318,7 +318,7 @@ public actor RTMPStream {
                 expectedResponse = Code.playStart
                 self.continuation?.resume(throwing: Error.invalidState)
                 self.continuation = continuation
-                Task.detached(priority: .utility) {
+                Task {
                     await incoming.startRunning()
                     try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
                     self.continuation.map {
@@ -340,7 +340,7 @@ public actor RTMPStream {
             info.resourceName = name
             return response
         } catch {
-            Task.detached(priority: .utility) { await incoming.stopRunning() }
+            Task { await incoming.stopRunning() }
             outgoing.stopRunning()
             readyState = .idle
             throw error
@@ -380,7 +380,7 @@ public actor RTMPStream {
                 expectedResponse = Code.publishStart
                 self.continuation?.resume(throwing: Error.invalidState)
                 self.continuation = continuation
-                Task.detached(priority: .utility) {
+                Task {
                     try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
                     self.continuation.map {
                         $0.resume(throwing: Error.requestTimedOut)
@@ -410,17 +410,17 @@ public actor RTMPStream {
             outgoing.startRunning()
             stopMixerInputConsumers()
             startMixerInputConsumers()
-            tasks.append(Task.detached(priority: .utility) {
+            tasks.append(Task {
                 for await audio in audioOutput {
                     append(audio.0, when: audio.1)
                 }
             })
-            tasks.append(Task.detached(priority: .utility) {
+            tasks.append(Task {
                 for await video in videoOutput {
                     append(video)
                 }
             })
-            tasks.append(Task.detached(priority: .utility) {
+            tasks.append(Task {
                 for await video in outgoing.videoInputStream {
                     outgoing.append(video: video)
                 }
@@ -452,7 +452,7 @@ public actor RTMPStream {
             default:
                 break
             }
-            Task.detached(priority: .utility) {
+            Task {
                 await incoming.stopRunning()
                 try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
                 self.continuation.map {
@@ -547,7 +547,7 @@ public actor RTMPStream {
             expectedResponse = isPaused ? Code.pauseNotify : Code.unpauseNotify
             self.continuation?.resume(throwing: Error.invalidState)
             self.continuation = continuation
-            Task.detached(priority: .utility) {
+            Task {
                 try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
                 self.continuation.map {
                     $0.resume(throwing: Error.requestTimedOut)
@@ -679,7 +679,7 @@ public actor RTMPStream {
             }
             if let audioBuffer {
                 message.copyMemory(audioBuffer)
-                Task.detached(priority: .utility) { await incoming.append(audioBuffer, when: audioTimestamp.value) }
+                Task { await incoming.append(audioBuffer, when: audioTimestamp.value) }
             }
         default:
             break
@@ -697,9 +697,9 @@ public actor RTMPStream {
             case RTMPVideoPacketType.sequenceStart.rawValue:
                 videoFormat = message.makeFormatDescription()
             case RTMPVideoPacketType.codedFrames.rawValue:
-                Task.detached(priority: .utility) { await incoming.append(message, presentationTimeStamp: videoTimestamp.value, formatDesciption: videoFormat) }
+                Task { await incoming.append(message, presentationTimeStamp: videoTimestamp.value, formatDesciption: videoFormat) }
             case RTMPVideoPacketType.codedFramesX.rawValue:
-                Task.detached(priority: .utility) { await incoming.append(message, presentationTimeStamp: videoTimestamp.value, formatDesciption: videoFormat) }
+                Task { await incoming.append(message, presentationTimeStamp: videoTimestamp.value, formatDesciption: videoFormat) }
             default:
                 break
             }
@@ -708,7 +708,7 @@ public actor RTMPStream {
             case RTMPAVCPacketType.seq.rawValue:
                 videoFormat = message.makeFormatDescription()
             case RTMPAVCPacketType.nal.rawValue:
-                Task.detached(priority: .utility) { await incoming.append(message, presentationTimeStamp: videoTimestamp.value, formatDesciption: videoFormat) }
+                Task { await incoming.append(message, presentationTimeStamp: videoTimestamp.value, formatDesciption: videoFormat) }
             default:
                 break
             }
@@ -723,12 +723,12 @@ public actor RTMPStream {
         )
         mixerAudioContinuation = audioContinuation
         mixerVideoContinuation = videoContinuation
-        tasks.append(Task.detached(priority: .utility) {
+        tasks.append(Task {
             for await (buffer, when) in audioStream {
                 append(buffer, when: when)
             }
         })
-        tasks.append(Task.detached(priority: .utility) {
+        tasks.append(Task {
             for await sampleBuffer in videoStream {
                 append(sampleBuffer)
             }
@@ -747,7 +747,7 @@ public actor RTMPStream {
     private func startOutputConsumer() {
         let (stream, continuation) = AsyncStream.makeStream(of: RTMPStreamOutput.self, bufferingPolicy: .bufferingOldest(128))
         outputContinuation = continuation
-        Task.detached(priority: .utility) {
+        Task {
             for await output in stream {
                 let length = await output()
                 await appendByteCount(length)

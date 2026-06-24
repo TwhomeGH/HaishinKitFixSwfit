@@ -104,7 +104,7 @@ public actor RTMPSharedObject {
             guard succeeded else {
                 return
             }
-            Task.detached(priority: .utility) {
+            Task {
                 for (key, value) in data {
                     await setProperty(key, value)
                 }

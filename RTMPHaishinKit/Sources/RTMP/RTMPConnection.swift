@@ -349,7 +349,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 commandObject: nil,
                 arguments: arguments
             )
-            Task.detached(priority: .utility) {
+            Task {
                 try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
                 guard let operation = operations.removeValue(forKey: message.transactionId) else {
                     return
@@ -391,7 +391,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             return try await performConnect(command, arguments: arguments)
         } catch {
             if isReconnectEnabled {
-                let task = Task.detached(priority: .utility) { await self.startReconnection() }
+                let task = Task { await self.startReconnection() }
                 reconnectionTask = task
             }
             throw error
@@ -413,7 +413,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
         await socket?.setOnLog { [weak self] event in
-            Task.detached(priority: .utility) { await self?.onLog?(event) }
+            Task { await self?.onLog?(event) }
         }
         networkMonitor = await socket?.makeNetworkMonitor()
         log(.info, "HaishinKit revision", detail: kHaishinKitRevision)
@@ -423,7 +423,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         startOutputConsumer(socket)
         do {
             let result: RTMPResponse = try await withCheckedThrowingContinuation { continutation in
-                Task.detached(priority: .utility) {
+                Task {
                     do {
                         log(.info, "TCP connecting", detail: "\(host):\(uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))")
                         try await socket.connect(host, port: uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))
@@ -446,7 +446,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     }
                 }
             }
-            Task.detached(priority: .utility) {
+            Task {
                 for await event in await networkMonitor.event {
                     dispatch(event)
                 }
@@ -576,7 +576,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         outputContinuation?.finish()
         let (stream, continuation) = AsyncStream.makeStream(of: [Data].self, bufferingPolicy: .bufferingOldest(128))
         outputContinuation = continuation
-        Task.detached(priority: .utility) {
+        Task {
             for await chunks in stream {
                 await socket.send(chunks)
             }
@@ -657,7 +657,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             break
         }
         for stream in streams {
-            Task.detached(priority: .utility) { await stream.dispatch(event) }
+            Task { await stream.dispatch(event) }
         }
     }
 
@@ -716,7 +716,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .pong, value: message.value))
                 default:
                     for stream in streams where await stream.id == message.value {
-                        Task.detached(priority: .utility) { await stream.dispatch(message, type: type) }
+                        Task { await stream.dispatch(message, type: type) }
                     }
                 }
             default:
@@ -724,7 +724,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
         } else {
             for stream in streams where await stream.id == message.streamId {
-                Task.detached(priority: .utility) { await stream.dispatch(message, type: type) }
+                Task { await stream.dispatch(message, type: type) }
             }
         }
     }
