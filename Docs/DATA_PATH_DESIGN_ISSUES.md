@@ -366,21 +366,21 @@ if 0 < capsEx {
 ### API
 
 ```swift
-// ReplyKit 端設定回呼（需 await，因 RTMPConnection 是 actor）
-await connection.setOnLog { event in
-    // event.level: .trace / .debug / .info / .warn / .error
-    // event.message: 簡短描述（如 "State: versionSent => ackSent"）
-    // event.detail: 詳細資料（如 "totalBytesIn=3461 totalBytesOut=3962"）
-    // event.timestamp: 事件時間
-    // event.file / event.line: 原始碼位置
-    await socket.send(event)
+// event.level: .trace / .debug / .info / .warn / .error
+// event.message: 簡短描述（如 "State: versionSent => ackSent"）
+// event.detail: 詳細資料（如 "totalBytesIn=3461 totalBytesOut=3962"，可能為 nil）
+// event.timestamp: 事件時間
+// event.file / event.line: 原始碼位置
+
+// 在 async 函式中：直接 await
+await connection.setOnLog { [weak self] event in
+    self?.send("[RTMP] \(event.level) \(event.message) \(event.detail ?? "")")
 }
 
-// 若不在 async 上下文中，用 Task 包裹：
-// weak self 只在 Task 捕獲一次，內層 closure 直接用 self? 即可
-Task { [weak self] in
-    await self?.rtmpConnection?.setOnLog { event in
-        self?.sendlog("[RTMP] \(event.level) \(event.message) \(event.detail ?? "")")
+// 不在 async 上下文中：用 Task 包裹
+Task {
+    await connection.setOnLog { [weak self] event in
+        self?.send("[RTMP] \(event.level) \(event.message) \(event.detail ?? "")")
     }
 }
 ```
