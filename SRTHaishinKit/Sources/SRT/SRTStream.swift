@@ -241,10 +241,12 @@ extension SRTStream: MediaMixerOutput {
     }
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {
-        mixerVideoContinuation?.yield(sampleBuffer)
+        let continuation = mixerVideoContinuation
+        Task { continuation?.yield(sampleBuffer) }
     }
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput buffer: AVAudioPCMBuffer, when: AVAudioTime) {
-        mixerAudioContinuation?.yield((buffer, when))
+        let continuation = mixerAudioContinuation
+        Task { continuation?.yield((buffer, when)) }
     }
 }

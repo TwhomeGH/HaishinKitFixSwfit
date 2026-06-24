@@ -14,6 +14,9 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private var session: StreamSession?
     private var mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
     private var needVideoConfiguration = true
+    private var isAppendingVideo = false
+    private var isAppendingAudioMic = false
+    private var isAppendingAudioApp = false
 
     override init() {
         Task {
@@ -62,7 +65,10 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
         switch sampleBufferType {
         case .video:
+            guard !isAppendingVideo else { return }
+            isAppendingVideo = true
             Task {
+                defer { isAppendingVideo = false }
                 if needVideoConfiguration, let dimensions = sampleBuffer.formatDescription?.dimensions {
                     var videoSettings = await session?.stream.videoSettings
                     videoSettings?.videoSize = .init(
@@ -75,11 +81,14 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                     }
                     needVideoConfiguration = false
                 }
+                await mixer.append(sampleBuffer)
             }
-            Task { await mixer.append(sampleBuffer) }
         case .audioMic:
-            if sampleBuffer.dataReadiness == .ready {
-                Task { await mixer.append(sampleBuffer, track: 0) }
+            guard sampleBuffer.dataReadiness == .ready, !isAppendingAudioMic else { return }
+            isAppendingAudioMic = true
+            Task {
+                defer { isAppendingAudioMic = false }
+                await mixer.append(sampleBuffer, track: 0)
             }
         case .audioApp:
             Task { @MainActor in
@@ -90,8 +99,11 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                     await mixer.setAudioMixerSettings(audioMixerSettings)
                 }
             }
-            if sampleBuffer.dataReadiness == .ready {
-                Task { await mixer.append(sampleBuffer, track: 1) }
+            guard sampleBuffer.dataReadiness == .ready, !isAppendingAudioApp else { return }
+            isAppendingAudioApp = true
+            Task {
+                defer { isAppendingAudioApp = false }
+                await mixer.append(sampleBuffer, track: 1)
             }
         @unknown default:
             break
