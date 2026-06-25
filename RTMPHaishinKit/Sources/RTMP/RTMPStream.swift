@@ -15,38 +15,6 @@ typealias View = NSView
 
 private typealias RTMPStreamOutput = @Sendable () async -> Int
 
-// MARK: -
-
-/// Lock-protected state for the compressed output pipeline.
-/// Lives inside RTMPStream but accessed from TaskGroup sub-tasks without actor hops.
-private final class RTMPOutgoingState: @unchecked Sendable {
-    private let frameCountQueue = DispatchQueue(label: "com.haishinkit.rtmpout.fc")
-
-    var videoTimestamp = RTMPTimestamp<CMTime>()
-    var audioTimestamp = RTMPTimestamp<AVAudioTime>()
-    private var _frameCount: UInt16 = 0
-    var videoFormat: CMFormatDescription?
-    var audioFormat: AVAudioFormat?
-
-    var frameCount: UInt16 {
-        frameCountQueue.sync { _frameCount }
-    }
-
-    func incrementFrameCount() {
-        frameCountQueue.sync { _frameCount &+= 1 }
-    }
-
-    func resetFrameCount() -> UInt16 {
-        frameCountQueue.sync {
-            let count = _frameCount
-            _frameCount = 0
-            return count
-        }
-    }
-}
-
-// MARK: -
-
 /// An object that provides the interface to control a one-way channel over an RTMPConnection.
 public actor RTMPStream {
     /// The error domain code.
@@ -262,7 +230,6 @@ public actor RTMPStream {
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
     private var outputContinuation: AsyncStream<RTMPStreamOutput>.Continuation?
     private var publishTask: Task<Void, Never>?
-    private var _outgoingState: RTMPOutgoingState?
     nonisolated(unsafe) private var mixerAudioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
     nonisolated(unsafe) private var mixerVideoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private(set) var id: UInt32 = RTMPStream.defaultID
@@ -745,16 +712,10 @@ public actor RTMPStream {
         let audioOutput = outgoing.audioOutputStream
         let videoInput = outgoing.videoInputStream
 
-        let streamId = id
-        let outputCont = outputContinuation
-        let conn = connection
-        let state = RTMPOutgoingState()
-        _outgoingState = state
-
         publishTask = Task { [weak self] in
             guard let self else { return }
             await withTaskGroup(of: Void.self) { group in
-                // --- mixer input (uncompressed) → encoder (actor needed for outgoing.append) ---
+                // --- mixer input (uncompressed) → encoder ---
                 group.addTask {
                     for await (buffer, when) in audioStream {
                         await self.append(buffer, when: when)
@@ -762,44 +723,21 @@ public actor RTMPStream {
                 }
                 group.addTask {
                     for await sampleBuffer in videoStream {
-                        await conn?.log(.debug, "mixer->stream: video pts=\(sampleBuffer.presentationTimeStamp.seconds)")
                         await self.append(sampleBuffer)
                     }
                 }
 
-                // --- compressed audio → RTMP (no actor hop) ---
+                // --- compressed audio → RTMP ---
                 group.addTask {
                     for await (buffer, when) in audioOutput {
-                        guard let compressed = buffer as? AVAudioCompressedBuffer else { continue }
-                        guard let td = try? state.audioTimestamp.update(when) else { continue }
-                        state.audioFormat = compressed.format
-                        guard let msg = RTMPAudioMessage(streamId: streamId, timestamp: td, audioBuffer: compressed) else { continue }
-                        Task { await conn?.log(.debug, "outgoing->rtmp: audio size=\(msg.payload.count)") }
-                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .audio, message: msg) ?? 0 }
+                        await self.append(buffer, when: when)
                     }
                 }
 
-                // --- compressed video → RTMP (no actor hop) ---
+                // --- compressed video → RTMP ---
                 group.addTask {
                     for await sampleBuffer in videoOutput {
-                        let dts = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
-                        guard let td = try? state.videoTimestamp.update(dts) else { continue }
-                        state.incrementFrameCount()
-
-                        let fmt = sampleBuffer.formatDescription
-                        let prev = state.videoFormat
-                        if prev != fmt {
-                            state.videoFormat = fmt
-                            if let hdr = RTMPVideoMessage(streamId: streamId, timestamp: 0, formatDescription: fmt) {
-                                outputCont?.yield { [conn] in
-                                    await conn?.doOutput(prev == nil ? .zero : .one, chunkStreamId: .video, message: hdr) ?? 0
-                                }
-                            }
-                        }
-
-                        guard let msg = RTMPVideoMessage(streamId: streamId, timestamp: td, sampleBuffer: sampleBuffer) else { continue }
-                        Task { await conn?.log(.debug, "outgoing->rtmp: video pts=\(sampleBuffer.presentationTimeStamp.seconds) size=\(msg.payload.count)") }
-                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .video, message: msg) ?? 0 }
+                        await self.append(sampleBuffer)
                     }
                 }
 
@@ -816,7 +754,6 @@ public actor RTMPStream {
     private func stopPublishTasks() {
         publishTask?.cancel()
         publishTask = nil
-        _outgoingState = nil
         mixerAudioContinuation?.finish()
         mixerAudioContinuation = nil
         mixerVideoContinuation?.finish()
@@ -953,7 +890,7 @@ extension RTMPStream: _Stream {
             break
         }
         await bitRateStrategy?.adjustBitrate(event, stream: self)
-        currentFPS = _outgoingState?.resetFrameCount() ?? frameCount
+        currentFPS = frameCount
         frameCount = 0
         info.update()
     }
