@@ -404,8 +404,8 @@ public actor RTMPStream {
             metadata = makeMetadata()
             readyState = .publishing
         try? send("@setDataFrame", arguments: "onMetaData", metadata)
-        outgoing.startRunning()
         startPublishTasks()
+        outgoing.startRunning()
         return response
         } catch {
             readyState = .idle
