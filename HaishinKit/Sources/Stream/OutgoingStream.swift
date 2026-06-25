@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// An object that provides a stream ingest feature.
-package final class OutgoingStream {
+package final class OutgoingStream: @unchecked Sendable {
     package private(set) var isRunning = false
 
     /// The asynchronous sequence for audio output.
