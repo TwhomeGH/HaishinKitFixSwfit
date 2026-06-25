@@ -135,6 +135,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                  (.ackSent, .handshakeDone),
                  (.handshakeDone, .connected),
                  (.connected, .disconnected),
+                 (.disconnected, .connecting),
+                 (.error, .connecting),
                  (_, .disconnected),
                  (_, .error):
                 return true
@@ -430,6 +432,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         try await socket.connect(host, port: uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))
                     } catch {
                         log(.error, "TCP connect failed", detail: "\(error)")
+                        state = .error
                         continutation.resume(throwing: error)
                         return
                     }
@@ -457,7 +460,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 await stream.createStream()
                 await stream.resumePublishing()
             }
-            reconnectAttempts = 0
             await onReconnectStateChanged?(.succeeded)
             return result
         } catch let error as RTMPSocket.Error {

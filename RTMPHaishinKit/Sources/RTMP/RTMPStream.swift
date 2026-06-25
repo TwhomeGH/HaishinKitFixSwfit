@@ -15,6 +15,38 @@ typealias View = NSView
 
 private typealias RTMPStreamOutput = @Sendable () async -> Int
 
+// MARK: -
+
+/// Lock-protected state for the compressed output pipeline.
+/// Lives inside RTMPStream but accessed from TaskGroup sub-tasks without actor hops.
+private final class RTMPOutgoingState: @unchecked Sendable {
+    private let frameCountQueue = DispatchQueue(label: "com.haishinkit.rtmpout.fc")
+
+    var videoTimestamp = RTMPTimestamp<CMTime>()
+    var audioTimestamp = RTMPTimestamp<AVAudioTime>()
+    private var _frameCount: UInt16 = 0
+    var videoFormat: CMFormatDescription?
+    var audioFormat: AVAudioFormat?
+
+    var frameCount: UInt16 {
+        frameCountQueue.sync { _frameCount }
+    }
+
+    func incrementFrameCount() {
+        frameCountQueue.sync { _frameCount &+= 1 }
+    }
+
+    func resetFrameCount() -> UInt16 {
+        frameCountQueue.sync {
+            let count = _frameCount
+            _frameCount = 0
+            return count
+        }
+    }
+}
+
+// MARK: -
+
 /// An object that provides the interface to control a one-way channel over an RTMPConnection.
 public actor RTMPStream {
     /// The error domain code.
@@ -229,7 +261,8 @@ public actor RTMPStream {
     package var bitRateStrategy: (any StreamBitRateStrategy)?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
     private var outputContinuation: AsyncStream<RTMPStreamOutput>.Continuation?
-    private var tasks: [Task<Void, Never>] = []
+    private var publishTask: Task<Void, Never>?
+    private var _outgoingState: RTMPOutgoingState?
     nonisolated(unsafe) private var mixerAudioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
     nonisolated(unsafe) private var mixerVideoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private(set) var id: UInt32 = RTMPStream.defaultID
@@ -284,7 +317,6 @@ public actor RTMPStream {
         self.requestTimeout = connection.requestTimeout
         Task {
             await self.startOutputConsumer()
-            await self.startMixerInputConsumers()
             await connection.addStream(self)
             if await connection.connected {
                 await createStream()
@@ -293,6 +325,7 @@ public actor RTMPStream {
     }
 
     deinit {
+        publishTask?.cancel()
         outputContinuation?.finish()
         mixerAudioContinuation?.finish()
         mixerVideoContinuation?.finish()
@@ -403,29 +436,10 @@ public actor RTMPStream {
             startedAt = .init()
             metadata = makeMetadata()
             readyState = .publishing
-            try? send("@setDataFrame", arguments: "onMetaData", metadata)
-            // Ensure output streams are initialized before encoder starts
-            let videoOutput = outgoing.videoOutputStream
-            let audioOutput = outgoing.audioOutputStream
-            outgoing.startRunning()
-            stopMixerInputConsumers()
-            startMixerInputConsumers()
-            tasks.append(Task {
-                for await audio in audioOutput {
-                    append(audio.0, when: audio.1)
-                }
-            })
-            tasks.append(Task {
-                for await video in videoOutput {
-                    append(video)
-                }
-            })
-            tasks.append(Task {
-                for await video in outgoing.videoInputStream {
-                    outgoing.append(video: video)
-                }
-            })
-            return response
+        try? send("@setDataFrame", arguments: "onMetaData", metadata)
+        outgoing.startRunning()
+        startPublishTasks()
+        return response
         } catch {
             readyState = .idle
             throw error
@@ -438,8 +452,7 @@ public actor RTMPStream {
             throw Error.invalidState
         }
         lastPublishName = nil
-        stopMixerInputConsumers()
-        startMixerInputConsumers()
+        stopPublishTasks()
         outgoing.stopRunning()
         return try await withCheckedThrowingContinuation { continutation in
             self.continuation?.resume(throwing: Error.invalidState)
@@ -574,6 +587,7 @@ public actor RTMPStream {
 
     func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) {
         guard let connection else {
+            logger.warn("doOutput dropped: connection is nil")
             return
         }
         outputContinuation?.yield { [connection] in
@@ -660,6 +674,7 @@ public actor RTMPStream {
         guard let fcPublishName, readyState == .publishing else {
             return
         }
+        stopPublishTasks()
         outgoing.stopRunning()
         async let _ = try? connection?.call("FCUnpublish", arguments: fcPublishName)
         async let _ = try? connection?.call("deleteStream", arguments: id)
@@ -715,7 +730,9 @@ public actor RTMPStream {
         }
     }
 
-    private func startMixerInputConsumers() {
+    private func startPublishTasks() {
+        publishTask?.cancel()
+
         let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
         let (videoStream, videoContinuation) = AsyncStream.makeStream(
             of: CMSampleBuffer.self,
@@ -723,25 +740,86 @@ public actor RTMPStream {
         )
         mixerAudioContinuation = audioContinuation
         mixerVideoContinuation = videoContinuation
-        tasks.append(Task {
-            for await (buffer, when) in audioStream {
-                append(buffer, when: when)
+
+        let videoOutput = outgoing.videoOutputStream
+        let audioOutput = outgoing.audioOutputStream
+
+        let streamId = id
+        let outputCont = outputContinuation
+        let conn = connection
+        let state = RTMPOutgoingState()
+        _outgoingState = state
+
+        publishTask = Task { [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                // --- mixer input (uncompressed) → encoder (actor needed for outgoing.append) ---
+                group.addTask {
+                    for await (buffer, when) in audioStream {
+                        await self.append(buffer, when: when)
+                    }
+                }
+                group.addTask {
+                    for await sampleBuffer in videoStream {
+                        await connection?.log(.debug, "mixer->stream: video pts=\(sampleBuffer.presentationTimeStamp.seconds)")
+                        await self.append(sampleBuffer)
+                    }
+                }
+
+                // --- compressed audio → RTMP (no actor hop) ---
+                group.addTask {
+                    for await (buffer, when) in audioOutput {
+                        guard let compressed = buffer as? AVAudioCompressedBuffer else { continue }
+                        guard let td = try? state.audioTimestamp.update(when) else { continue }
+                        state.audioFormat = compressed.format
+                        guard let msg = RTMPAudioMessage(streamId: streamId, timestamp: td, audioBuffer: compressed) else { continue }
+                        Task { await conn?.log(.debug, "outgoing->rtmp: audio size=\(msg.payload.count)") }
+                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .audio, message: msg) }
+                    }
+                }
+
+                // --- compressed video → RTMP (no actor hop) ---
+                group.addTask {
+                    for await sampleBuffer in videoOutput {
+                        let dts = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
+                        guard let td = try? state.videoTimestamp.update(dts) else { continue }
+                        state.incrementFrameCount()
+
+                        let fmt = sampleBuffer.formatDescription
+                        let prev = state.videoFormat
+                        if prev != fmt {
+                            state.videoFormat = fmt
+                            if let hdr = RTMPVideoMessage(streamId: streamId, timestamp: 0, formatDescription: fmt) {
+                                outputCont?.yield { [conn] in
+                                    await conn?.doOutput(prev == nil ? .zero : .one, chunkStreamId: .video, message: hdr)
+                                }
+                            }
+                        }
+
+                        guard let msg = RTMPVideoMessage(streamId: streamId, timestamp: td, sampleBuffer: sampleBuffer) else { continue }
+                        Task { await conn?.log(.debug, "outgoing->rtmp: video pts=\(sampleBuffer.presentationTimeStamp.seconds) size=\(msg.payload.count)") }
+                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .video, message: msg) }
+                    }
+                }
+
+                // --- video encoder input feeder ---
+                group.addTask {
+                    for await video in self.outgoing.videoInputStream {
+                        self.outgoing.append(video: video)
+                    }
+                }
             }
-        })
-        tasks.append(Task {
-            for await sampleBuffer in videoStream {
-                append(sampleBuffer)
-            }
-        })
+        }
     }
 
-    private func stopMixerInputConsumers() {
+    private func stopPublishTasks() {
+        publishTask?.cancel()
+        publishTask = nil
+        _outgoingState = nil
         mixerAudioContinuation?.finish()
         mixerAudioContinuation = nil
         mixerVideoContinuation?.finish()
         mixerVideoContinuation = nil
-        tasks.forEach { $0.cancel() }
-        tasks.removeAll()
     }
 
     private func startOutputConsumer() {
@@ -809,8 +887,10 @@ extension RTMPStream: _Stream {
                     frameCount += 1
                     videoFormat = sampleBuffer.formatDescription
                     guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, sampleBuffer: sampleBuffer) else {
+                        Task { await connection?.log(.debug, "append(video): RTMPVideoMessage creation failed") }
                         return
                     }
+                    Task { await connection?.log(.debug, "append(video): sending pts=\(sampleBuffer.presentationTimeStamp.seconds) size=\(message.payload.count)") }
                     doOutput(.one, chunkStreamId: .video, message: message)
                 } catch {
                     logger.warn(error)
@@ -846,8 +926,10 @@ extension RTMPStream: _Stream {
                 let timedelta = try audioTimestamp.update(when)
                 audioFormat = audioBuffer.format
                 guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
+                    Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                     return
                 }
+                Task { await connection?.log(.debug, "append(audio): sending size=\(message.payload.count)") }
                 doOutput(.one, chunkStreamId: .audio, message: message)
             } catch {
                 logger.warn(error)
@@ -863,13 +945,14 @@ extension RTMPStream: _Stream {
     public func dispatch(_ event: NetworkMonitorEvent) async {
         switch event {
         case .reset:
+            stopPublishTasks()
             id = RTMPStream.defaultID
             readyState = .idle
         default:
             break
         }
         await bitRateStrategy?.adjustBitrate(event, stream: self)
-        currentFPS = frameCount
+        currentFPS = _outgoingState?.resetFrameCount() ?? frameCount
         frameCount = 0
         info.update()
     }
