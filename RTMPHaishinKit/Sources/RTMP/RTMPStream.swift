@@ -775,7 +775,7 @@ public actor RTMPStream {
                         state.audioFormat = compressed.format
                         guard let msg = RTMPAudioMessage(streamId: streamId, timestamp: td, audioBuffer: compressed) else { continue }
                         Task { await conn?.log(.debug, "outgoing->rtmp: audio size=\(msg.payload.count)") }
-                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .audio, message: msg) }
+                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .audio, message: msg) ?? 0 }
                     }
                 }
 
@@ -792,14 +792,14 @@ public actor RTMPStream {
                             state.videoFormat = fmt
                             if let hdr = RTMPVideoMessage(streamId: streamId, timestamp: 0, formatDescription: fmt) {
                                 outputCont?.yield { [conn] in
-                                    await conn?.doOutput(prev == nil ? .zero : .one, chunkStreamId: .video, message: hdr)
+                                    await conn?.doOutput(prev == nil ? .zero : .one, chunkStreamId: .video, message: hdr) ?? 0
                                 }
                             }
                         }
 
                         guard let msg = RTMPVideoMessage(streamId: streamId, timestamp: td, sampleBuffer: sampleBuffer) else { continue }
                         Task { await conn?.log(.debug, "outgoing->rtmp: video pts=\(sampleBuffer.presentationTimeStamp.seconds) size=\(msg.payload.count)") }
-                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .video, message: msg) }
+                        outputCont?.yield { [conn] in await conn?.doOutput(.one, chunkStreamId: .video, message: msg) ?? 0 }
                     }
                 }
 
