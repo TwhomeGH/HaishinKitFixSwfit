@@ -50,6 +50,7 @@ final class AudioCodec {
 
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard isRunning else {
+            logger.debug("AudioCodec.append(CMSampleBuffer) dropped: encoder not running")
             return
         }
         switch settings.format {
@@ -83,6 +84,7 @@ final class AudioCodec {
     func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
         inputFormat = audioBuffer.format
         guard let audioConverter, isRunning else {
+            logger.debug("AudioCodec.append(AVAudioBuffer) dropped: converter=\(audioConverter != nil) running=\(isRunning)")
             return
         }
         var error: NSError?

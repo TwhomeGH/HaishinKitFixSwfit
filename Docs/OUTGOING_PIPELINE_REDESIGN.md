@@ -1,6 +1,6 @@
 # RTMP 輸出管線重構：高效能 TaskGroup 架構
 
-> **日期**: 2026-06-26 | **涉及模組**: RTMPHaishinKit
+> **日期**: 2026-06-26 | **涉及模組**: RTMPHaishinKit, HaishinKit
 
 ---
 
@@ -8,10 +8,12 @@
 
 1. [舊架構問題](#1-舊架構問題)
 2. [新架構設計](#2-新架構設計)
-3. [RTMPConnection 狀態機修復](#3-rtmpconnection-狀態機修復)
-4. [每幀成本對比](#4-每幀成本對比)
-5. [診斷日誌](#5-診斷日誌)
-6. [總結](#6-總結)
+3. [壓縮管線修復](#3-壓縮管線修復)
+4. [RTMPConnection 狀態機修復](#4-rtmpconnection-狀態機修復)
+5. [幀率控制參數](#5-幀率控制參數)
+6. [每幀成本對比](#6-每幀成本對比)
+7. [診斷日誌](#7-診斷日誌)
+8. [總結](#8-總結)
 
 ---
 
@@ -170,7 +172,7 @@ private func startPublishTasks() {
             }
             // 5. video encoder input feeder
             group.addTask {
-                for await video in self.outgoing.videoInputStream {
+                for await video in videoInput {
                     self.outgoing.append(video: video)
                 }
             }
@@ -179,7 +181,9 @@ private func startPublishTasks() {
 }
 ```
 
-`stopPublishTasks()` 單一呼叫即終止所有子任務：
+關鍵：`videoInput` 在 TaskGroup **之前**被捕獲，確保 `videoInputContinuation` 在 mixer 子任務可能產出第一幀前已就緒。
+
+### 2.4 `stopPublishTasks()` — 單一終止點
 
 ```swift
 private func stopPublishTasks() {
@@ -205,9 +209,101 @@ private func stopPublishTasks() {
 
 ---
 
-## 3. RTMPConnection 狀態機修復
+## 3. 壓縮管線修復
 
-### 3.1 遺漏的狀態轉換
+### 3.1 `videoInputStream` computed property — 每次存取重建 stream
+
+**檔案**: `HaishinKit/Sources/Stream/OutgoingStream.swift:49-53`
+
+與 `VideoCodec.outputStream` 同款 bug：每次存取 `videoInputStream` 建立新 `AsyncStream` 並覆蓋 `videoInputContinuation`，`didSet` 會 finish 舊 continuation，正在迭代的 consumer 被強制終止。
+
+```swift
+// ❌ 舊
+package var videoInputStream: AsyncStream<CMSampleBuffer> {
+    return AsyncStream(...) { continuation in
+        self.videoInputContinuation = continuation  // 每次覆蓋，舊的被 finish
+    }
+}
+
+// ✅ 新：cache + stopRunning 清除
+private var _videoInputStream: AsyncStream<CMSampleBuffer>?
+package var videoInputStream: AsyncStream<CMSampleBuffer> {
+    if let stream = _videoInputStream { return stream }
+    let stream = AsyncStream(...) { continuation in
+        self.videoInputContinuation = continuation
+    }
+    _videoInputStream = stream
+    return stream
+}
+```
+
+`stopRunning()` 同步清除 cache：
+
+```swift
+videoInputContinuation = nil
+_videoInputStream = nil
+```
+
+### 3.2 `startPublishTasks` 內 TaskGroup 競態
+
+`videoInputStream` 原本在 `group.addTask` closure 內才被存取，但 TaskGroup 子任務並行啟動——mixer 子任務可能在 input feeder 子任務觸發 `videoInputStream`（進而設定 `videoInputContinuation`）之前就已產出第一幀，導致 `videoInputContinuation` 為 nil，幀被丟棄。
+
+**修復**：在 TaskGroup 外預先捕獲：
+
+```swift
+let videoInput = outgoing.videoInputStream  // ← 在 TaskGroup 之前，確保 continuation 已就緒
+
+publishTask = Task { ... await withTaskGroup { group in
+    group.addTask { for await video in videoInput { ... } }  // 用捕獲的，不再重新存取
+}}
+```
+
+### 3.3 編碼器靜默丟幀 — 加入診斷 log
+
+**檔案**: `VideoCodec.swift`, `AudioCodec.swift`
+
+`VideoCodec.append()` 和 `AudioCodec.append()` 有兩類 guard 失敗會靜默丟幀，且完全無日誌：
+
+| 位置 | guard | 意涵 |
+|------|-------|------|
+| `VideoCodec:58` | `isRunning` | 編碼器未啟動，幀被丟棄 |
+| `VideoCodec:70` | `session, _outputContinuation` | VT session 未建成或輸出流未就緒 |
+| `AudioCodec:52` | `isRunning` | 編碼器未啟動 |
+| `AudioCodec:85` | `audioConverter, isRunning` | 轉換器未建成或未啟動 |
+
+**修復**：全部加上 `logger.debug("... dropped: ...")`，可透過 `HaishinKitLogger.onLog` 回調橋接到外部日誌系統。
+
+### 3.4 全域日誌橋接
+
+**檔案**: `HaishinKit/Sources/Util/Constants.swift`
+
+`HaishinKitLogger` 原本只寫 OSLog（僅 Xcode / Console.app 可見）。新增 `onLog` 回調，與 `RTMPConnection.onLog` 同模式：
+
+```swift
+public struct HaishinKitLogger {
+    public var onLog: (@Sendable (_ level: LogLevel, _ message: String) -> Void)?
+    
+    public func debug(_ items: Any...) {
+        let message = items.map(...).joined(separator: " ")
+        os_log(.debug, log: osLog, "%{public}@", message)
+        onLog?(.debug, message)  // ← 同步觸發外部回調
+    }
+}
+```
+
+ReplyKit 初始化時一處設定，兩條通道匯聚：
+
+```swift
+logger.onLog = { level, message in
+    ReplyKitLogBridge.send(level: "\(level)", message: message)
+}
+```
+
+---
+
+## 4. RTMPConnection 狀態機修復
+
+### 4.1 遺漏的狀態轉換
 
 舊狀態機不允許從 `.disconnected` 或 `.error` 回到 `.connecting`，導致斷線後 `connect()` 永遠拋 `invalidState`：
 
@@ -232,13 +328,13 @@ case (.disconnected, .connecting),
      (.error, .connecting),
 ```
 
-### 3.2 TCP 連線失敗後狀態卡住
+### 4.2 TCP 連線失敗後狀態卡住
 
 TCP `socket.connect()` 失敗時，state 留在 `.connecting` 但 `connected = false`。下次 `connect()` 因 `.connecting → .connecting` 不合法而失敗。
 
 **修復**：失敗時設 `state = .error`。
 
-### 3.3 無限重連迴圈
+### 4.3 無限重連迴圈
 
 `performConnect()` 每次成功都把 `reconnectAttempts` 歸零，導致重連永遠不會達到上限（max=5），形成無限迴圈。
 
@@ -246,7 +342,79 @@ TCP `socket.connect()` 失敗時，state 留在 `.connecting` 但 `connected = f
 
 ---
 
-## 4. 每幀成本對比
+## 5. 幀率控制參數
+
+### 5.1 `frameInterval` — 送入編碼器前的本地幀率過濾
+
+**檔案**: `VideoCodec.swift:107-118`, `VideoCodecSettings.swift:134`
+
+| 項目 | 值 |
+|------|-----|
+| 預設 | `0.0` |
+| 效果 | 0 = passthrough，所有幀不攔截 |
+| 設定方式 | `videoSettings.frameInterval = VideoCodecSettings.frameInterval30` |
+| 常用預設值 | `frameInterval30` (0.0323), `frameInterval10` (0.099), `frameInterval05` (0.199), `frameInterval01` (0.999) |
+
+```swift
+private func useFrame(_ pts: CMTime) -> Bool {
+    guard startedAt <= pts else { return false }                    // 時鐘未到，丟
+    guard self.presentationTimeStamp < pts else { return false }    // 時間倒退，丟
+    guard Self.frameInterval < frameInterval else { return true }   // 0.0 < 0.0 = false → 全過
+    return frameInterval <= pts.seconds - self.presentationTimeStamp.seconds  // 間距不夠，丟
+}
+```
+
+`frameInterval = 0` 時第三個 guard 直接短路為 `true`，所有幀送入編碼器。只在顯式設定時才啟動過濾。
+
+### 5.2 `maxKeyFrameIntervalDuration` — IDR 關鍵幀間隔
+
+**檔案**: `VideoCodecSettings.swift:124`, `VideoCodec.swift:120-128`
+
+| 項目 | 值 |
+|------|-----|
+| 預設 | `2` 秒 |
+| 作用一 | VideoToolbox 編碼器參數：`kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration = 2` |
+| 作用二 | HaishinKit 軟體補強：`shouldForceKeyFrame()` 在幀上打 `forceKeyFrame` flag |
+
+```swift
+private func shouldForceKeyFrame(_ pts: CMTime) -> Bool {
+    let duration = settings.maxKeyFrameIntervalDuration
+    guard 0 < duration else { return false }
+    guard let lastKeyFramePresentationTimeStamp else { return true }  // 首幀必為 IDR
+    return Double(duration) <= (pts - lastKeyFramePresentationTimeStamp).seconds
+}
+```
+
+雙層保障：VideoToolbox 依 `maxKeyFrameIntervalDuration` 定時出 IDR；HaishinKit 另在 `convert()` 時傳 `forceKeyFrame` 做軟體兜底。
+
+### 5.3 `expectedFrameRate` — 功耗提示與 KeyFrame 計算
+
+| 項目 | 值 |
+|------|-----|
+| 預設 | `nil` |
+| 效果 | 告知 VideoToolbox 預期幀率以優化功耗；用於計算 `maxKeyFrameInterval`（以幀數計） |
+| 計算邏輯 | nil + `frameInterval = 0` → 預設以 30fps 計算，得出 `maxKeyFrameInterval = 60` 幀 |
+
+### 5.4 三者關係
+
+```
+frameInterval          maxKeyFrameIntervalDuration      expectedFrameRate
+(本地過濾)              (IDR 間隔秒數)                   (編碼器提示)
+     │                        │                              │
+     ▼                        ▼                              ▼
+useFrame()              shouldForceKeyFrame()           VTSession.setOption
+跳過太近的幀            打 forceKeyFrame flag           .expectedFrameRate
+                              │
+                              ▼
+                    VTSession.setOption
+                    .maxKeyFrameIntervalDuration
+```
+
+一般場景：只調 `maxKeyFrameIntervalDuration`（低延遲設 0.1~0.5s，省頻寬設 3~5s），`frameInterval` 和 `expectedFrameRate` 維持預設不動。
+
+---
+
+## 6. 每幀成本對比
 
 ### Actor Hop 次數
 
@@ -272,30 +440,47 @@ TCP `socket.connect()` 失敗時，state 留在 `.connecting` 但 `connected = f
 
 ---
 
-## 5. 診斷日誌
+## 7. 診斷日誌
 
-所有診斷訊息透過 `connection.onLog` 通道輸出，可在無 Xcode 環境下側載檢查：
+所有診斷訊息走兩條通道：
 
-| 日誌訊息 | 意義 |
-|----------|------|
-| `mixer->stream: video pts=X` | MediaMixer → RTMPStream 收到未壓縮幀 |
-| `outgoing->rtmp: video pts=X size=Y` | 壓縮幀走新路徑，零 actor hop 送入輸出 |
-| `outgoing->rtmp: audio size=Y` | 同上，音訊 |
-| `append(video): sending pts=X size=Y` | 壓縮幀走舊路徑（passthrough / 外部呼叫） |
-| `append(audio): sending size=Y` | 同上 |
-| `doOutput dropped: connection is nil` | connection 被釋放，輸出被丟棄 |
-| `append(video): RTMPVideoMessage creation failed` | RTMP 封裝失敗 |
+| 通道 | 範圍 | 使用方式 |
+|------|------|---------|
+| `connection.onLog` | RTMPConnection, RTMPStream, RTMPSocket | `await connection.setOnLog { ... }` |
+| `logger.onLog` | VideoCodec, AudioCodec, OutgoingStream | `logger.onLog = { level, msg in ... }` |
+
+透過 `logger.onLog` 回調，ReplyKit 處設定後兩條通道匯聚到同一外部日誌系統。
+
+### 核心診斷訊息
+
+| 日誌訊息 | 來源 | 意義 |
+|----------|------|------|
+| `mixer->stream: video pts=X` | RTMPStream | MediaMixer → RTMPStream 收到未壓縮幀 |
+| `outgoing->rtmp: video pts=X size=Y` | RTMPStream | 壓縮幀走新路徑，零 actor hop 送入輸出 |
+| `outgoing->rtmp: audio size=Y` | RTMPStream | 同上，音訊 |
+| `append(video): sending pts=X size=Y` | RTMPStream | 壓縮幀走舊路徑（passthrough / 外部呼叫） |
+| `append(audio): sending size=Y` | RTMPStream | 同上 |
+| `doOutput dropped: connection is nil` | RTMPStream | connection 被釋放，輸出被丟棄 |
+| `append(video): RTMPVideoMessage creation failed` | RTMPStream | RTMP 封裝失敗 |
+| `VideoCodec.append dropped: encoder not running` | VideoCodec | 編碼器未啟動 |
+| `VideoCodec.append dropped: session=X continuation=Y` | VideoCodec | VT session 或輸出流未就緒 |
+| `AudioCodec.append(CMSampleBuffer) dropped: encoder not running` | AudioCodec | 音訊編碼器未啟動 |
+| `AudioCodec.append(AVAudioBuffer) dropped: converter=X running=Y` | AudioCodec | 音訊轉換器未建成或未啟動 |
 
 ---
 
-## 6. 總結
+## 8. 總結
 
 ### 變更檔案
 
 | 檔案 | 變更類型 | 說明 |
 |------|---------|------|
-| `RTMPStream.swift` | 重構 | TaskGroup + RTMPOutgoingState 取代碎片化 Task |
-| `RTMPConnection.swift` | 修復 | 狀態機 + TCP 錯誤 + 重連計數器 |
+| `RTMPStream.swift` | 重構 | TaskGroup + RTMPOutgoingState + 診斷 log |
+| `RTMPConnection.swift` | 修復 | 狀態機 ×3 |
+| `OutgoingStream.swift` | 修復 | `videoInputStream` cache + `stopRunning` 清理 |
+| `VideoCodec.swift` | 加強 | 靜默丟幀 → `logger.debug` |
+| `AudioCodec.swift` | 加強 | 靜默丟幀 ×2 → `logger.debug` |
+| `Constants.swift` | 新增 | `HaishinKitLogger.onLog` 回調 |
 
 ### 向後相容
 

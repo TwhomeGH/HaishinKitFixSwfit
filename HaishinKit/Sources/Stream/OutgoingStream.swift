@@ -47,9 +47,14 @@ package final class OutgoingStream {
 
     /// The asynchronous sequence for video input buffer.
     package var videoInputStream: AsyncStream<CMSampleBuffer> {
-        return AsyncStream(CMSampleBuffer.self, bufferingPolicy: .bufferingNewest(videoInputBufferCounts)) { continuation in
+        if let stream = _videoInputStream {
+            return stream
+        }
+        let stream = AsyncStream(CMSampleBuffer.self, bufferingPolicy: .bufferingNewest(videoInputBufferCounts)) { continuation in
             self.videoInputContinuation = continuation
         }
+        _videoInputStream = stream
+        return stream
     }
 
     /// The video input format.
@@ -57,6 +62,7 @@ package final class OutgoingStream {
 
     private var audioCodec = AudioCodec()
     private var videoCodec = VideoCodec()
+    private var _videoInputStream: AsyncStream<CMSampleBuffer>?
     private var videoInputContinuation: AsyncStream<CMSampleBuffer>.Continuation? {
         didSet {
             oldValue?.finish()
@@ -112,5 +118,6 @@ extension OutgoingStream: Runner {
         videoCodec.stopRunning()
         audioCodec.stopRunning()
         videoInputContinuation = nil
+        _videoInputStream = nil
     }
 }

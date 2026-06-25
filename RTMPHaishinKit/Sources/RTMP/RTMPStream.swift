@@ -743,6 +743,7 @@ public actor RTMPStream {
 
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
+        let videoInput = outgoing.videoInputStream
 
         let streamId = id
         let outputCont = outputContinuation
@@ -804,7 +805,7 @@ public actor RTMPStream {
 
                 // --- video encoder input feeder ---
                 group.addTask {
-                    for await video in self.outgoing.videoInputStream {
+                    for await video in videoInput {
                         self.outgoing.append(video: video)
                     }
                 }

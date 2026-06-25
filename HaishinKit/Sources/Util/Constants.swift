@@ -12,6 +12,7 @@ public enum LogLevel: Comparable {
 public struct HaishinKitLogger {
     public let osLog: OSLog
     var minimumLevel: LogLevel = .trace
+    public var onLog: (@Sendable (_ level: LogLevel, _ message: String) -> Void)?
 
     public init(osLog: OSLog) {
         self.osLog = osLog
@@ -22,19 +23,29 @@ public struct HaishinKitLogger {
     }
 
     public func trace(_ items: Any...) {
-        os_log(.debug, log: osLog, "%{public}@", items.map(String.init(describing:)).joined(separator: " "))
+        let message = items.map(String.init(describing:)).joined(separator: " ")
+        os_log(.debug, log: osLog, "%{public}@", message)
+        onLog?(.trace, message)
     }
     public func debug(_ items: Any...) {
-        os_log(.debug, log: osLog, "%{public}@", items.map(String.init(describing:)).joined(separator: " "))
+        let message = items.map(String.init(describing:)).joined(separator: " ")
+        os_log(.debug, log: osLog, "%{public}@", message)
+        onLog?(.debug, message)
     }
     public func info(_ items: Any...) {
-        os_log(.info, log: osLog, "%{public}@", items.map(String.init(describing:)).joined(separator: " "))
+        let message = items.map(String.init(describing:)).joined(separator: " ")
+        os_log(.info, log: osLog, "%{public}@", message)
+        onLog?(.info, message)
     }
     public func warn(_ items: Any...) {
-        os_log(.info, log: osLog, "⚠️ %{public}@", items.map(String.init(describing:)).joined(separator: " "))
+        let message = items.map(String.init(describing:)).joined(separator: " ")
+        os_log(.info, log: osLog, "⚠️ %{public}@", message)
+        onLog?(.warn, message)
     }
     public func error(_ items: Any...) {
-        os_log(.error, log: osLog, "%{public}@", items.map(String.init(describing:)).joined(separator: " "))
+        let message = items.map(String.init(describing:)).joined(separator: " ")
+        os_log(.error, log: osLog, "%{public}@", message)
+        onLog?(.error, message)
     }
 }
 

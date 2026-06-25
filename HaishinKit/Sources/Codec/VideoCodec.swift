@@ -56,6 +56,7 @@ final class VideoCodec {
 
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard isRunning else {
+            logger.debug("VideoCodec.append dropped: encoder not running")
             return
         }
         do {
@@ -68,6 +69,7 @@ final class VideoCodec {
                 }
             }
             guard let session, let _outputContinuation else {
+                logger.debug("VideoCodec.append dropped: session=\(session != nil) continuation=\(_outputContinuation != nil)")
                 return
             }
             if sampleBuffer.formatDescription?.isCompressed == true {
