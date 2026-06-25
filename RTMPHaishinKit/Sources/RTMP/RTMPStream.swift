@@ -762,7 +762,7 @@ public actor RTMPStream {
                 }
                 group.addTask {
                     for await sampleBuffer in videoStream {
-                        await connection?.log(.debug, "mixer->stream: video pts=\(sampleBuffer.presentationTimeStamp.seconds)")
+                        await conn?.log(.debug, "mixer->stream: video pts=\(sampleBuffer.presentationTimeStamp.seconds)")
                         await self.append(sampleBuffer)
                     }
                 }
@@ -806,7 +806,7 @@ public actor RTMPStream {
                 // --- video encoder input feeder ---
                 group.addTask {
                     for await video in videoInput {
-                        self.outgoing.append(video: video)
+                        await self.outgoing.append(video: video)
                     }
                 }
             }
