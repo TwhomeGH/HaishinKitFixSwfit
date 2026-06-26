@@ -133,9 +133,9 @@ final class RTMPChunkBuffer {
             guard oldValue < chunkSize, chunkSize <= Self.defaultMaxBufferSize else {
                 return
             }
-            let needed = chunkSize - data.count
-            if 0 < needed {
-                data.reserveCapacity(data.count + needed + Self.headerSize)
+            let newCount = chunkSize + Self.headerSize
+            if data.count < newCount {
+                data = Data(count: newCount)
             }
         }
     }

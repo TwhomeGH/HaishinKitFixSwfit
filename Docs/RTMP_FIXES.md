@@ -52,8 +52,9 @@
 **修復**:
 - `RTMPChunkBuffer` 新增 `defaultMaxBufferSize = 10MB` 常量
 - `put(_:)`: 當未讀資料 + 新資料超過上限時，直接以新資料取代（放棄舊資料，防止 OOM）
-- `chunkSize.didSet`: 加入 `chunkSize <= defaultMaxBufferSize` 驗證，超出範圍跳過擴容；改為 `reserveCapacity` 避免不必要的分配
+- `chunkSize.didSet`: 加入 `chunkSize <= defaultMaxBufferSize` 驗證，超出範圍跳過擴容
 - `RTMPConnection.dispatch`: `chunkSizeC = min(Int(message.size), RTMPChunkBuffer.defaultMaxBufferSize)` 限制伺服器端 chunk size
+- **⚠️ 重要修正**: 最初改為 `reserveCapacity` 只能增加 `capacity` 無法增加 `count`，導致後續 `replaceSubrange` 越界崩潰（詳見 1.7）
 **文件**: `RTMPTimestamp.swift:20-58`  
 **問題**: 
 - 32 位時間戳在 49.7 天後回滾，現有邏輯拋出 `invalidSequence`
@@ -64,6 +65,52 @@
 - Type 0: 檢測 32 位回滾，計算連續時間戳
 - Type 1/2: 記錄 delta 值，用於後續 Type 3
 - Type 3: 使用 `lastDelta` 增加時間戳，而非誤用絕對時間戳
+
+### 1.7 `reserveCapacity` 不更新 `data.count` 導致 `EXC_BREAKPOINT` (P0)
+**文件**: `RTMPChunk.swift:131-141`, `RTMPStream.swift:772`  
+**日期**: 2026-06-27  
+**版本**: 1.3.1  
+**問題**: 1.6 修復將 `chunkSize.didSet` 改為 `reserveCapacity`，但此 API 只增加 `capacity` 不增加 `count`。當 RTMP 握手期間 `chunkSizeS = chunkSize`（預設 8192）時，`outputBuffer.chunkSize` 從 128 增大為 8192，`data.capacity` 被擴容但 `data.count` 仍為 146。後續 `putMessage` 內呼叫 `data.replaceSubrange(position..<position+8192, ...)` 因範圍超出 `data.count` 而崩潰（EXC_BREAKPOINT / SIGTRAP）。
+
+**崩潰現場** (`ReplyKIT-2026-06-27-071028.ips`):
+```
+Thread 5: com.apple.root.default-qos.cooperative
+frame 0: Data.InlineSlice.replaceSubrange(_:with:count:)  ← 越界檢查觸發 trap
+frame 1: Data._Representation.replaceSubrange
+frame 2: RTMPChunkBuffer.putMessage [closure]            ← chunk 編碼
+frame 7: RTMPConnection.startOutputConsumer              ← actor doOutput 入口
+frame 8: RTMPStream.startOutputConsumer                  ← output consumer
+```
+
+**根因鏈**:
+1. `RTMPConnection.chunkSizeS` 是 computed property（`RTMPConnection.swift:794-796`），直接代理 `outputBuffer.chunkSize`
+2. 握手成功時 `chunkSizeS = chunkSize`（預設 8192）觸發 `didSet`
+3. `didSet` 用 `reserveCapacity(8210)` 只擴容不更新 `count`
+4. `putMessage` 內 `replaceSubrange(12..<8204, ...)` 因 `data.count=146` 越界
+
+**修復** (`RTMPChunk.swift:131-141`):
+```swift
+// 修改前
+data.reserveCapacity(data.count + needed + Self.headerSize)
+
+// 修改後
+data = Data(count: newCount)  // 同時更新 count 與 capacity
+```
+
+**輔助修復** (`RTMPStream.swift:772`):
+移除 `doOutput` 呼叫外層不必要的 `Task { ... }.value` 包裝。該包裝原專為棧隔離而加，但實際根因為 `data.count` 不足；移除後減少每個 output item 的 async frame 深度與 child task 開銷。
+
+```swift
+// 修改前
+let length = await Task {
+    await conn.doOutput(item.type, ...)
+}.value
+
+// 修改後
+let length = await conn.doOutput(item.type, ...)
+```
+
+**影響範圍**: 所有使用預設 chunk size（>= 1024）發布影音串流的會話，每次連接都會觸發此崩潰。
 
 ---
 
