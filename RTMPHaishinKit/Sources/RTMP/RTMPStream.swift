@@ -13,7 +13,11 @@ import AppKit
 typealias View = NSView
 #endif
 
-private typealias RTMPStreamOutput = @Sendable () async -> Int
+private struct RTMPOutputItem: Sendable {
+    let type: RTMPChunkType
+    let chunkStreamId: RTMPChunkStreamId
+    let message: any RTMPMessage
+}
 
 /// An object that provides the interface to control a one-way channel over an RTMPConnection.
 public actor RTMPStream {
@@ -228,7 +232,7 @@ public actor RTMPStream {
     private var expectedResponse: Code?
     package var bitRateStrategy: (any StreamBitRateStrategy)?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
-    private var outputContinuation: AsyncStream<RTMPStreamOutput>.Continuation?
+    private var outputContinuation: AsyncStream<RTMPOutputItem>.Continuation?
     private var publishTask: Task<Void, Never>?
     nonisolated(unsafe) private var mixerAudioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
     nonisolated(unsafe) private var mixerVideoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
@@ -552,13 +556,11 @@ public actor RTMPStream {
     }
 
     func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) {
-        guard let connection else {
+        guard connection != nil else {
             logger.warn("doOutput dropped: connection is nil")
             return
         }
-        outputContinuation?.yield { [connection] in
-            await connection.doOutput(type, chunkStreamId: chunkStreamId, message: message)
-        }
+        outputContinuation?.yield(RTMPOutputItem(type: type, chunkStreamId: chunkStreamId, message: message))
     }
 
     func dispatch(_ message: some RTMPMessage, type: RTMPChunkType) {
@@ -760,12 +762,17 @@ public actor RTMPStream {
     }
 
     private func startOutputConsumer() {
-        let (stream, continuation) = AsyncStream.makeStream(of: RTMPStreamOutput.self, bufferingPolicy: .bufferingOldest(128))
+        let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self, bufferingPolicy: .bufferingNewest(64))
         outputContinuation = continuation
-        Task {
-            for await output in stream {
-                let length = await output()
-                await appendByteCount(length)
+        Task { [weak self] in
+            for await item in stream {
+                guard let self else { return }
+                let conn = await self.connection
+                guard let conn else { continue }
+                let length = await Task {
+                    await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
+                }.value
+                await self.appendByteCount(length)
             }
         }
     }
