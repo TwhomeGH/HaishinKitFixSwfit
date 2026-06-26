@@ -375,8 +375,17 @@ public actor RTMPStream {
         do {
             audioFormat = nil
             videoFormat = nil
+            info.resourceName = name
+            howToPublish = type
+            lastPublishName = name
+            lastPublishType = type
+            startedAt = .init()
+            metadata = makeMetadata()
+            outgoing.startRunning()
+            startPublishTasks()
+            readyState = .publishing
+        try? send("@setDataFrame", arguments: "onMetaData", metadata)
             let response = try await withCheckedThrowingContinuation { continuation in
-                readyState = .publish
                 expectedResponse = Code.publishStart
                 self.continuation?.resume(throwing: Error.invalidState)
                 self.continuation = continuation
@@ -396,19 +405,9 @@ public actor RTMPStream {
                     arguments: [name, type.rawValue]
                 ))
             }
-            info.resourceName = name
-            howToPublish = type
-            lastPublishName = name
-            lastPublishType = type
-            startedAt = .init()
-            metadata = makeMetadata()
-            readyState = .publishing
-        try? send("@setDataFrame", arguments: "onMetaData", metadata)
-        startPublishTasks()
-        outgoing.startRunning()
-        return response
+            return response
         } catch {
-            readyState = .idle
+            logger.warn("Publish response error (stream continues):", error)
             throw error
         }
     }
