@@ -444,9 +444,19 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         for await data in await socket.recv() {
                             try await listen(data)
                         }
-                        try? await close()
+                        if isReconnectEnabled, state == .connected || state == .handshakeDone {
+                            try? await close()
+                            await startReconnection()
+                        } else {
+                            try? await close()
+                        }
                     } catch {
-                        try? await close()
+                        if isReconnectEnabled, state == .connected || state == .handshakeDone {
+                            try? await close()
+                            await startReconnection()
+                        } else {
+                            try? await close()
+                        }
                     }
                 }
             }
