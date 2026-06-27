@@ -135,7 +135,7 @@ final class RTMPChunkBuffer {
             }
             let newCount = chunkSize + Self.headerSize
             if data.count < newCount {
-                data = Data(count: newCount)
+                data.append(Data(count: newCount - data.count))
             }
         }
     }

@@ -769,7 +769,9 @@ public actor RTMPStream {
                 guard let self else { return }
                 let conn = await self.connection
                 guard let conn else { continue }
-                let length = await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
+                let length = await Task {
+                    await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
+                }.value
                 await self.appendByteCount(length)
             }
         }
