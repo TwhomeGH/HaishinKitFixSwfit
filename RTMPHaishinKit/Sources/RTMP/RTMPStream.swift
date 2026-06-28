@@ -389,7 +389,6 @@ public actor RTMPStream {
             startedAt = .init()
             metadata = makeMetadata()
             outgoing.startRunning()
-            startPublishTasks()
             readyState = .publishing
         try? send("@setDataFrame", arguments: "onMetaData", metadata)
             let response = try await withCheckedThrowingContinuation { continuation in
@@ -412,6 +411,7 @@ public actor RTMPStream {
                     arguments: [name, type.rawValue]
                 ))
             }
+            startPublishTasks()
             return response
         } catch {
             logger.warn("Publish response error (stream continues):", error)
