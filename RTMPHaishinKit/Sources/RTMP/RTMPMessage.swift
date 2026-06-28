@@ -197,7 +197,7 @@ struct RTMPCommandMessage: RTMPMessage {
             transactionId = try serializer.deserialize()
             commandObject = try serializer.deserialize()
             var arguments: [(any Sendable)?] = []
-            if 0 < serializer.bytesAvailable {
+            while 0 < serializer.bytesAvailable {
                 arguments.append(try serializer.deserialize())
             }
             self.arguments = arguments

@@ -368,6 +368,20 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
 
+    func sendCommand(_ commandName: String, arguments: (any Sendable)?...) throws {
+        guard connected else {
+            throw Error.invalidState
+        }
+        doOutput(.zero, chunkStreamId: .command, message: RTMPCommandMessage(
+            streamId: 0,
+            transactionId: 0,
+            objectEncoding: objectEncoding,
+            commandName: commandName,
+            commandObject: nil,
+            arguments: arguments
+        ))
+    }
+
     /// Enable or disable auto-reconnect.
     public func setReconnectEnabled(_ enabled: Bool) {
         isReconnectEnabled = enabled

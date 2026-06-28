@@ -125,4 +125,28 @@ import Testing
         #expect(iterator.next() == Data([193, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]))
         #expect(iterator.next() == nil)
     }
+
+    @Test func readCommandWithMultipleArguments() throws {
+        let buffer = RTMPChunkBuffer(chunkSize: 8192)
+        let command = RTMPCommandMessage(
+            streamId: 0,
+            transactionId: 2,
+            objectEncoding: .amf0,
+            commandName: "_result",
+            commandObject: nil,
+            arguments: [1.0, "extra"]
+        )
+        let iterator = buffer.putMessage(.zero, chunkStreamId: .command, message: command)
+        while let data = iterator.next() {
+            buffer.put(data)
+        }
+
+        let (chunkType, _) = try buffer.getBasicHeader()
+        let header = RTMPChunkMessageHeader()
+        try buffer.getMessageHeader(chunkType, messageHeader: header)
+        let message = try #require(header.makeMessage() as? RTMPCommandMessage)
+        #expect(message.arguments.count == 2)
+        #expect(message.arguments.first as? Double == 1.0)
+        #expect(message.arguments.last as? String == "extra")
+    }
 }

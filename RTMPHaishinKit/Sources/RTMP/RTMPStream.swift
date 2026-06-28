@@ -648,18 +648,24 @@ public actor RTMPStream {
         }
         if let fcPublishName {
             // FMLE-compatible sequences
-            async let _ = connection?.call("releaseStream", arguments: fcPublishName)
-            async let _ = connection?.call("FCPublish", arguments: fcPublishName)
+            do {
+                try await connection?.sendCommand("releaseStream", arguments: fcPublishName)
+                try await connection?.sendCommand("FCPublish", arguments: fcPublishName)
+            } catch {
+                logger.error(error)
+            }
         }
         do {
             let response = try await connection?.call("createStream")
             guard let first = response?.arguments.first as? Double else {
+                await connection?.log(.error, "createStream: missing stream id", detail: "arguments=\(response?.arguments.count ?? 0)")
                 return
             }
             id = UInt32(first)
             readyState = .idle
         } catch {
             logger.error(error)
+            await connection?.log(.error, "createStream: failed", detail: "\(error)")
         }
     }
 
