@@ -560,7 +560,12 @@ public actor RTMPStream {
             logger.warn("doOutput dropped: connection is nil")
             return
         }
-        outputContinuation?.yield(RTMPOutputItem(type: type, chunkStreamId: chunkStreamId, message: message))
+        let result = outputContinuation?.yield(RTMPOutputItem(type: type, chunkStreamId: chunkStreamId, message: message))
+        if case .terminated = result {
+            Task { await connection?.log(.warn, "doOutput dropped: outputContinuation terminated (\(chunkStreamId))") }
+        } else if case .dropped = result {
+            Task { await connection?.log(.warn, "doOutput dropped: outputContinuation buffer full (\(chunkStreamId))") }
+        }
     }
 
     func dispatch(_ message: some RTMPMessage, type: RTMPChunkType) {
@@ -762,7 +767,7 @@ public actor RTMPStream {
     }
 
     private func startOutputConsumer() {
-        let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self, bufferingPolicy: .bufferingNewest(64))
+        let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self, bufferingPolicy: .bufferingNewest(256))
         outputContinuation = continuation
         Task { [weak self] in
             for await item in stream {

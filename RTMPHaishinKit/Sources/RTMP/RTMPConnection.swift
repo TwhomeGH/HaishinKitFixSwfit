@@ -577,7 +577,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             logger.trace("<<", message)
         }
         let chunks = Array(outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message))
-        outputContinuation?.yield(chunks)
+        let result = outputContinuation?.yield(chunks)
+        if case .dropped = result {
+            log(.warn, "doOutput dropped: connection output buffer full (\(chunkStreamId))")
+        } else if case .terminated = result {
+            log(.warn, "doOutput dropped: outputContinuation terminated (\(chunkStreamId))")
+        }
         return message.payload.count
     }
 
@@ -587,7 +592,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(of: [Data].self, bufferingPolicy: .bufferingOldest(128))
+        let (stream, continuation) = AsyncStream.makeStream(of: [Data].self, bufferingPolicy: .bufferingOldest(512))
         outputContinuation = continuation
         Task {
             for await chunks in stream {
