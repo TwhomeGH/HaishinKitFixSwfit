@@ -472,12 +472,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     dispatch(event)
                 }
             }
-            for stream in streams {
-                await stream.dispatch(.reset)
-                await stream.createStream()
-                await stream.resumePublishing()
-            }
-            await onReconnectStateChanged?(.succeeded)
             return result
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()
@@ -535,6 +529,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
             do {
                 try await performConnect(command, arguments: arguments)
+                for stream in streams {
+                    await stream.dispatch(.reset)
+                    await stream.createStream()
+                    await stream.resumePublishing()
+                }
+                await onReconnectStateChanged?(.succeeded)
                 return
             } catch {
                 await onReconnectStateChanged?(.failed(error))
