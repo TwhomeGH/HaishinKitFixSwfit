@@ -53,20 +53,21 @@ VideoCodec.append(frame)
       → 只有當 consumer 已開始迭代 stream 時，continuation 才存在
 ```
 
-### 修復方式
+### 修復方式（v1.3.2）
 
-改為 cached stored property + `startRunning()` 時主動初始化：
+最終採用 `@AsyncStreamedFlow` property wrapper，與 AudioCodec 完全一致：
 
 ```swift
-private var _outputContinuation: AsyncStream<CMSampleBuffer>.Continuation?
-private var _outputStream: AsyncStream<CMSampleBuffer>?
-var outputStream: AsyncStream<CMSampleBuffer> {
-    if let _outputStream { return _outputStream }
-    let (s, c) = AsyncStream<CMSampleBuffer>.makeStream()
-    _outputContinuation = c; _outputStream = s
-    return s
-}
+// VideoCodec.swift
+@AsyncStreamedFlow
+var outputStream: AsyncStream<CMSampleBuffer>
 ```
+
+- `wrappedValue` getter 每次存取建立新 stream，**自動 finish 舊的**
+- `append()` 透過 `_outputStream.continuation` 取得當前的 continuation 傳給 `session.convert()`
+- `stopRunning()` 用 `_outputStream.finish()` 一行清理
+
+`AsyncStreamedFlow` 新增公開 `continuation` getter 以支援 VideoCodec 的 `session.convert()` 使用模式。
 
 ---
 
@@ -187,9 +188,71 @@ for stream in streams {
 - VideoCodec 缺少 `@AsyncStreamedFlow` 提供的 `didSet { oldValue?.finish() }`，導致舊 consumer 被遺棄時無法正常終止
 - 不一致的維護模式增加未來改動出錯的風險
 
-### 建議
+### 修復
 
-將 VideoCodec 改為與 AudioCodec 一致的 `@AsyncStreamedFlow` 模式，或至少統一 continuation 生命週期管理。
+已統一 VideoCodec 使用 `@AsyncStreamedFlow`，與 AudioCodec 完全一致：
+
+```swift
+@AsyncStreamedFlow
+var outputStream: AsyncStream<CMSampleBuffer>
+```
+
+`append()` 透過 `_outputStream.continuation` 取得 continuation 傳給 `session.convert()`，`stopRunning()` 用 `_outputStream.finish()` 清理。
+
+相關改動：
+- `AsyncStreamedFlow` 新增 `continuation` 公開 getter（讓外部可以取得當前的 continuation 傳給 VideoToolbox）
+- `VideoCodec` 移除手動 `_outputStream` / `_outputContinuation` lazy cache
+
+---
+
+## 4.2 重連後 VideoCodec 輸出串流未被重建導致影片永久消失
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift:894-900`, `HaishinKit/Sources/Codec/VideoCodec.swift:22-32`
+
+### 問題
+
+重連時 `dispatch(.reset)` 只呼叫 `stopPublishTasks()` 取消發佈 task，但 **沒有呼叫 `outgoing.stopRunning()`**。後續 `resumePublishing()` → `publish()` → `outgoing.startRunning()` 因 `guard !isRunning else { return }` 變成 no-op，編碼器未被重啟。
+
+由於 VideoCodec 的 `_outputStream` 是 cached lazy property，舊（已取消）和新發佈 task **共用同一條 AsyncStream**。兩個 `for-await` 同時迭代同一條 stream 造成未定義行為，**影片幀永久丟失**。
+
+音訊不受影響因為 AudioCodec 使用 `@AsyncStreamedFlow`：`startPublishTasks()` 存取 `audioOutputStream` 時 **自動建立新 stream 並 finish 舊的**。
+
+### 資料流對比
+
+| | Audio（正常） | Video（損壞） |
+|---|---|---|
+| `dispatch(.reset)` | `stopPublishTasks()` | `stopPublishTasks()` |
+| codec 狀態 | isRunning=true（未停止） | isRunning=true（未停止） |
+| `startPublishTasks()` | `audioOutputStream` → **新 stream** (via `@AsyncStreamedFlow`) | `videoOutputStream` → **舊 stream** (cached lazy) |
+| 結果 | ✅ fresh stream | ❌ 新舊 task 共用同一條 stream |
+
+### 影響
+
+| 情境 | 結果 |
+|------|------|
+| 重連後 VideoCodec outputStream 被舊 task 污染 | 影片幀永久消失，音訊正常 |
+| 重新發佈後新 task 無法獨佔消費 | AsyncStream 多消費者競爭，幀丟失 |
+| 無 `@AsyncStreamedFlow` 自動 refresh | cached stream 跨越 publish cycle 存活 |
+
+### 修復（雙重保護）
+
+**修復 A** — `RTMPStream.swift:dispatch(.reset)` 增加 `outgoing.stopRunning()`：
+
+```swift
+case .reset:
+    stopPublishTasks()
+    outgoing.stopRunning()   // ← 新增：拆除編碼器，確保後續乾淨重啟
+    id = RTMPStream.defaultID
+    readyState = .idle
+```
+
+這確保了重連後：
+1. `stopPublishTasks()` → 取消舊 task
+2. `outgoing.stopRunning()` → 銷毀 VTCompressionSession、finish output stream、`isRunning = false`、`_videoInputStream = nil`
+3. `resumePublishing()` → `publish()` → `outgoing.startRunning()` → **真正重啟**編碼器，全新 session 和 stream
+4. `startPublishTasks()` → 所有 stream 都是全新的，不與舊 task 共用
+
+**修復 B** — `VideoCodec` 改用 `@AsyncStreamedFlow`（詳見 [§4](#4-audiocodec-與-videocodec-輸出管理不一致)），使 `outputStream` 每次存取都建立新 stream 並自動 finish 舊的，與 AudioCodec 行為一致。
 
 ---
 
@@ -548,6 +611,7 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 | 2 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
 | 3 | publish() 順序 race condition | 🔴 高 | 所有 publish 串流 | 資料路徑 |
 | 4 | 重連後無法 auto-republish | 🔴 高 | 啟用自動重連的場景 | 生命週期 |
+| 4.2 | 重連後 VideoCodec 輸出串流共用導致影片消失 | 🔴 高 | 啟用自動重連的場景 | 資料路徑 |
 | 5 | AudioCodec/VideoCodec 不一致 | 🟡 中 | 維護性與擴展性 | 架構 |
 | 6 | E-RTMP 相容性（含 `capsEx: 0` bug） | 🟡 中 | 不支援 E-RTMP 的伺服器 | 相容性 |
 
@@ -557,10 +621,11 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 |---|------|------|
 | 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
 | 🔥 1 | ✅ `UInt32(data:...).bigEndian` → 手動 shift | `RTMPChunk.swift` |
-| 2 | ✅ cached stored + startRunning 預先初始化 | `VideoCodec.swift` |
+| 2 | ✅ `@AsyncStreamedFlow` property wrapper | `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
 | 3 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
 | 4 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
-| 5 | ⏳ 待統一至 @AsyncStreamedFlow | `VideoCodec.swift` |
+| 4.2 | ✅ `dispatch(.reset)` 增加 `outgoing.stopRunning()` + VideoCodec 改用 `@AsyncStreamedFlow` | `RTMPStream.swift`, `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
+| 5 | ✅ 已統一至 `@AsyncStreamedFlow` | `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
 | 6 | ✅ `useEnhancedRTMP` 開關 + `capsEx` 條件式送出 | `RTMPConnection.swift` |
 | 7 | ✅ 診斷日誌 `RTMPLogEvent` + `onLog` | `RTMPLogEvent.swift`, `RTMPConnection.swift`, `RTMPSocket.swift` |
 

@@ -19,17 +19,8 @@ final class VideoCodec {
         }
     }
     var passthrough = true
-    private var _outputContinuation: AsyncStream<CMSampleBuffer>.Continuation?
-    private var _outputStream: AsyncStream<CMSampleBuffer>?
-    var outputStream: AsyncStream<CMSampleBuffer> {
-        if let _outputStream {
-            return _outputStream
-        }
-        let (stream, continuation) = AsyncStream<CMSampleBuffer>.makeStream()
-        _outputContinuation = continuation
-        _outputStream = stream
-        return stream
-    }
+    @AsyncStreamedFlow
+    var outputStream: AsyncStream<CMSampleBuffer>
     var frameInterval = VideoCodec.frameInterval
     private var startedAt: CMTime = .zero
     private var invalidateSession = true
@@ -68,16 +59,17 @@ final class VideoCodec {
                     session = try VTSessionMode.compression.makeSession(self)
                 }
             }
-            guard let session, let _outputContinuation else {
-                logger.debug("VideoCodec.append dropped: session=\(session != nil) continuation=\(_outputContinuation != nil)")
+            let continuation = _outputStream.continuation
+            guard let session, let continuation else {
+                logger.debug("VideoCodec.append dropped: session=\(session != nil) continuation=\(continuation != nil)")
                 return
             }
             if sampleBuffer.formatDescription?.isCompressed == true {
-                try session.convert(sampleBuffer, forceKeyFrame: false, continuation: _outputContinuation)
+                try session.convert(sampleBuffer, forceKeyFrame: false, continuation: continuation)
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
                     let forceKeyFrame = shouldForceKeyFrame(sampleBuffer.presentationTimeStamp)
-                    try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: _outputContinuation)
+                    try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: continuation)
                     if forceKeyFrame {
                         lastKeyFramePresentationTimeStamp = sampleBuffer.presentationTimeStamp
                     }
@@ -174,11 +166,6 @@ extension VideoCodec: Runner {
             object: nil
         )
         #endif
-        if _outputStream == nil {
-            let (stream, continuation) = AsyncStream<CMSampleBuffer>.makeStream()
-            _outputContinuation = continuation
-            _outputStream = stream
-        }
         startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
         isRunning = true
     }
@@ -194,9 +181,7 @@ extension VideoCodec: Runner {
         outputFormat = nil
         lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
-        _outputContinuation?.finish()
-        _outputContinuation = nil
-        _outputStream = nil
+        _outputStream.finish()
         startedAt = .zero
         #if os(iOS) || os(tvOS) || os(visionOS)
         NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
