@@ -34,7 +34,7 @@ actor RTMPSession: StreamSession {
         case .publish:
             let connection = RTMPConnection()
             self.connection = connection
-            self._stream = RTMPStream(connection: connection, fcPublishName: self.uri.streamName)
+            self._stream = RTMPStream(connection: connection)
         case .playback:
             let connection = RTMPConnection(flashVer: "MAC 9,0,124,2")
             self.connection = connection
@@ -68,7 +68,6 @@ actor RTMPSession: StreamSession {
         }
         do {
             retryCount = 0
-            try await _stream.createStream()
             switch mode {
             case .publish:
                 _ = try await _stream.publish(uri.streamName)

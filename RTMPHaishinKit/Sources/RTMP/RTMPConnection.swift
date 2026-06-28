@@ -486,9 +486,6 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     dispatch(event)
                 }
             }
-            for stream in streams {
-                await stream.createStream()
-            }
             return result
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()

@@ -318,6 +318,16 @@ public actor RTMPStream {
             }
         }
         do {
+            if outputContinuation == nil {
+                startOutputConsumer()
+            }
+            await connection?.addStream(self)
+            if id == RTMPStream.defaultID {
+                await createStream()
+            }
+            guard id != RTMPStream.defaultID else {
+                throw Error.invalidState
+            }
             audioFormat = nil
             videoFormat = nil
             let response = try await withCheckedThrowingContinuation { continuation in
@@ -662,6 +672,7 @@ public actor RTMPStream {
                 return
             }
             id = UInt32(first)
+            await connection?.log(.info, "createStream: stream id", detail: "\(id)")
             readyState = .idle
         } catch {
             logger.error(error)
