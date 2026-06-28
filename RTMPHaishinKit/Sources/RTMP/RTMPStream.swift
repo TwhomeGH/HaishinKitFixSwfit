@@ -289,8 +289,8 @@ public actor RTMPStream {
         self.connection = connection
         self.fcPublishName = fcPublishName
         self.requestTimeout = connection.requestTimeout
+        startOutputConsumer()
         Task {
-            await self.startOutputConsumer()
             await connection.addStream(self)
             if await connection.connected {
                 await createStream()
