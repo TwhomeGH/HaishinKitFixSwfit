@@ -384,6 +384,7 @@ public actor RTMPStream {
                 await connection?.log(.debug, "publish: initializing outputConsumer")
                 startOutputConsumer()
             }
+            await connection?.addStream(self)
             if id == RTMPStream.defaultID {
                 await connection?.log(.debug, "publish: creating stream")
                 await createStream()

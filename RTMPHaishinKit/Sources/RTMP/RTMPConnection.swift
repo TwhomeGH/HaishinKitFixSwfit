@@ -472,6 +472,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     dispatch(event)
                 }
             }
+            for stream in streams {
+                await stream.createStream()
+            }
             return result
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()
@@ -598,6 +601,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     func addStream(_ stream: RTMPStream) {
+        guard !streams.contains(where: { $0 === stream }) else { return }
         streams.append(stream)
     }
 
