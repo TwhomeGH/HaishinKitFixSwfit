@@ -895,6 +895,7 @@ extension RTMPStream: _Stream {
         switch event {
         case .reset:
             stopPublishTasks()
+            outgoing.stopRunning()
             id = RTMPStream.defaultID
             readyState = .idle
         default:
