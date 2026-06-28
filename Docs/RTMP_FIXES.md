@@ -1,9 +1,9 @@
 # RTMP 協議修復與架構改進文檔
 
 ## 版本信息
-- **日期**: 2026-06-20
-- **版本**: 1.3.0
-- **狀態**: ✅ 完成（含狀態機、重連、VP9/AV1、ReplyKit 改進）
+- **日期**: 2026-06-28
+- **版本**: 1.3.2
+- **狀態**: ✅ 完成（含 VideoCodec @AsyncStreamedFlow 重構、重連編碼器修復、診斷日誌優化）
 
 ---
 
@@ -232,6 +232,41 @@ rtmpConnection.onReconnectStateChanged = { state in
 
 ---
 
+### 3.6 重連後 VideoCodec 輸出串流修復 (v1.3.2)
+**文件**: `RTMPStream.swift`, `VideoCodec.swift`, `AsyncStreamedFlow.swift`  
+**動機**: 重連後影片軌永久消失，音訊正常。
+
+**根因**:
+1. `dispatch(.reset)` 未呼叫 `outgoing.stopRunning()`，導致編碼器未重啟，`startRunning()` 變 no-op
+2. `VideoCodec.outputStream` 為手動 lazy cache，舊/新發佈 task 共用同一條 AsyncStream 造成競爭
+3. `AudioCodec` 使用 `@AsyncStreamedFlow`（自動建立新 stream）不受影響
+
+**修復**:
+- `RTMPStream.dispatch(.reset)` 增加 `outgoing.stopRunning()`，確保編碼器完整拆解後重啟
+- `VideoCodec.outputStream` 改用 `@AsyncStreamedFlow`，對齊 AudioCodec 行為
+- `AsyncStreamedFlow` 新增 `continuation` 公開 getter，讓 VideoCodec 可傳給 `session.convert()`
+
+### 3.7 診斷日誌 hot path 保護 (v1.3.2)
+**文件**: `RTMPStream.swift`, `RTMPConnection.swift`, `RTMPLogEvent.swift`, `RTMPSocket.swift`  
+**動機**: `onLog` 設計缺失等級過濾，append hot path 逐幀 `Task { await ... }` spawn 造成 actor contention。
+
+**修復**:
+- `RTMPLogLevel` 新增 `severity` 排序
+- `RTMPConnection` 新增 `minimumLogLevel` 參數（預設 `.info`），`log()` 內過濾
+- Socket `onLog` 轉送同步過濾
+- append hot path 移除 per-frame `Task`，改為計數器累積，由 `dispatch(.status)` 週期彙總一條 `"publish throughput"` 事件
+
+**使用**:
+```swift
+// 生產環境（預設）：只收 info/warn/error
+RTMPConnection(minimumLogLevel: .info)
+
+// 開發除錯：收所有日誌
+RTMPConnection(minimumLogLevel: .trace)
+```
+
+---
+
 ## 4. 代碼變更清單
 
 ### 修改文件
@@ -246,6 +281,10 @@ rtmpConnection.onReconnectStateChanged = { state in
 | `RTMPEnhanced.swift` | 增強 | E-RTMP 編碼器協商、多軌道、VP9/AV1 |
 | `VideoCodecSettings.swift` | 修改 | 新增 .vp9、.av1 格式支援 |
 | `VideoCodecSettings.Format+Extension.swift` | 修改 | 補齊 switch exhaustive 匹配 |
+| `VideoCodec.swift` | 重構 | 改用 @AsyncStreamedFlow（v1.3.2） |
+| `AsyncStreamedFlow.swift` | 修改 | 新增 continuation getter（v1.3.2） |
+| `RTMPStream.swift` | 修改 | dispatch(.reset) 加 stopRunning + 診斷日誌累積彙總（v1.3.2） |
+| `RTMPLogEvent.swift` | 修改 | 新增 severity 排序（v1.3.2） |
 
 ### 刪除文件
 | 文件 | 原因 |

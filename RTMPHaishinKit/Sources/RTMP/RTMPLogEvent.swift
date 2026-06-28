@@ -8,6 +8,18 @@ public enum RTMPLogLevel: Sendable {
     case error
 }
 
+extension RTMPLogLevel {
+    package var severity: Int {
+        switch self {
+        case .trace: return 0
+        case .debug: return 1
+        case .info: return 2
+        case .warn: return 3
+        case .error: return 4
+        }
+    }
+}
+
 public struct RTMPLogEvent: Sendable {
     public let level: RTMPLogLevel
     public let message: String

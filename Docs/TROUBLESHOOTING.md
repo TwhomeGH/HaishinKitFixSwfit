@@ -109,12 +109,40 @@
 
 ### 除錯技巧
 
-**啟用詳細日誌**:
+**診斷日誌 (onLog)**:
 
 ```swift
-// 設定日誌等級
-logger.info("Connection state:", state)
-logger.warn("Connection waiting:", error)
+let connection = RTMPConnection(minimumLogLevel: .info)
+
+// 生產環境：只收 info/warn/error（預設）
+// connection.minimumLogLevel = .info
+
+// 開發除錯：收所有日誌（含 trace/debug）
+// let connection = RTMPConnection(minimumLogLevel: .trace)
+```
+
+`minimumLogLevel` 控制哪些等級的日誌會觸發 `onLog` 回呼：
+
+| 設定值 | 觸發等級 | 用途 |
+|--------|---------|------|
+| `.trace` | trace, debug, info, warn, error | 完整診斷（含每筆 socket send/recv、每幀發送） |
+| `.debug` | debug, info, warn, error | 一般除錯 |
+| `.info`（預設） | info, warn, error | 生產環境 |
+| `.warn` | warn, error | 僅警告 |
+| `.error` | error | 僅錯誤 |
+
+> [!NOTE]
+> 即使設為 `.trace`，append 裡的 per-frame 日誌也不會逐幀觸發 `onLog` — 它改為累積計數，由 `NetworkMonitor` 週期彙總一條 `"publish throughput"` 事件，避免 hot path Task spawn 風暴。
+
+**接收 onLog 事件**:
+
+```swift
+await connection.setOnLog { event in
+    // event.level: .trace / .debug / .info / .warn / .error
+    // event.message: 簡短描述
+    // event.detail: 詳細資料（可能為 nil）
+    print("[RTMP] \(event.level) \(event.message) \(event.detail ?? "")")
+}
 ```
 
 **檢查網路監控**:

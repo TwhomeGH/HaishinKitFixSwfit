@@ -216,6 +216,9 @@ public actor RTMPStream {
     private var lastPublishType: HowToPublish = .live
     package var outputs: [any StreamOutput] = []
     private var frameCount: UInt16 = 0
+    private var audioSentFrames: Int = 0
+    private var audioSentBytes: Int = 0
+    private var videoSentBytes: Int = 0
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
@@ -839,7 +842,7 @@ extension RTMPStream: _Stream {
                         Task { await connection?.log(.debug, "append(video): RTMPVideoMessage creation failed") }
                         return
                     }
-                    Task { await connection?.log(.debug, "append(video): sending pts=\(sampleBuffer.presentationTimeStamp.seconds) size=\(message.payload.count)") }
+                    videoSentBytes += message.payload.count
                     doOutput(.one, chunkStreamId: .video, message: message)
                 } catch {
                     logger.warn(error)
@@ -878,7 +881,8 @@ extension RTMPStream: _Stream {
                     Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                     return
                 }
-                Task { await connection?.log(.debug, "append(audio): sending size=\(message.payload.count)") }
+                audioSentFrames += 1
+                audioSentBytes += message.payload.count
                 doOutput(.one, chunkStreamId: .audio, message: message)
             } catch {
                 logger.warn(error)
@@ -898,6 +902,14 @@ extension RTMPStream: _Stream {
             outgoing.stopRunning()
             id = RTMPStream.defaultID
             readyState = .idle
+        case .status:
+            if audioSentFrames > 0 || videoSentBytes > 0 {
+                await connection?.log(.debug, "publish throughput",
+                    detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
+                audioSentFrames = 0
+                audioSentBytes = 0
+                videoSentBytes = 0
+            }
         default:
             break
         }

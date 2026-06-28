@@ -254,6 +254,15 @@ case .reset:
 
 **修復 B** — `VideoCodec` 改用 `@AsyncStreamedFlow`（詳見 [§4](#4-audiocodec-與-videocodec-輸出管理不一致)），使 `outputStream` 每次存取都建立新 stream 並自動 finish 舊的，與 AudioCodec 行為一致。
 
+**修復 C** — 診斷日誌 hot path 保護（`onLog` 頻率控制）：
+
+1. `RTMPStream.append()` 移除 per-frame `Task { await connection?.log(.debug, ...) }` 呼叫，改為累加計數器（`audioSentFrames`, `audioSentBytes`, `videoSentBytes`），避免 hot path Task spawn 風暴（音訊 ~50 Task/sec）
+2. `dispatch(.status)` 週期彙總一條 `"publish throughput"` 事件（`audioFrames`, `audioBytes`, `videoFrames`, `videoBytes`），而非每幀觸發
+3. `RTMPConnection.log()` 加入 `minimumLogLevel` 過濾：等級低於閾值直接 return，不呼叫 `onLog?`
+4. Socket `onLog` 轉送同步過濾，避免 socket 層 trace 事件（每次 send/recv）也 spawn Task
+
+`minimumLogLevel` 預設 `.info`（生產環境），設 `.trace` 可啟用完整診斷。
+
 ---
 
 ## 5. S2 封包檢測公式錯誤
@@ -624,10 +633,10 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 | 2 | ✅ `@AsyncStreamedFlow` property wrapper | `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
 | 3 | ✅ 在 startRunning 前預先讀取 stream | `RTMPStream.swift` |
 | 4 | ✅ lastPublishName + resumePublishing() | `RTMPStream.swift`, `RTMPConnection.swift` |
-| 4.2 | ✅ `dispatch(.reset)` 增加 `outgoing.stopRunning()` + VideoCodec 改用 `@AsyncStreamedFlow` | `RTMPStream.swift`, `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
+| 4.2 | ✅ `dispatch(.reset)` 增加 `outgoing.stopRunning()` + VideoCodec 改用 `@AsyncStreamedFlow` + 診斷日誌累積彙總 | `RTMPStream.swift`, `VideoCodec.swift`, `AsyncStreamedFlow.swift`, `RTMPConnection.swift`, `RTMPLogEvent.swift` |
 | 5 | ✅ 已統一至 `@AsyncStreamedFlow` | `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
 | 6 | ✅ `useEnhancedRTMP` 開關 + `capsEx` 條件式送出 | `RTMPConnection.swift` |
-| 7 | ✅ 診斷日誌 `RTMPLogEvent` + `onLog` | `RTMPLogEvent.swift`, `RTMPConnection.swift`, `RTMPSocket.swift` |
+| 7 | ✅ 診斷日誌 `RTMPLogEvent` + `onLog` + `minimumLogLevel` 過濾 | `RTMPLogEvent.swift`, `RTMPConnection.swift`, `RTMPSocket.swift` |
 
 ### 建議測試項目
 

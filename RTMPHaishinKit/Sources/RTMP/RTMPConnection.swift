@@ -237,6 +237,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public let reconnectBaseDelay: UInt64
     /// The reconnect max delay in seconds.
     public let reconnectMaxDelay: UInt64
+    /// The minimum log level forwarded to onLog. Trace/debug are filtered by default.
+    public let minimumLogLevel: RTMPLogLevel
     /// Reconnection event callback for consumers (e.g. ReplyKIT) to coordinate media pipeline.
     public var onReconnectStateChanged: (@Sendable (ReconnectState) async -> Void)?
     /// Diagnostic log callback. ReplyKit can set this to receive real-time internal events.
@@ -314,7 +316,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         isReconnectEnabled: Bool = false,
         maxReconnectAttempts: Int = RTMPConnection.defaultMaxReconnectAttempts,
         reconnectBaseDelay: UInt64 = RTMPConnection.defaultReconnectBaseDelay,
-        reconnectMaxDelay: UInt64 = RTMPConnection.defaultReconnectMaxDelay) {
+        reconnectMaxDelay: UInt64 = RTMPConnection.defaultReconnectMaxDelay,
+        minimumLogLevel: RTMPLogLevel = .info) {
         self.swfUrl = swfUrl
         self.pageUrl = pageUrl
         self.flashVer = flashVer
@@ -330,6 +333,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.maxReconnectAttempts = maxReconnectAttempts
         self.reconnectBaseDelay = reconnectBaseDelay
         self.reconnectMaxDelay = reconnectMaxDelay
+        self.minimumLogLevel = minimumLogLevel
     }
 
     deinit {
@@ -416,7 +420,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
         await socket?.setOnLog { [weak self] event in
-            Task { await self?.onLog?(event) }
+            Task { [weak self] in
+                guard let self, event.level.severity >= await self.minimumLogLevel.severity else { return }
+                await self.onLog?(event)
+            }
         }
         networkMonitor = await socket?.makeNetworkMonitor()
         log(.info, "HaishinKit revision", detail: kHaishinKitRevision)
@@ -797,6 +804,9 @@ extension RTMPConnection {
     }
 
     func log(_ level: RTMPLogLevel, _ message: String, detail: String? = nil, file: String = #file, line: Int = #line) {
+        guard level.severity >= minimumLogLevel.severity else {
+            return
+        }
         let event = RTMPLogEvent(level: level, message: message, detail: detail, file: file, line: line)
         onLog?(event)
     }
