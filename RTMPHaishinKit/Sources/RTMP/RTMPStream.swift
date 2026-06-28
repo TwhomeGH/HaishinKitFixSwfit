@@ -292,9 +292,6 @@ public actor RTMPStream {
         Task {
             await self.startOutputConsumer()
             await connection.addStream(self)
-            if await connection.connected {
-                await createStream()
-            }
         }
     }
 

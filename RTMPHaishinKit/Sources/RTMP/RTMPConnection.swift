@@ -361,9 +361,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 guard let operation = operations.removeValue(forKey: message.transactionId) else {
                     return
                 }
+                log(.error, "Command timeout", detail: "cmd=\(commandName) txn=\(message.transactionId)")
                 operation.resume(throwing: Error.requestTimedOut)
             }
             operations[message.transactionId] = continutation
+            log(.debug, "Command sent", detail: "cmd=\(commandName) txn=\(message.transactionId)")
             doOutput(.zero, chunkStreamId: .command, message: message)
         }
     }
