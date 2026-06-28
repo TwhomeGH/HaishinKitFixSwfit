@@ -423,7 +423,7 @@ public actor RTMPStream {
                     commandObject: nil,
                     arguments: [name, type.rawValue]
                 ))
-                await connection?.log(.debug, "publish: command sent, waiting for response")
+                Task { await connection?.log(.debug, "publish: command sent, waiting for response") }
             }
             await connection?.log(.debug, "publish: response received, starting publish tasks")
             startPublishTasks()
