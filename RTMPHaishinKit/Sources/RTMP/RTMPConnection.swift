@@ -584,7 +584,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             logger.trace("<<", message)
         }
         let chunks = Array(outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message))
-        let result = outputContinuation?.yield(chunks)
+        guard let outputContinuation else {
+            log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
+            return 0
+        }
+        let result = outputContinuation.yield(chunks)
         if case .dropped = result {
             log(.warn, "doOutput dropped: connection output buffer full (\(chunkStreamId))")
         } else if case .terminated = result {
