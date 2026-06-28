@@ -421,8 +421,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
         await socket?.setOnLog { [weak self] event in
             Task { [weak self] in
-                guard let self else { return }
-                guard event.level.severity >= await self.minimumLogLevel.severity else { return }
+                guard let self, event.level.severity >= self.minimumLogLevel.severity else { return }
                 await self.onLog?(event)
             }
         }
