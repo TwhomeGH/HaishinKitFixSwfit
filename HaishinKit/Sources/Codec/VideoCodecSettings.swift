@@ -303,8 +303,9 @@ public struct VideoCodecSettings: Codable, Sendable {
     }
 
     func makeKeyFrameIntervalOptions() -> Set<VTSessionOption> {
+        let duration = effectiveMaxKeyFrameIntervalDuration
         var options = Set<VTSessionOption>([
-            .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: maxKeyFrameIntervalDuration))
+            .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: duration))
         ])
         if let maxKeyFrameInterval {
             options.insert(.init(key: .maxKeyFrameInterval, value: NSNumber(value: maxKeyFrameInterval)))
@@ -319,8 +320,13 @@ public struct VideoCodecSettings: Codable, Sendable {
         return nil
     }
 
+    package var effectiveMaxKeyFrameIntervalDuration: Int32 {
+        maxKeyFrameIntervalDuration > 0 ? maxKeyFrameIntervalDuration : 2
+    }
+
     private var maxKeyFrameInterval: Int32? {
-        guard 0 < maxKeyFrameIntervalDuration else {
+        let duration = effectiveMaxKeyFrameIntervalDuration
+        guard 0 < duration else {
             return nil
         }
         let frameRate: Double

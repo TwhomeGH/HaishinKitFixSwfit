@@ -112,7 +112,7 @@ final class VideoCodec {
     }
 
     private func shouldForceKeyFrame(_ presentationTimeStamp: CMTime) -> Bool {
-        let duration = settings.maxKeyFrameIntervalDuration
+        let duration = settings.effectiveMaxKeyFrameIntervalDuration
         guard 0 < duration else {
             return false
         }
