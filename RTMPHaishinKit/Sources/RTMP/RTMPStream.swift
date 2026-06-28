@@ -381,12 +381,16 @@ public actor RTMPStream {
         }
         do {
             if outputContinuation == nil {
+                await connection?.log(.debug, "publish: initializing outputConsumer")
                 startOutputConsumer()
             }
             if id == RTMPStream.defaultID {
+                await connection?.log(.debug, "publish: creating stream")
                 await createStream()
+                await connection?.log(.debug, "publish: stream created id=\(id)")
             }
             guard id != RTMPStream.defaultID else {
+                await connection?.log(.error, "publish: stream id is 0 after createStream")
                 throw Error.invalidState
             }
             audioFormat = nil
@@ -419,10 +423,13 @@ public actor RTMPStream {
                     commandObject: nil,
                     arguments: [name, type.rawValue]
                 ))
+                await connection?.log(.debug, "publish: command sent, waiting for response")
             }
+            await connection?.log(.debug, "publish: response received, starting publish tasks")
             startPublishTasks()
             return response
         } catch {
+            await connection?.log(.error, "publish: failed with \(error)")
             logger.warn("Publish response error (stream continues):", error)
             throw error
         }
