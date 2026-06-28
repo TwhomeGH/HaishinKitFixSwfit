@@ -380,6 +380,12 @@ public actor RTMPStream {
             }
         }
         do {
+            if id == RTMPStream.defaultID {
+                await createStream()
+            }
+            guard id != RTMPStream.defaultID else {
+                throw Error.invalidState
+            }
             audioFormat = nil
             videoFormat = nil
             info.resourceName = name
