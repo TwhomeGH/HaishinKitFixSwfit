@@ -216,6 +216,8 @@ public actor RTMPStream {
     private var lastPublishType: HowToPublish = .live
     package var outputs: [any StreamOutput] = []
     private var frameCount: UInt16 = 0
+    private var videoInputFrames: Int = 0
+    private var videoStallCount: Int = 0
     private var audioSentFrames: Int = 0
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
@@ -879,6 +881,7 @@ extension RTMPStream: _Stream {
                     logger.warn(error)
                 }
             } else {
+                videoInputFrames += 1
                 outgoing.append(sampleBuffer)
                 if sampleBuffer.formatDescription?.isCompressed == false {
                     outputs.forEach {
@@ -933,14 +936,25 @@ extension RTMPStream: _Stream {
             outgoing.stopRunning()
             id = RTMPStream.defaultID
             readyState = .idle
+            videoInputFrames = 0
+            videoStallCount = 0
         case .status:
-            if audioSentFrames > 0 || videoSentBytes > 0 {
+            if audioSentFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
                 await connection?.log(.debug, "publish throughput",
-                    detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
-                audioSentFrames = 0
-                audioSentBytes = 0
-                videoSentBytes = 0
+                    detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
             }
+            if readyState == .publishing && 0 < videoInputFrames && frameCount == 0 {
+                videoStallCount += 1
+                if 3 <= videoStallCount {
+                    await restartVideoPipeline(reason: "encoded video stalled while input is active")
+                }
+            } else {
+                videoStallCount = 0
+            }
+            audioSentFrames = 0
+            audioSentBytes = 0
+            videoInputFrames = 0
+            videoSentBytes = 0
         default:
             break
         }
@@ -959,6 +973,15 @@ extension RTMPStream: _Stream {
         } catch {
             logger.error("Auto-republish failed:", error)
         }
+    }
+
+    private func restartVideoPipeline(reason: String) async {
+        await connection?.log(.warn, "Restarting video pipeline", detail: reason)
+        stopPublishTasks()
+        outgoing.restartVideoCodec()
+        videoFormat = nil
+        startPublishTasks()
+        videoStallCount = 0
     }
 }
 

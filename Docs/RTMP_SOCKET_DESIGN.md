@@ -197,6 +197,45 @@ case .handshakeDone, .connected:
 
 ---
 
+## 缺陷十：RTMP chunk 逐片 enqueue/send 造成 socket 層高頻發送
+
+**檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+
+### 問題流程
+
+`RTMPConnection.doOutput()` 會把一個 RTMP message 切成多個 chunk，再透過 `[Data]` 送到 socket 層。原本 `RTMPSocket.send(_ chunks:)` 對每個 chunk 都呼叫一次 `outputs.yield(data)`，output task 再對每個 chunk 執行一次 `NWConnection.send`。
+
+對大型 video frame，尤其是 keyframe，這會造成：
+
+- 單一 RTMP message 被拆成大量 socket send operation。
+- actor hop、AsyncStream enqueue、NWConnection completion callback 數量放大。
+- `queueBytesOut` 只用目前佇列大小判斷，沒有把即將加入的 `data.count` 算進去，可能超過上限才被發現。
+- `AsyncStream.Continuation.yield` 若因 `.bufferingOldest` 丟資料或 stream 已終止，原本沒有修正 queue 統計。
+- `totalBytesOut` 在 enqueue 與實際 send 完成時都累加，導致 throughput/佇列診斷數字失真。
+
+### 影響
+
+- 高碼率或 keyframe 期間 CPU 與 callback 壓力偏高。
+- socket backpressure 指標可能漂移，導致誤判網路塞車或錯過真正壅塞。
+- throughput log 可能被 double count 汙染，不利於判斷 RTMP 管線是否真的有送出資料。
+
+### 修正
+
+- `send(_ chunks:)` 先把同一個 RTMP message 的 chunks 合併成單一 `Data`，再 enqueue 一次。
+- `send(_ iterator:)` 同樣合併後 enqueue，避免 iterator 逐片送出。
+- 新增共用 `enqueue(_:)`：
+  - 空資料直接忽略。
+  - backpressure 改為檢查 `queueBytesOut + data.count <= maxQueueBytesOut`。
+  - 依 `yield` 結果處理 `.enqueued`、`.dropped`、`.terminated`，同步修正 `queueBytesOut`。
+  - `totalBytesOut` 只在 `NWConnection.send` 完成後累加。
+- `recv()` 的 `minimumIncompleteLength` 由 `0` 改為 `1`，避免空 read 路徑帶來不必要迴圈。
+
+### 後續可再優化
+
+目前修正把 coalescing 放在 socket 層，已能大幅減少 `NWConnection.send` 次數。更進一步可以讓 `RTMPConnection.doOutput()` 直接產生單一 payload，避免先建立 `[Data]` 後再合併造成一次額外 copy。
+
+---
+
 ## 總結
 
 | 優先級 | 缺陷 | 影響 | 狀態 |
@@ -208,6 +247,7 @@ case .handshakeDone, .connected:
 | 🔴 High | lazy stream createStream 遺漏 | 首次推流失敗 | ✅ 已修 |
 | 🔴 High | connected 後停止解析 RTMP 回包 | createStream timeout、publish 管線無法建立 | ✅ 已修 |
 | 🟡 Medium | 三層 AsyncStream 無背壓 | 高碼率記憶體爆炸 | ✅ 已修 |
+| 🟡 Medium | RTMP chunks 逐片 socket send | 高 CPU、callback 放大、佇列統計漂移 | ✅ 已修 |
 | 🟡 Medium | weak ref 資料丟失 | 推流資料不完整 | ✅ 已修 |
 
 ### 本次新增修正

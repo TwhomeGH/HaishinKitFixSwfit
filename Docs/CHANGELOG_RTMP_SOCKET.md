@@ -85,6 +85,18 @@
 - **修改：** `clear()` 中設定 `timestamp = Date().timeIntervalSince1970` 讓 C1 寫入真實時間；`hasS0S1Packet` off-by-one 修正為 `<=`
 - **效果：** 符合 RTMP 規範，C2 計算正確的 delta，2038 年不再 overflow
 
+### 13. Socket 發送合併與佇列統計修正
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+- **修改：**
+  - `send(_ chunks:)` 與 `send(_ iterator:)` 改為先合併 payload，再 enqueue 一次
+  - 新增共用 `enqueue(_:)`，統一處理 connected、backpressure、yield result
+  - backpressure 改為檢查 `queueBytesOut + data.count`
+  - `queueBytesOut` 在 `.dropped`、`.terminated` 與 send 完成後都會修正
+  - `totalBytesOut` 只在 `NWConnection.send` 完成後累加
+  - `recv()` 改為 `minimumIncompleteLength: 1`
+- **效果：** 大幅降低大型 RTMP message/keyframe 造成的 `NWConnection.send` 次數，並避免 throughput 與 queue 指標失真
+
 ## 完整設計缺陷說明
 
 詳見 [RTMP_SOCKET_DESIGN.md](RTMP_SOCKET_DESIGN.md)

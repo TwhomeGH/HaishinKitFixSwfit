@@ -97,6 +97,14 @@ package final class OutgoingStream: @unchecked Sendable {
     package func append(video sampleBuffer: CMSampleBuffer) {
         videoCodec.append(sampleBuffer)
     }
+
+    package func restartVideoCodec() {
+        guard isRunning else {
+            return
+        }
+        videoCodec.stopRunning()
+        videoCodec.startRunning()
+    }
 }
 
 extension OutgoingStream: Runner {

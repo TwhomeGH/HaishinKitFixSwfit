@@ -87,50 +87,62 @@ final actor RTMPSocket {
     }
 
     func send(_ data: Data) {
+        enqueue(data)
+    }
+
+    func send(_ iterator: AnyIterator<Data>) {
+        var payload = Data()
+        for data in iterator {
+            payload.append(data)
+        }
+        enqueue(payload)
+    }
+
+    func send(_ chunks: [Data]) {
+        guard !chunks.isEmpty else {
+            return
+        }
+        guard 1 < chunks.count else {
+            enqueue(chunks[0])
+            return
+        }
+        let size = chunks.reduce(0) { $0 + $1.count }
+        var payload = Data()
+        payload.reserveCapacity(size)
+        for data in chunks {
+            payload.append(data)
+        }
+        enqueue(payload)
+    }
+
+    private func enqueue(_ data: Data) {
+        guard !data.isEmpty else {
+            return
+        }
         guard connected else {
             onLog?(.init(level: .warn, message: "Send dropped: not connected", detail: "size=\(data.count)"))
             return
         }
-        guard queueBytesOut < Self.maxQueueBytesOut else {
+        guard queueBytesOut + data.count <= Self.maxQueueBytesOut else {
             logger.warn("Backpressure: dropping send, queue full (\(queueBytesOut) bytes)")
-            onLog?(.init(level: .warn, message: "Backpressure: send dropped", detail: "queueBytesOut=\(queueBytesOut) max=\(Self.maxQueueBytesOut)"))
+            onLog?(.init(level: .warn, message: "Backpressure: send dropped", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut) max=\(Self.maxQueueBytesOut)"))
+            return
+        }
+        guard let outputs else {
+            onLog?(.init(level: .warn, message: "Send dropped: output stream unavailable", detail: "size=\(data.count)"))
             return
         }
         queueBytesOut += data.count
-        totalBytesOut += data.count
-        onLog?(.init(level: .trace, message: "Socket send", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut)"))
-        outputs?.yield(data)
-    }
-
-    func send(_ iterator: AnyIterator<Data>) {
-        guard connected else {
-            return
-        }
-        for data in iterator {
-            guard queueBytesOut < Self.maxQueueBytesOut else {
-                logger.warn("Backpressure: dropping iterator, queue full (\(queueBytesOut) bytes)")
-                break
-            }
-            queueBytesOut += data.count
-            totalBytesOut += data.count
-            outputs?.yield(data)
-        }
-    }
-
-    func send(_ chunks: [Data]) {
-        guard connected else {
-            onLog?(.init(level: .warn, message: "Send chunks dropped: not connected"))
-            return
-        }
-        for data in chunks {
-            guard queueBytesOut < Self.maxQueueBytesOut else {
-                logger.warn("Backpressure: dropping chunks, queue full (\(queueBytesOut) bytes)")
-                onLog?(.init(level: .warn, message: "Backpressure: chunks dropped", detail: "queueBytesOut=\(queueBytesOut)"))
-                break
-            }
-            queueBytesOut += data.count
-            totalBytesOut += data.count
-            outputs?.yield(data)
+        onLog?(.init(level: .trace, message: "Socket enqueue", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut)"))
+        switch outputs.yield(data) {
+        case .enqueued(_):
+            break
+        case .dropped(let dropped):
+            queueBytesOut = max(0, queueBytesOut - dropped.count)
+            onLog?(.init(level: .warn, message: "Socket enqueue dropped", detail: "size=\(dropped.count) queueBytesOut=\(queueBytesOut)"))
+        case .terminated:
+            queueBytesOut = max(0, queueBytesOut - data.count)
+            onLog?(.init(level: .warn, message: "Socket enqueue terminated", detail: "size=\(data.count)"))
         }
     }
 
@@ -185,7 +197,7 @@ final actor RTMPSocket {
                     do {
                         try await send(data)
                         totalBytesOut += data.count
-                        queueBytesOut -= data.count
+                        queueBytesOut = max(0, queueBytesOut - data.count)
                     } catch {
                         logger.error("Failed to send data:", error)
                         close(error as? NWError)
@@ -241,7 +253,7 @@ final actor RTMPSocket {
                 continuation.resume(throwing: Error.invalidState)
                 return
             }
-            connection.receive(minimumIncompleteLength: 0, maximumLength: windowSizeC) { content, _, _, error in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { content, _, _, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return

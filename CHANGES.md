@@ -538,3 +538,65 @@ case .handshakeDone, .connected:
 - `createStream` 的 `_result` 可正常 dispatch 到 pending operation。
 - `RTMPStream` 能取得非 0 stream id。
 - publish 管線可繼續送 metadata、sequence header、audio/video messages。
+
+---
+
+## 21. 修復推流中途 `videoFrame = 0` 的編碼輸出停滯
+
+**檔案**:
+- `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+- `HaishinKit/Sources/Stream/OutgoingStream.swift`
+
+### 問題
+
+log 顯示 RTMP 連線與音訊仍持續工作，但 publish throughput 連續出現：
+
+```text
+videoFrames=0 videoBytes=0
+```
+
+同時前段仍有 `[VFrame]`、`[VideoProcessor] 送出MediaMixer`。這代表 ReplayKit 與 video processor 沒有停止，真正停住的是 video codec 到 RTMP 的 encoded video 輸出，不是 socket 斷線。
+
+### 修正
+
+- `RTMPStream` 新增 `videoInputFrames` 與 `videoStallCount`。
+- status 週期中若正在 publishing、video input 有進來，但 encoded `videoFrames` 連續 3 次為 0，會重啟 video publish pipeline。
+- `OutgoingStream` 新增 `restartVideoCodec()`，讓 RTMP 層可以停止並重新啟動 video codec。
+- 重啟時會清除 `videoFormat`，讓後續 video sequence header 可重新送出。
+
+### 效果
+
+推流中途若 video encoder/output path 停住，系統可以自動復原，避免畫面永久黑掉但音訊仍繼續送出的狀態。
+
+---
+
+## 22. 改善 RTMP Socket 發送效能與佇列統計
+
+**檔案**:
+- `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+- `Docs/RTMP_SOCKET_DESIGN.md`
+- `Docs/CHANGELOG_RTMP_SOCKET.md`
+
+### 問題
+
+RTMP message 會被切成多個 chunk。原本 socket 層逐 chunk enqueue，導致大型 video frame 或 keyframe 會放大成大量 `NWConnection.send` operation。
+
+另外，佇列統計存在幾個問題：
+
+- backpressure 只檢查目前 `queueBytesOut`，沒有檢查加入本次資料後是否超標。
+- `AsyncStream.yield` 被 drop 或 terminated 時沒有回補 `queueBytesOut`。
+- `totalBytesOut` 在 enqueue 與實際 send 完成時都累加，throughput 可能 double count。
+
+### 修正
+
+- `send(_ chunks:)` 與 `send(_ iterator:)` 先合併 payload，再 enqueue 一次。
+- 新增共用 `enqueue(_:)`，集中處理 connected、backpressure、yield result 與 log。
+- backpressure 改為 `queueBytesOut + data.count <= maxQueueBytesOut`。
+- `totalBytesOut` 只在 `NWConnection.send` 完成後累加。
+- `recv()` 改為 `minimumIncompleteLength: 1`，避免空 read 路徑。
+
+### 效果
+
+- 降低 keyframe 期間的 actor hop / AsyncStream enqueue / NWConnection callback 次數。
+- queue 與 throughput log 更接近實際網路送出狀態。
+- 高碼率推流時 socket 層負載更穩定。
