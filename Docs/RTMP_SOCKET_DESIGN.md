@@ -147,6 +147,56 @@ func doOutput(...) {
 
 ---
 
+## 缺陷九：`connected` 狀態後停止解析 RTMP 回包
+
+**檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift:658`
+
+### 問題流程
+
+1. TCP、RTMP handshake、`connect` command 都成功。
+2. server 回 `NetConnection.Connect.Success` 的 `_result txn=1`。
+3. `RTMPConnection.dispatch()` 將狀態由 `.handshakeDone` 改成 `.connected`。
+4. 後續 `createStream` command 正常送出，例如 log 出現：
+
+```text
+[RTMP] debug Command sent cmd=createStream txn=2
+```
+
+5. 但 `listen(_:)` 原本只在 `.handshakeDone` case 解析 RTMP chunk。狀態變成 `.connected` 後，socket 收到的資料落入 `default: break`，沒有進入 `inputBuffer.put(data)`，也不會 dispatch `_result txn=2`。
+6. caller 最後只看到 timeout：
+
+```text
+[RTMP] error Command timeout cmd=createStream txn=2
+[RTMP] error createStream: failed requestTimedOut
+[RTMP] error publish: stream id is 0 after createStream
+```
+
+### 影響
+
+- NetConnection 已成功，但 NetStream 永遠無法取得 stream id。
+- ReplyKit / Broadcast Extension 前段仍持續產生音視訊 frame，看起來 MediaMixer 正常，但 RTMP 內部 publish 管線沒有建立。
+- 伺服器即使回了 `createStream` 的 `_result`，client 端也會忽略，造成誤判為伺服器未回應。
+
+### 修正
+
+讓 `listen(_:)` 在 `.connected` 狀態下也持續解析 RTMP chunk：
+
+```swift
+case .handshakeDone, .connected:
+    inputBuffer.put(data)
+    ...
+```
+
+修正後，預期 log 順序為：
+
+```text
+[RTMP] debug Command sent cmd=createStream txn=2
+[RTMP] info Response: _result txn=2
+[RTMP] info createStream: stream id 1
+```
+
+---
+
 ## 總結
 
 | 優先級 | 缺陷 | 影響 | 狀態 |
@@ -156,6 +206,7 @@ func doOutput(...) {
 | 🔴 High | viability 下降立即關閉 | 短暫抖動就斷連，無法恢復 | ✅ 已修 |
 | 🔴 High | `recv()` continuation 未 finish | 連線無法正常關閉，hang | ✅ 已修 |
 | 🔴 High | lazy stream createStream 遺漏 | 首次推流失敗 | ✅ 已修 |
+| 🔴 High | connected 後停止解析 RTMP 回包 | createStream timeout、publish 管線無法建立 | ✅ 已修 |
 | 🟡 Medium | 三層 AsyncStream 無背壓 | 高碼率記憶體爆炸 | ✅ 已修 |
 | 🟡 Medium | weak ref 資料丟失 | 推流資料不完整 | ✅ 已修 |
 

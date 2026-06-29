@@ -498,3 +498,43 @@ await mixer.append(buffer, when: time)
 
 ### 原因
 原本的 unbounded 策略會讓 frame 在 consumer 慢的時候無限堆積，導致記憶體膨脹及關閉時暴衝 flush。改成保留最新 30 幀，自動丟棄舊幀，符合直播低延遲需求。
+
+---
+
+## 20. 修復 RTMP `createStream` 回應被忽略導致推流管線未建立
+
+**檔案**:
+- `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- `Docs/RTMP_SOCKET_DESIGN.md`
+
+### 問題
+
+RTMP connect 成功後，`RTMPConnection` 會從 `.handshakeDone` 轉成 `.connected`。但 `listen(_:)` 原本只在 `.handshakeDone` 狀態解析收到的 RTMP chunks；進入 `.connected` 後，socket 收到的 server 回包會直接落入 `default: break`。
+
+因此 `createStream` command 已送出並註冊 transaction：
+
+```text
+[RTMP] debug Command sent cmd=createStream txn=2
+```
+
+但 server 回來的 `_result txn=2` 不會被解析，最後 timeout：
+
+```text
+[RTMP] error Command timeout cmd=createStream txn=2
+[RTMP] error createStream: failed requestTimedOut
+[RTMP] error publish: stream id is 0 after createStream
+```
+
+### 修正
+
+`listen(_:)` 改為在 `.handshakeDone` 與 `.connected` 狀態都持續解析 RTMP chunks：
+
+```swift
+case .handshakeDone, .connected:
+```
+
+### 效果
+
+- `createStream` 的 `_result` 可正常 dispatch 到 pending operation。
+- `RTMPStream` 能取得非 0 stream id。
+- publish 管線可繼續送 metadata、sequence header、audio/video messages。
