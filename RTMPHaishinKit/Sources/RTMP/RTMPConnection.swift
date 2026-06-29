@@ -658,7 +658,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
             await networkMonitor?.startRunning()
             doOutput(.zero, chunkStreamId: .command, message: message)
-        case .handshakeDone:
+        case .handshakeDone, .connected:
             inputBuffer.put(data)
             log(.trace, "Input data", detail: "size=\(data.count) buffer=\(inputBuffer.remaining)")
             var rollbackPosition = inputBuffer.position
