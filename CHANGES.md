@@ -600,3 +600,31 @@ RTMP message 會被切成多個 chunk。原本 socket 層逐 chunk enqueue，導
 - 降低 keyframe 期間的 actor hop / AsyncStream enqueue / NWConnection callback 次數。
 - queue 與 throughput log 更接近實際網路送出狀態。
 - 高碼率推流時 socket 層負載更穩定。
+
+---
+
+## 15. createStream 重試與錯誤傳播機制
+
+**檔案**: `Sources/RTMP/RTMPStream.swift`, `Sources/RTMP/RTMPConnection.swift`
+
+### 問題
+
+`createStream()` 存在三個設計缺陷：
+
+1. **錯誤被吞掉**：catch 後僅 `logger.error()`，不回報給呼叫方。`publish()` 只能看到 `id == 0`，無法區分 timeout、server 回空值、或其他原因。
+2. **無重試機制**：`requestTimeout` (3s) 一過就永久失敗。若 RTMP server 短暫無回應（實際發生於內網 server），即使 txn=1 connect 已成功，txn=2 createStream 仍可能 timeout，導致推流完全失敗。
+3. **log 誤導**：失敗後仍打 `"publish: stream created id=0"`，但 stream 根本沒建立。
+
+### 修正
+
+- **`createStream()` 變為 `async throws`**：錯誤不再被吞掉，向上拋給 playback/publish/reconnect 處理。
+- **內建重試邏輯**：預設重試 3 次，每次間隔 500ms。可透過 `retryCount` 參數調整。
+- **每次失敗 via onLog**：`connection?.log(.error, ...)` 記錄嘗試次數與錯誤細節。
+- **呼叫方清理**：`publish()` / `play()` 移除多餘的 `guard id != defaultID` 檢查，直接依賴 `createStream()` 拋錯。
+- **重連路徑**：`RTMPConnection` 的 `startReconnection()` 中 `createStream()` 失敗會觸發整次重連重試（由既有 `do-catch` 捕獲）。
+
+### 效果
+
+- RTMP server 短暫無回應時不再直接失敗，給予 3 次機會（總計 ~4.5s）。
+- 錯誤細節完整傳播至 `onLog`，便於診斷。
+- 重連時 createStream 失敗不會跳過該 stream（由重連迴圈重試）。

@@ -322,10 +322,7 @@ public actor RTMPStream {
             }
             await connection?.addStream(self)
             if id == RTMPStream.defaultID {
-                await createStream()
-            }
-            guard id != RTMPStream.defaultID else {
-                throw Error.invalidState
+                try await createStream()
             }
             audioFormat = nil
             videoFormat = nil
@@ -396,12 +393,8 @@ public actor RTMPStream {
             await connection?.addStream(self)
             if id == RTMPStream.defaultID {
                 await connection?.log(.debug, "publish: creating stream")
-                await createStream()
+                try await createStream()
                 await connection?.log(.debug, "publish: stream created id=\(id)")
-            }
-            guard id != RTMPStream.defaultID else {
-                await connection?.log(.error, "publish: stream id is 0 after createStream")
-                throw Error.invalidState
             }
             audioFormat = nil
             videoFormat = nil
@@ -651,32 +644,43 @@ public actor RTMPStream {
         }
     }
 
-    func createStream() async {
+    private static let createStreamMaxRetries = 3
+    private static let createStreamRetryDelayNanos: UInt64 = 500_000_000
+
+    func createStream(retryCount: Int = RTMPStream.createStreamMaxRetries) async throws {
         guard id == RTMPStream.defaultID else {
             return
         }
         if let fcPublishName {
-            // FMLE-compatible sequences
             do {
                 try await connection?.sendCommand("releaseStream", arguments: fcPublishName)
                 try await connection?.sendCommand("FCPublish", arguments: fcPublishName)
             } catch {
-                logger.error(error)
+                await connection?.log(.error, "createStream: FMLE preamble failed", detail: "\(error)")
             }
         }
-        do {
-            let response = try await connection?.call("createStream")
-            guard let first = response?.arguments.first as? Double else {
-                await connection?.log(.error, "createStream: missing stream id", detail: "arguments=\(response?.arguments.count ?? 0)")
+        var lastError: Swift.Error = Error.invalidState
+        for attempt in 1...retryCount {
+            do {
+                let response = try await connection?.call("createStream")
+                guard let first = response?.arguments.first as? Double else {
+                    await connection?.log(.error, "createStream: missing stream id (attempt \(attempt)/\(retryCount))", detail: "arguments=\(response?.arguments.count ?? 0)")
+                    lastError = RTMPConnection.Error.requestTimedOut
+                    continue
+                }
+                id = UInt32(first)
+                await connection?.log(.info, "createStream: stream id", detail: "\(id)")
+                readyState = .idle
                 return
+            } catch {
+                lastError = error
+                await connection?.log(.error, "createStream: failed (attempt \(attempt)/\(retryCount))", detail: "\(error)")
+                if attempt < retryCount {
+                    try? await Task.sleep(nanoseconds: RTMPStream.createStreamRetryDelayNanos)
+                }
             }
-            id = UInt32(first)
-            await connection?.log(.info, "createStream: stream id", detail: "\(id)")
-            readyState = .idle
-        } catch {
-            logger.error(error)
-            await connection?.log(.error, "createStream: failed", detail: "\(error)")
         }
+        throw lastError
     }
 
     func deleteStream() async {

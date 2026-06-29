@@ -547,7 +547,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 try await performConnect(command, arguments: arguments)
                 for stream in streams {
                     await stream.dispatch(.reset)
-                    await stream.createStream()
+                    try await stream.createStream()
                     await stream.resumePublishing()
                 }
                 await onReconnectStateChanged?(.succeeded)

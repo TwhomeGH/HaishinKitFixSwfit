@@ -1,9 +1,9 @@
 # RTMP 協議修復與架構改進文檔
 
 ## 版本信息
-- **日期**: 2026-06-28
-- **版本**: 1.3.2
-- **狀態**: ✅ 完成（含 VideoCodec @AsyncStreamedFlow 重構、重連編碼器修復、診斷日誌優化）
+- **日期**: 2026-06-29
+- **版本**: 1.3.3
+- **狀態**: ✅ 完成（含 createStream 重試與錯誤傳播、RTMP_ChunkBuffer capacity 修正、AsyncStream YieldResult @unknown default）
 
 ---
 
@@ -315,3 +315,28 @@ RTMPConnection(minimumLogLevel: .trace)
 2. **VP9/AV1**: ✅ 基礎架構已就緒（依賴平台解碼器能力）
 3. **加密**: RTMPS 使用 Network framework 預設 TLS 配置，無自訂憑證驗證
 4. **多軌道**: 基礎支援已就緒（trackId 編碼），完整 multi-track session 管理待後續
+
+---
+
+## 7. 關鍵 Bug 修復 (v1.3.3)
+
+### 7.1 createStream 無重試、錯誤被吞掉導致推流失敗 (P0)
+**文件**: `RTMPStream.swift:650-684`, `RTMPConnection.swift:550`  
+**日期**: 2026-06-29  
+**問題**: `createStream()` 在 server 短暫無回應時直接失敗，錯誤被內部 catch 吞掉，`publish()` 只能看到 `id == 0`。內網 RTMP server 經常出現 txn=1 (connect) 成功但 txn=2 (createStream) 在 3 秒內無回應的情況。
+
+**現場 log** (`log-4.txt`):
+```
+[RTMP] error Command timeout cmd=createStream txn=2
+[RTMP] error createStream: failed requestTimedOut
+[RTMP] debug publish: stream created id=0
+[RTMP] error publish: stream id is 0 after createStream
+[RTMP] error publish: failed with invalidState
+```
+
+**修復**:
+- `createStream()` 改為 `async throws`，錯誤向上傳播
+- 內建重試迴圈：預設 3 次，每次間隔 500ms（總計 ~4.5s 容忍期）
+- 每次失敗透過 `connection?.log()` → `onLog` 記錄嘗試次數與錯誤
+- `publish()` / `play()` 移除冗餘 `guard id != defaultID`，依賴 createStream 拋錯
+- 重連路徑中 `createStream()` 失敗由既有 `do-catch` 捕獲，觸發重連重試
