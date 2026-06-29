@@ -143,6 +143,8 @@ final actor RTMPSocket {
         case .terminated:
             queueBytesOut = max(0, queueBytesOut - data.count)
             onLog?(.init(level: .warn, message: "Socket enqueue terminated", detail: "size=\(data.count)"))
+        @unknown default:
+            break
         }
     }
 
