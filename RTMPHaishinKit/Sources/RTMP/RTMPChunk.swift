@@ -265,29 +265,39 @@ final class RTMPChunkBuffer {
         self.length = length + data.count
     }
 
-    func putMessage(_ chunkType: RTMPChunkType, chunkStreamId: UInt16, message: some RTMPMessage) -> AnyIterator<Data> {
+    func putMessage(_ chunkType: RTMPChunkType, chunkStreamId: UInt16, message: some RTMPMessage) -> Data {
         let payload = message.payload
         let length = payload.count
-        var offset = 0
-        var remaining = min(chunkSize, length)
-        return AnyIterator { () -> Data? in
-            guard 0 < remaining else {
-                return nil
-            }
-            defer {
-                self.position = 0
-                offset += remaining
-                remaining = min(self.chunkSize, length - offset)
-            }
-            if offset == 0 {
-                self.putBasicHeader(chunkType, chunkStreamId: chunkStreamId)
-                self.putMessageHeader(chunkType, length: length, message: message)
-            } else {
-                self.putBasicHeader(.three, chunkStreamId: chunkStreamId)
-            }
-            self.data.replaceSubrange(self.position..<self.position + remaining, with: payload[offset..<offset + remaining])
-            return self.data.subdata(in: 0..<self.position + remaining)
+        guard length > 0 else {
+            return Data()
         }
+        let numChunks = (length + chunkSize - 1) / chunkSize
+        let firstBasicHeaderSize: Int = chunkStreamId <= 63 ? 1 : (chunkStreamId <= 319 ? 2 : 3)
+        let needsExtendedTimestamp = message.timestamp >= RTMPChunkMessageHeader.maxTimestamp
+        let extendTimestampSize = needsExtendedTimestamp ? kRTMPExtendTimestampSize : 0
+        let firstHeaderSize = firstBasicHeaderSize + chunkType.headerSize + extendTimestampSize
+        let subsequentHeaderSize: Int = 1
+        let totalSize = firstHeaderSize + length + (numChunks - 1) * subsequentHeaderSize
+        if data.count < totalSize {
+            data.append(Data(count: totalSize - data.count))
+        }
+        position = 0
+        var offset = 0
+        for chunkIndex in 0..<numChunks {
+            let remaining = min(chunkSize, length - offset)
+            if chunkIndex == 0 {
+                putBasicHeader(chunkType, chunkStreamId: chunkStreamId)
+                putMessageHeader(chunkType, length: length, message: message)
+            } else {
+                putBasicHeader(.three, chunkStreamId: chunkStreamId)
+            }
+            data.replaceSubrange(position..<position + remaining, with: payload[offset..<offset + remaining])
+            position += remaining
+            offset += remaining
+        }
+        let result = data.subdata(in: 0..<position)
+        position = 0
+        return result
     }
 
     private func putBasicHeader(_ chunkType: RTMPChunkType, chunkStreamId: UInt16) {

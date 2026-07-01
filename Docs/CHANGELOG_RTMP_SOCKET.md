@@ -104,6 +104,19 @@
 - **修改：** `makeMetadata()` 將 `audiocodecid` 和 `audiodatarate` 移到 `audioInputFormat` guard 之外，確保推流時永遠包含音訊位元率資訊
 - **效果：** YouTube 不再顯示「音訊位元率 (0)」警告，因為 `onMetaData` 現在總是攜帶 `audiocodecid` 與 `audiodatarate`
 
+### 15. Send Pipeline 最佳化：消除 chunk 逐筆複製與 `[Data]` 中間層
+
+- **檔案：**
+  - `RTMPHaishinKit/Sources/RTMP/RTMPChunk.swift` (`putMessage`)
+  - `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift` (`doOutput`, `startOutputConsumer`)
+  - `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift` (移除 `send(_ chunks:)`, `send(_ iterator:)`)
+- **問題：** 每次 RTMP 訊息發送經歷：`putMessage` 逐 chunk `subdata` 複製 N 次 → `Array(iterator)` 收集為 `[Data]` → socket 再逐筆 merge 回單一 `Data`，產生大量重複配置。
+- **修改：**
+  - `putMessage` 改回傳單一 `Data`，所有 chunk 連續寫入同一個 buffer，只複製一次
+  - `RTMPConnection` 的 output AsyncStream 型別從 `[Data]` 改為 `Data`
+  - 移除 `RTMPSocket` 不再使用的 `send(_ chunks:)` 與 `send(_ iterator:)`
+- **效果：** 每次 send 減少 N 次 chunk Data 配置 + 1 次 `[Data]` 陣列配置 + 1 次 socket merge 配置；大型 keyframe 效益最顯著
+
 ## 完整設計缺陷說明
 
 詳見 [RTMP_SOCKET_DESIGN.md](RTMP_SOCKET_DESIGN.md)

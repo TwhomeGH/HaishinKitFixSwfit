@@ -340,6 +340,42 @@ if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription {
 
 ---
 
+### 7.3 Send Pipeline 最佳化：消除 chunk 逐筆複製與 `[Data]` 中間層
+**文件**: `RTMPChunk.swift:268-301`, `RTMPConnection.swift:598-630`, `RTMPSocket.swift:89-116`  
+**日期**: 2026-07-02  
+**版本**: 1.3.4  
+
+**問題**: 原有 send pipeline 每則 RTMP 訊息經過以下路徑，產生大量重複配置：
+
+1. `RTMPChunkBuffer.putMessage` 傳回 `AnyIterator<Data>`，每 chunk call `data.subdata(in:)` 複製一次 → N 個 `Data` 物件
+2. `RTMPConnection.doOutput` 用 `Array(iterator)` 收集為 `[Data]` → 陣列配置
+3. `RTMPSocket.send(_ chunks:)` 再遍歷 merge 回單一 `Data` → 第二次配置
+
+對於大型視訊 keyframe（數百 KB，數十個 chunk），重複配置開銷可觀。
+
+**修復**:
+
+- `putMessage` 改回傳單一 `Data`：預先計算所有 chunk header + payload 的總大小，擴充內部 buffer，連續寫入所有 chunk，只做一次 `subdata` 複製
+- `RTMPConnection.doOutput` 直接 yield `Data` 而非 `[Data]`
+- `RTMPConnection.startOutputConsumer` 的 AsyncStream 型別從 `[Data]` 改為 `Data`
+- 移除 `RTMPSocket` 不再使用的 `send(_ chunks:)` 與 `send(_ iterator:)`
+
+```swift
+// 修改前：每 chunk 一次 subdata 複製，Array 收集，socket 再 merge
+let chunks = Array(outputBuffer.putMessage(...))  // [Data]
+outputContinuation.yield(chunks)
+// socket.send(_ chunks:) 中再 merge 回單一 Data
+
+// 修改後：putMessage 直接回傳完整 Data，單一 yield
+let data = outputBuffer.putMessage(...)  // Data
+outputContinuation.yield(data)
+// socket.send(_ data:) 直接 enqueue
+```
+
+**影響範圍**: 所有 RTMP 推流連線。大型 keyframe 受益最明顯，音訊等小訊息減少 allocations 次數。
+
+---
+
 ## 6. 已知限制
 
 1. **自動重連**: ✅ 已實現（指數退避 1s→30s，最多 5 次）

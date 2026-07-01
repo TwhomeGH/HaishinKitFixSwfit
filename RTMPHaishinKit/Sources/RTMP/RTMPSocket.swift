@@ -90,31 +90,6 @@ final actor RTMPSocket {
         enqueue(data)
     }
 
-    func send(_ iterator: AnyIterator<Data>) {
-        var payload = Data()
-        for data in iterator {
-            payload.append(data)
-        }
-        enqueue(payload)
-    }
-
-    func send(_ chunks: [Data]) {
-        guard !chunks.isEmpty else {
-            return
-        }
-        guard 1 < chunks.count else {
-            enqueue(chunks[0])
-            return
-        }
-        let size = chunks.reduce(0) { $0 + $1.count }
-        var payload = Data()
-        payload.reserveCapacity(size)
-        for data in chunks {
-            payload.append(data)
-        }
-        enqueue(payload)
-    }
-
     private func enqueue(_ data: Data) {
         guard !data.isEmpty else {
             return

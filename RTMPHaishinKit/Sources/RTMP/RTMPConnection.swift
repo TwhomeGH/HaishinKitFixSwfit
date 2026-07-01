@@ -599,12 +599,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if logger.isEnabledFor(level: .trace) {
             logger.trace("<<", message)
         }
-        let chunks = Array(outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message))
+        let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
         guard let outputContinuation else {
             log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
             return 0
         }
-        let result = outputContinuation.yield(chunks)
+        let result = outputContinuation.yield(data)
         if case .dropped = result {
             log(.warn, "doOutput dropped: connection output buffer full (\(chunkStreamId))")
         } else if case .terminated = result {
@@ -620,11 +620,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(of: [Data].self, bufferingPolicy: .bufferingOldest(512))
+        let (stream, continuation) = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .bufferingOldest(512))
         outputContinuation = continuation
         Task {
-            for await chunks in stream {
-                await socket.send(chunks)
+            for await data in stream {
+                await socket.send(data)
             }
         }
     }
