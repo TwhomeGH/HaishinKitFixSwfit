@@ -273,7 +273,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
     private var windowSizeS = RTMPConnection.defaultWindowSizeS
     private var outputBuffer = RTMPChunkBuffer()
-    private var outputContinuation: AsyncStream<[Data]>.Continuation?
+    private var outputContinuation: AsyncStream<Data>.Continuation?
     private let authenticator = RTMPAuthenticator()
     private var networkMonitor: NetworkMonitor?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
