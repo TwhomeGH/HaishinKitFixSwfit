@@ -309,6 +309,37 @@ RTMPConnection(minimumLogLevel: .trace)
 
 ---
 
+### 7.2 onMetaData 音訊中繼資料遺失導致 YouTube 顯示位元率為 0 (P1)
+**文件**: `RTMPStream.swift:830-851`  
+**日期**: 2026-07-02  
+**版本**: 1.3.4  
+
+**問題**: `makeMetadata()` 將所有音訊中繼資料（`audiocodecid`、`audiodatarate`、`audiosamplerate`）包裹在 `if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription` guard 內。`publish()` 呼叫時音訊編碼器尚未產生輸出，`audioInputFormat` 為 `nil`，導致 **整個音訊中繼資料區塊被跳過**。YouTube 收到不含 `audiodatarate` 的 `onMetaData`，預設位元率為 0，顯示「音訊串流目前的位元率 (0) 低於建議值」。
+
+**修復**:
+- `audiocodecid` 和 `audiodatarate` 來自 `audioSettings`（總有預設值 64000 bps），不再依賴 `audioInputFormat`
+- 只有 `audiosamplerate` 保留在 `audioInputFormat` guard 內，因為它需要實際的輸入取樣率
+
+```swift
+// 修改前
+if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription {
+    metadata["audiocodecid"] = outgoing.audioSettings.format.codecid
+    metadata["audiodatarate"] = outgoing.audioSettings.bitRate / 1000
+    metadata["audiosamplerate"] = ...
+}
+
+// 修改後
+metadata["audiocodecid"] = outgoing.audioSettings.format.codecid
+metadata["audiodatarate"] = outgoing.audioSettings.bitRate / 1000
+if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription {
+    metadata["audiosamplerate"] = ...
+}
+```
+
+**影響範圍**: 所有透過 RTMP 推流至 YouTube（或依賴 onMetaData 取得音訊位元率的平台）的串流。
+
+---
+
 ## 6. 已知限制
 
 1. **自動重連**: ✅ 已實現（指數退避 1s→30s，最多 5 次）

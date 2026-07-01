@@ -97,6 +97,13 @@
   - `recv()` 改為 `minimumIncompleteLength: 1`
 - **效果：** 大幅降低大型 RTMP message/keyframe 造成的 `NWConnection.send` 次數，並避免 throughput 與 queue 指標失真
 
+### 14. onMetaData 音訊中繼資料遺失
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+- **行號：** `:842-849`
+- **修改：** `makeMetadata()` 將 `audiocodecid` 和 `audiodatarate` 移到 `audioInputFormat` guard 之外，確保推流時永遠包含音訊位元率資訊
+- **效果：** YouTube 不再顯示「音訊位元率 (0)」警告，因為 `onMetaData` 現在總是攜帶 `audiocodecid` 與 `audiodatarate`
+
 ## 完整設計缺陷說明
 
 詳見 [RTMP_SOCKET_DESIGN.md](RTMP_SOCKET_DESIGN.md)

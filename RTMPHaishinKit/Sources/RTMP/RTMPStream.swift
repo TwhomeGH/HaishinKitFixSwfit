@@ -839,9 +839,9 @@ public actor RTMPStream {
                 metadata["framerate"] = expectedFrameRate
             }
         }
+        metadata["audiocodecid"] = outgoing.audioSettings.format.codecid
+        metadata["audiodatarate"] = outgoing.audioSettings.bitRate / 1000
         if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription {
-            metadata["audiocodecid"] = outgoing.audioSettings.format.codecid
-            metadata["audiodatarate"] = outgoing.audioSettings.bitRate / 1000
             metadata["audiosamplerate"] = outgoing.audioSettings.format.makeSampleRate(
                 audioFormat.mSampleRate,
                 output: outgoing.audioSettings.sampleRate
