@@ -30,11 +30,8 @@ final actor RTMPSocket {
             oldValue?.forceCancel()
         }
     }
-    private var outputs: AsyncStream<Data>.Continuation? {
-        didSet {
-            oldValue?.finish()
-        }
-    }
+    private var sendBuffer = Data()
+    private var isSending = false
     private var qualityOfService: DispatchQoS = .userInitiated
     private var continuation: CheckedContinuation<Void, any Swift.Error>?
     private lazy var networkQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.RTMPSocket.network", qos: qualityOfService)
@@ -56,6 +53,8 @@ final actor RTMPSocket {
         guard !connected else {
             throw Error.invalidState
         }
+        sendBuffer.removeAll()
+        isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
         queueBytesOut = 0
@@ -87,10 +86,6 @@ final actor RTMPSocket {
     }
 
     func send(_ data: Data) {
-        enqueue(data)
-    }
-
-    private func enqueue(_ data: Data) {
         guard !data.isEmpty else {
             return
         }
@@ -103,23 +98,11 @@ final actor RTMPSocket {
             onLog?(.init(level: .warn, message: "Backpressure: send dropped", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut) max=\(Self.maxQueueBytesOut)"))
             return
         }
-        guard let outputs else {
-            onLog?(.init(level: .warn, message: "Send dropped: output stream unavailable", detail: "size=\(data.count)"))
-            return
-        }
+        sendBuffer.append(data)
         queueBytesOut += data.count
-        onLog?(.init(level: .trace, message: "Socket enqueue", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut)"))
-        switch outputs.yield(data) {
-        case .enqueued(_):
-            break
-        case .dropped(let dropped):
-            queueBytesOut = max(0, queueBytesOut - dropped.count)
-            onLog?(.init(level: .warn, message: "Socket enqueue dropped", detail: "size=\(dropped.count) queueBytesOut=\(queueBytesOut)"))
-        case .terminated:
-            queueBytesOut = max(0, queueBytesOut - data.count)
-            onLog?(.init(level: .warn, message: "Socket enqueue terminated", detail: "size=\(data.count)"))
-        @unknown default:
-            break
+        onLog?(.init(level: .trace, message: "Socket enqueue", detail: "size=\(data.count) buffer=\(sendBuffer.count) queueBytesOut=\(queueBytesOut)"))
+        if !isSending {
+            flushSendBuffer()
         }
     }
 
@@ -152,7 +135,8 @@ final actor RTMPSocket {
         }
         onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
         connected = false
-        outputs = nil
+        isSending = false
+        sendBuffer.removeAll()
         connection = nil
         continuation = nil
     }
@@ -167,22 +151,6 @@ final actor RTMPSocket {
             logger.info("Connection is ready.")
             onLog?(.init(level: .info, message: "Socket ready", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) queueBytesOut=\(queueBytesOut)"))
             connected = true
-            let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .bufferingOldest(256))
-            Task {
-                for await data in stream {
-                    guard connected else { break }
-                    do {
-                        try await send(data)
-                        totalBytesOut += data.count
-                        queueBytesOut = max(0, queueBytesOut - data.count)
-                    } catch {
-                        logger.error("Failed to send data:", error)
-                        close(error as? NWError)
-                        break
-                    }
-                }
-            }
-            self.outputs = continuation
             self.continuation?.resume()
             self.continuation = nil
         case .waiting(let error):
@@ -208,19 +176,32 @@ final actor RTMPSocket {
         logger.info("Connection viability changed to ", viability)
     }
 
-    private func send(_ data: Data) async throws {
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let connection else {
-                continuation.resume(throwing: Error.invalidState)
-                return
-            }
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                continuation.resume()
-            })
+    private func flushSendBuffer() {
+        let data = sendBuffer
+        guard !data.isEmpty else { return }
+        sendBuffer.removeAll(keepingCapacity: true)
+        isSending = true
+        guard let connection else {
+            isSending = false
+            queueBytesOut = max(0, queueBytesOut - data.count)
+            return
+        }
+        connection.send(content: data, completion: .contentProcessed { error in
+            Task { await self.didSend(data, error: error) }
+        })
+    }
+
+    private func didSend(_ data: Data, error: Error?) {
+        totalBytesOut += data.count
+        queueBytesOut = max(0, queueBytesOut - data.count)
+        onLog?(.init(level: .trace, message: "Socket sent", detail: "size=\(data.count) totalOut=\(totalBytesOut)"))
+        isSending = false
+        if !sendBuffer.isEmpty {
+            flushSendBuffer()
+        }
+        if let error {
+            logger.error("Failed to send data:", error)
+            close(error as? NWError)
         }
     }
 

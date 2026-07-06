@@ -949,6 +949,9 @@ extension RTMPStream: _Stream {
             }
             if readyState == .publishing && 0 < videoInputFrames && frameCount == 0 {
                 videoStallCount += 1
+                if 2 == videoStallCount {
+                    await connection?.log(.warn, "video stall detected, will restart pipeline", detail: "stallCount=\(videoStallCount)")
+                }
                 if 3 <= videoStallCount {
                     await restartVideoPipeline(reason: "encoded video stalled while input is active")
                 }
@@ -969,17 +972,30 @@ extension RTMPStream: _Stream {
     }
 
     func resumePublishing() async {
-        guard let name = lastPublishName, readyState == .idle else {
+        guard let name = lastPublishName else {
+            return
+        }
+        guard readyState == .idle else {
+            await connection?.log(.warn, "resumePublishing: skipped, readyState=\(readyState)")
+            return
+        }
+        guard await connection?.connected == true else {
+            await connection?.log(.warn, "resumePublishing: skipped, connection is down")
             return
         }
         do {
             try await publish(name, type: lastPublishType)
         } catch {
-            logger.error("Auto-republish failed:", error)
+            await connection?.log(.error, "Auto-republish failed", detail: "\(error)")
         }
     }
 
     private func restartVideoPipeline(reason: String) async {
+        guard await connection?.connected == true else {
+            await connection?.log(.warn, "skip restartVideoPipeline: connection is down", detail: reason)
+            videoStallCount = 0
+            return
+        }
         await connection?.log(.warn, "Restarting video pipeline", detail: reason)
         stopPublishTasks()
         outgoing.restartVideoCodec()

@@ -666,3 +666,120 @@ VBR 模式下 encoder 在複雜場景可能瞬間噴出遠高於目標 `bitRate`
 - iOS 26.0+ / tvOS 26.0+ / macOS 26.0+
 - `bitRateMode == .variable`
 - 低於 iOS 26 的裝置不設 VBV（VideoToolbox 不認識這些 key）
+
+---
+
+## 24. 改進斷線後無法重連的防護與可觀測性
+
+**檔案**: `Sources/Stream/StreamReadyState.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+### Video Stall 增加預警
+
+`dispatch(.status)` 檢測到 `frameCount == 0` 持續 2 秒時先出 `.warn` 預警，第 3 秒才觸發 `restartVideoPipeline`：
+
+```swift
+if 2 == videoStallCount {
+    await connection?.log(.warn, "video stall detected, will restart pipeline",
+        detail: "stallCount=\(videoStallCount)")
+}
+```
+
+### restartVideoPipeline 加入連線檢查
+
+觸發前檢查 `connection?.connected == true`：
+- 若 socket 已斷 → 跳過 restart（讓 reconnection 機制處理），出 `.warn` 說明原因
+- 若 socket 正常 → 照常執行
+
+### resumePublishing 加入連線與狀態檢查
+
+原本 `resumePublishing` 只在 `readyState == .idle` 時靜默跳過，現在：
+- `readyState != .idle` → `.warn` 記錄當前 state
+- `connection?.connected == false` → `.warn` 記錄連線已斷
+- `publish()` 失敗 → 透過 `connection?.log(.error, ...)` 輸出（原本只用 `logger.error`）
+
+### StreamReadyState 加入 CustomStringConvertible
+
+讓 `.warn` log 中印出 `idle` / `publishing` 等可讀字串，而非 raw integer。
+
+### 效果
+
+- 斷線後 `restartVideoPipeline` 不會再與 reconnection 互相干擾
+- 管理者可在 onLog 收到 `.warn` / `.error` 訊息診斷斷線原因
+- `resumePublishing` 失敗不再靜默吞錯
+
+---
+
+## 25. RTMPSocket 發送路徑重寫——消除雙層 AsyncStream + Write-Combining
+
+**檔案**: `Sources/RTMP/RTMPSocket.swift`
+
+### 原本問題
+
+send 路徑存在兩層獨立的 AsyncStream：
+
+```
+RTMPConnection.startOutputConsumer
+  → AsyncStream #1 (bufferingOldest 512) → consumer Task → socket.send(data)
+    → RTMPSocket.enqueue 
+      → AsyncStream #2 (bufferingOldest 256) → consumer Task → NWConnection.send
+```
+
+每個 RTMP chunk 經歷：
+1. actor hop 進 `RTMPSocket`
+2. `AsyncStream.yield()` 排入內部佇列
+3. consumer Task 喚醒 (`for await`)
+4. `withCheckedThrowingContinuation` 橋接
+5. `NWConnection.send` 送出
+6. callback 觸發 resume continuation
+
+Keyframe 可拆成上百個 chunk → 上百次上述循環，actor hop、task context switch、continuation bridge 的累積開銷可觀。
+
+### 修正
+
+**移除 `RTMPSocket` 內部的 AsyncStream 與 consumer Task**，改用 Write-Combining buffer：
+
+```swift
+private var sendBuffer = Data()
+private var isSending = false
+
+func send(_ data: Data) {
+    // ... backpressure / connected guards ...
+    sendBuffer.append(data)
+    queueBytesOut += data.count
+    if !isSending {
+        flushSendBuffer()
+    }
+}
+
+private func flushSendBuffer() {
+    let data = sendBuffer
+    sendBuffer.removeAll(keepingCapacity: true)
+    isSending = true
+    connection.send(content: data, completion: .contentProcessed { error in
+        Task { await self.didSend(data, error: error) }
+    })
+}
+
+private func didSend(_ data: Data, error: Error?) {
+    totalBytesOut += data.count
+    queueBytesOut = max(0, queueBytesOut - data.count)
+    isSending = false
+    if !sendBuffer.isEmpty {
+        flushSendBuffer()   // 發送期間累積的資料合併成下一包
+    }
+    if let error { close(error as? NWError) }
+}
+```
+
+### 行為
+
+- **Write-Combining**：`NWConnection.send` 還在進行時，後續到達的 chunk 自動累積在 `sendBuffer`。完成回呼檢查 buffer，非空則一次 flush 全部
+- **零 latency 增加**：沒有定時器。空閒時 chunk 立刻 flush；高吞吐時自動批次
+- **不再有 AsyncStream/yield/consumer Task 開銷**：資料從 RTMPConnection 的 output AsyncStream 直接進 buffer → `NWConnection.send`
+
+### 效果
+
+- 高碼率推流時 `NWConnection.send` 呼叫次數從 **chunk 數**降到 **並行 send 批次數**（通常減少 10~50 倍）
+- 消除 consumer Task 的 `for await` context switch
+- 消除 `withCheckedThrowingContinuation` per-chunk 橋接
+- 低碼率 / 音訊 chunk 行為不變（立刻送出）
