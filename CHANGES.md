@@ -640,3 +640,29 @@ RTMP message 會被切成多個 chunk。原本 socket 層逐 chunk enqueue，導
 - RTMP server 短暫無回應時不再直接失敗，給予 3 次機會（總計 ~4.5s）。
 - 錯誤細節完整傳播至 `onLog`，便於診斷。
 - 重連時 createStream 失敗不會跳過該 stream（由重連迴圈重試）。
+
+---
+
+## 23. StreamVideoAdaptiveBitRateStrategy 自動推導 VBV 約束
+
+**檔案**: `Sources/Stream/StreamBitRateStrategy.swift`
+
+### 改動
+
+ABR 策略每次調整 `bitRate` 時，在 iOS 26.0+ 且 `bitRateMode == .variable` 的條件下，自動推導並設定 `vbvMaxBitRate`：
+
+```swift
+settings.vbvMaxBitRate = settings.bitRate * 12 / 10  // 允許 20% 瞬間超標
+```
+
+三個路徑（`.status` 回升、`.publishInsufficientBWOccured` 降速、`.reset` 復原）都會同步更新。
+
+### 原因
+
+VBR 模式下 encoder 在複雜場景可能瞬間噴出遠高於目標 `bitRate` 的碼率。若接收端 buffer 小，可能造成卡頓或丟幀。VBV 約束確保瞬間峰值不超過目標的 120%。
+
+### 生效條件
+
+- iOS 26.0+ / tvOS 26.0+ / macOS 26.0+
+- `bitRateMode == .variable`
+- 低於 iOS 26 的裝置不設 VBV（VideoToolbox 不認識這些 key）

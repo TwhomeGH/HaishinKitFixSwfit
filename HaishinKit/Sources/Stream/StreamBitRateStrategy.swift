@@ -28,6 +28,12 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
         self.mamimumVideoBitRate = mamimumVideoBitrate
     }
 
+    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
+    private func deriveVBV(_ settings: inout VideoCodecSettings) {
+        guard settings.bitRateMode == .variable else { return }
+        settings.vbvMaxBitRate = settings.bitRate * 12 / 10
+    }
+
     public func adjustBitrate(_ event: NetworkMonitorEvent, stream: some StreamConvertible) async {
         switch event {
         case .status:
@@ -39,6 +45,9 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             if Self.statusCountsThreshold <= sufficientBWCounts {
                 let incremental = mamimumVideoBitRate / 5
                 videoSettings.bitRate = min(videoSettings.bitRate + incremental, mamimumVideoBitRate)
+                if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+                    deriveVBV(&videoSettings)
+                }
                 try? await stream.setVideoSettings(videoSettings)
                 sufficientBWCounts = 0
             } else {
@@ -62,6 +71,9 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
                 videoSettings.bitRate = max(videoSettings.bitRate / 2, mamimumVideoBitRate / 10)
             }
             insufficientBWCounts = Self.insufficientBWCooldown
+            if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+                deriveVBV(&videoSettings)
+            }
             try? await stream.setVideoSettings(videoSettings)
         case .reset:
             var videoSettings = await stream.videoSettings
@@ -69,6 +81,9 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             sufficientBWCounts = 0
             videoSettings.bitRate = mamimumVideoBitRate
             videoSettings.frameInterval = 0.0
+            if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+                deriveVBV(&videoSettings)
+            }
             try? await stream.setVideoSettings(videoSettings)
         }
     }
