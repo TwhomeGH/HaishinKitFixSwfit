@@ -191,7 +191,7 @@ final actor RTMPSocket {
         })
     }
 
-    private func didSend(_ data: Data, error: Error?) {
+    private func didSend(_ data: Data, error: NWError?) {
         totalBytesOut += data.count
         queueBytesOut = max(0, queueBytesOut - data.count)
         onLog?(.init(level: .trace, message: "Socket sent", detail: "size=\(data.count) totalOut=\(totalBytesOut)"))
