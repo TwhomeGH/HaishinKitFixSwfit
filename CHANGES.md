@@ -54,10 +54,7 @@
 ### 4.2 Zero-Byte 時也降 Bitrate
 
 原本 bug：`currentBytesOutPerSecond == 0` 時只降 framerate 不降 bitrate
-修正後：每次 zero-byte 事件將 bitrate **砍半**，同時逐步降低 framerate：
-- 第 1 次：bitrate / 2 + frameInterval = 30fps
-- 第 3 次：bitrate / 2 + frameInterval = ~10fps
-- 第 5 次：bitrate / 2 + frameInterval = ~5fps
+修正後：每次 zero-byte 事件將 bitrate **砍半**
 
 ### 4.3 加入降速冷卻
 
@@ -67,6 +64,21 @@
 ### 4.4 Reset 時一併歸零 frameInterval
 
 原本 `reset` 只恢復 bitrate 沒恢復 frameInterval，修正後一併歸零。
+
+### 4.5 移除 zeroBytesOutPerSecondCounts 與 frameInterval 干預
+
+**問題**：`publishInsufficientBWOccured` 路徑中，`zeroBytesOutPerSecondCounts` 只增不減，用來逐步降低 frameInterval（30fps → 10fps → 5fps 鋸齒狀循環）。這會讓 encoder 的 frameInterval 突然跳變，導致輸出幀率不穩定、PTS 抖動，表現為畫面頓挫（PPT）。
+
+**修正**：
+- 移除 `zeroBytesOutPerSecondCounts` 屬性與所有引用
+- 移除 `publishInsufficientBWOccured` 中對 `frameInterval` 的全部寫入
+- 移除除法遞減 `Int(...) / (zeroBytesOutPerSecondCounts + 1)`，改為直接使用 raw throughput
+- 策略現在只調整 `bitRate`，不干預 encoder 幀間隔
+
+**效果**：
+- 消除因 frameInterval 跳變造成的幀率抖動
+- bitrate 計算不再受不準確的計數器干擾
+- 單一關注點：ABR 只負責碼率，幀率控制回歸 encoder 自主決策
 
 ---
 

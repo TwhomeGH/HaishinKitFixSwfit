@@ -21,7 +21,6 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     public let mamimumVideoBitRate: Int
     public let mamimumAudioBitRate: Int = 0
     private var sufficientBWCounts: Int = 0
-    private var zeroBytesOutPerSecondCounts: Int = 0
     private var insufficientBWCounts: Int = 0
 
     /// Creates a new instance.
@@ -57,30 +56,15 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             var videoSettings = await stream.videoSettings
             let audioSettings = await stream.audioSettings
             if 0 < report.currentBytesOutPerSecond {
-                let bitRate = Int(report.currentBytesOutPerSecond * 8) / (zeroBytesOutPerSecondCounts + 1)
+                let bitRate = Int(report.currentBytesOutPerSecond * 8)
                 videoSettings.bitRate = max(bitRate - audioSettings.bitRate, mamimumVideoBitRate / 5)
-                videoSettings.frameInterval = 0.0
-                zeroBytesOutPerSecondCounts = 0
-                insufficientBWCounts = Self.insufficientBWCooldown
             } else {
-                // Reduce bitrate AND framerate when no bytes are flowing
                 videoSettings.bitRate = max(videoSettings.bitRate / 2, mamimumVideoBitRate / 10)
-                switch zeroBytesOutPerSecondCounts {
-                case 2:
-                    videoSettings.frameInterval = VideoCodecSettings.frameInterval10
-                case 4:
-                    videoSettings.frameInterval = VideoCodecSettings.frameInterval05
-                default:
-                    videoSettings.frameInterval = VideoCodecSettings.frameInterval30
-                    break
-                }
-                zeroBytesOutPerSecondCounts += 1
-                insufficientBWCounts = Self.insufficientBWCooldown
             }
+            insufficientBWCounts = Self.insufficientBWCooldown
             try? await stream.setVideoSettings(videoSettings)
         case .reset:
             var videoSettings = await stream.videoSettings
-            zeroBytesOutPerSecondCounts = 0
             insufficientBWCounts = 0
             sufficientBWCounts = 0
             videoSettings.bitRate = mamimumVideoBitRate
