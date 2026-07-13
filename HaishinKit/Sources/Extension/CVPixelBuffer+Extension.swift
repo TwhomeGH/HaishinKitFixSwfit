@@ -65,14 +65,16 @@ extension CVPixelBuffer {
                 let dst = self.baseAddress
                 let src = pixelBuffer.baseAddress
                 let bytesPerRowSrc = pixelBuffer.bytesPerRow
-                let bytesPerRowDst = bytesPerRowSrc
+                let bytesPerRowDst = self.bytesPerRow
+                let copyHeight = min(pixelBuffer.height, self.height)
+                let copyWidth = min(bytesPerRowSrc, bytesPerRowDst)
                 if bytesPerRowSrc == bytesPerRowDst {
-                    memcpy(dst, src, height * bytesPerRowSrc)
+                    memcpy(dst, src, copyHeight * bytesPerRowSrc)
                 } else {
                     var startOfRowSrc = src
                     var startOfRowDst = dst
-                    for _ in 0..<height {
-                        memcpy(startOfRowDst, startOfRowSrc, min(bytesPerRowSrc, bytesPerRowDst))
+                    for _ in 0..<copyHeight {
+                        memcpy(startOfRowDst, startOfRowSrc, copyWidth)
                         startOfRowSrc = startOfRowSrc?.advanced(by: bytesPerRowSrc)
                         startOfRowDst = startOfRowDst?.advanced(by: bytesPerRowDst)
                     }
@@ -81,16 +83,19 @@ extension CVPixelBuffer {
                 for plane in 0..<planeCount {
                     let dst = baseAddressOfPlane(plane)
                     let src = pixelBuffer.baseAddressOfPlane(plane)
-                    let height = getHeightOfPlane(plane)
+                    let srcHeight = pixelBuffer.getHeightOfPlane(plane)
+                    let dstHeight = getHeightOfPlane(plane)
+                    let copyHeight = min(srcHeight, dstHeight)
                     let bytesPerRowSrc = pixelBuffer.bytesPerRawOfPlane(plane)
-                    let bytesPerRowDst = bytesPerRawOfPlane(plane)
+                    let bytesPerRowDst = self.bytesPerRawOfPlane(plane)
+                    let copyWidth = min(bytesPerRowSrc, bytesPerRowDst)
                     if bytesPerRowSrc == bytesPerRowDst {
-                        memcpy(dst, src, height * bytesPerRowSrc)
+                        memcpy(dst, src, copyHeight * bytesPerRowSrc)
                     } else {
                         var startOfRowSrc = src
                         var startOfRowDst = dst
-                        for _ in 0..<height {
-                            memcpy(startOfRowDst, startOfRowSrc, min(bytesPerRowSrc, bytesPerRowDst))
+                        for _ in 0..<copyHeight {
+                            memcpy(startOfRowDst, startOfRowSrc, copyWidth)
                             startOfRowSrc = startOfRowSrc?.advanced(by: bytesPerRowSrc)
                             startOfRowDst = startOfRowDst?.advanced(by: bytesPerRowDst)
                         }

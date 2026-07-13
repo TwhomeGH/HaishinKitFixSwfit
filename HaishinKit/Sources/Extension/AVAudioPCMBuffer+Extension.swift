@@ -37,10 +37,11 @@ extension AVAudioPCMBuffer {
     @discardableResult
     @inlinable
     final func copy(_ audioBuffer: AVAudioBuffer) -> Bool {
-        guard let audioBuffer = audioBuffer as? AVAudioPCMBuffer, frameLength == audioBuffer.frameLength else {
+        guard let audioBuffer = audioBuffer as? AVAudioPCMBuffer else {
             return false
         }
-        let numSamples = Int(frameLength)
+        let numSamples = min(Int(frameLength), Int(audioBuffer.frameLength), Int(audioBuffer.frameCapacity), Int(frameCapacity))
+        guard numSamples > 0 else { return false }
         if format.isInterleaved {
             let channelCount = Int(format.channelCount)
             switch format.commonFormat {
@@ -85,7 +86,8 @@ extension AVAudioPCMBuffer {
         guard isMuted else {
             return self
         }
-        let numSamples = Int(frameLength)
+        let numSamples = min(Int(frameLength), Int(frameCapacity))
+        guard numSamples > 0 else { return self }
         if format.isInterleaved {
             let channelCount = Int(format.channelCount)
             switch format.commonFormat {
