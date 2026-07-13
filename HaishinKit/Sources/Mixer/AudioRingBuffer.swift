@@ -1,4 +1,4 @@
-import Accelerate
+﻿import Accelerate
 import AVFoundation
 import CoreAudio
 import CoreMedia
@@ -7,7 +7,7 @@ import Foundation
 final class AudioRingBuffer {
     private static let bufferCounts: UInt32 = 16
     private static let numSamples: UInt32 = 1024
-    private static let maxCapacity: Int = Int(Self.numSamples * Self.bufferCounts)
+    private static let maxCapacity: Int = Int(AudioRingBuffer.numSamples * AudioRingBuffer.bufferCounts)
 
     var counts: Int {
         lock()
@@ -25,10 +25,10 @@ final class AudioRingBuffer {
     private var inputFormat: AVAudioFormat
     private var inputBuffer: AVAudioPCMBuffer
     private var outputBuffer: AVAudioPCMBuffer
-    private var lock = os_unfair_lock()
+    private var unfairLock = os_unfair_lock()
 
     init?(_ inputFormat: AVAudioFormat, bufferCounts: UInt32 = AudioRingBuffer.bufferCounts) {
-        let capacity = min(Int(Self.numSamples * bufferCounts), Self.maxCapacity)
+        let capacity = min(Int(Self.numSamples * bufferCounts), AudioRingBuffer.maxCapacity)
         guard
             let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: Self.numSamples) else {
             return nil
@@ -41,8 +41,8 @@ final class AudioRingBuffer {
         self.outputBuffer = outputBuffer
     }
 
-    private func lock() { os_unfair_lock_lock(&lock) }
-    private func unlock() { os_unfair_lock_unlock(&lock) }
+    private func lock() { os_unfair_lock_lock(&unfairLock) }
+    private func unlock() { os_unfair_lock_unlock(&unfairLock) }
 
     func isDataAvailable(_ inNumberFrames: UInt32) -> Bool {
         return inNumberFrames <= counts
@@ -53,7 +53,7 @@ final class AudioRingBuffer {
             return
         }
         let numSamples = Int(sampleBuffer.numSamples)
-        guard numSamples <= Self.maxCapacity else {
+        guard numSamples <= AudioRingBuffer.maxCapacity else {
             skip += numSamples
             return
         }
@@ -99,7 +99,7 @@ final class AudioRingBuffer {
 
     func append(_ audioPCMBuffer: AVAudioPCMBuffer, when: AVAudioTime) {
         let numSamples = Int(audioPCMBuffer.frameLength)
-        guard numSamples <= Self.maxCapacity else { return }
+        guard numSamples <= AudioRingBuffer.maxCapacity else { return }
         lock()
         if sampleTime == 0 {
             sampleTime = when.sampleTime
