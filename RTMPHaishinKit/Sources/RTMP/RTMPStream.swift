@@ -868,6 +868,30 @@ extension RTMPStream: _Stream {
         outgoing.videoSettings = videoSettings
     }
 
+    /// Ensures the current video codec is supported by the server.
+    /// Falls back to H.264 if the server does not support HEVC/VP9/AV1.
+    /// Returns true if no fallback was needed.
+    @discardableResult
+    public func ensureVideoCodecSupported(by connection: RTMPConnection) async -> Bool {
+        guard !connection.serverSupportedVideoCodecs.isEmpty else {
+            return true
+        }
+        var settings = outgoing.videoSettings
+        switch settings.format {
+        case .hevc:
+            guard !connection.serverSupportedVideoCodecs.contains("hvc1") else {
+                return true
+            }
+            settings.format = .h264
+            settings.profileLevel = kVTProfileLevel_H264_High_AutoLevel as String
+            await connection.log(.warn, "HEVC not supported by server, fallback to H.264")
+        default:
+            return true
+        }
+        try? await setVideoSettings(settings)
+        return false
+    }
+
     public func append(_ sampleBuffer: CMSampleBuffer) {
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:

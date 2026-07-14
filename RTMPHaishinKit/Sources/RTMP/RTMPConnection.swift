@@ -229,6 +229,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public private(set) var uri: URL?
     /// The instance connected to server(true) or not(false).
     @Published public private(set) var connected = false
+    /// The video codec FourCCs the server supports (parsed from connect response).
+    public private(set) var serverSupportedVideoCodecs: Set<String> = []
     /// Whether auto-reconnect is enabled.
     public private(set) var isReconnectEnabled = false
     /// The max reconnect attempts.
@@ -744,6 +746,34 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         state = .connected
                         chunkSizeS = chunkSize
                         doOutput(.zero, chunkStreamId: .control, message: RTMPSetChunkSizeMessage(size: UInt32(chunkSizeS)))
+                        if let info = response.arguments.first as? AMFObject,
+                           let rawMap = info["videoFourCcInfoMap"],
+                           let serverMap = rawMap as? AMFObject {
+                            serverSupportedVideoCodecs = Set(serverMap.compactMap { key, value in
+                                let flags: Int
+                                if let intVal = value as? Int {
+                                    flags = intVal
+                                } else if let doubleVal = value as? Double {
+                                    flags = Int(doubleVal)
+                                } else {
+                                    return nil
+                                }
+                                guard flags & 0x02 != 0 else { return nil }
+                                return key
+                            })
+                            log(.debug, "Server supports video codecs: \(serverSupportedVideoCodecs)")
+                            let hevcFlags: Int
+                            if let intVal = videoFourCcInfoMap?["hvc1"] as? Int {
+                                hevcFlags = intVal
+                            } else if let doubleVal = videoFourCcInfoMap?["hvc1"] as? Double {
+                                hevcFlags = Int(doubleVal)
+                            } else {
+                                hevcFlags = 0
+                            }
+                            if hevcFlags & 0x02 != 0 && !serverSupportedVideoCodecs.contains("hvc1") {
+                                log(.warn, "Server does NOT support HEVC/hvc1, will fallback to H.264")
+                            }
+                        }
                     }
                     responder.resume(returning: response)
                 default:
