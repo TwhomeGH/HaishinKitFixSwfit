@@ -155,9 +155,9 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// HEVC profile tiers ordered from most to least hardware-demanding.
     /// Used for automatic fallback when a device does not support the requested profile.
     package static let hevcProfileTiers: [String] = [
-        String(kVTProfileLevel_HEVC_Main42210_AutoLevel),
-        String(kVTProfileLevel_HEVC_Main10_AutoLevel),
-        String(kVTProfileLevel_HEVC_Main_AutoLevel),
+        "HEVC_Main42210_AutoLevel",
+        "HEVC_Main10_AutoLevel",
+        "HEVC_Main_AutoLevel",
     ]
 
     /// Returns a fallback chain of HEVC profiles starting from the requested profile.
@@ -166,7 +166,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         if let startIndex = hevcProfileTiers.firstIndex(of: requestedProfile) {
             return Array(hevcProfileTiers[startIndex...])
         }
-        return [requestedProfile, String(kVTProfileLevel_HEVC_Main_AutoLevel)]
+        return [requestedProfile, "HEVC_Main_AutoLevel"]
     }
 
     /// Creates a new VideoCodecSettings instance.
