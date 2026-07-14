@@ -358,6 +358,9 @@ mixer.setVoiceChatEnabled(false)
 | `Sources/Extension/CMVideoFormatDescription+Extension.swift`（RTMP） | `configurationBox` 加入 AVC fallback |
 | `Sources/Codec/AVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
 | `Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
+| `Sources/Codec/VTSessionMode.swift` | HEVC profile fallback 機制；`makeSession()` 重構 |
+| `RTMPHaishinKit/Sources/Extension/CMVideoFormatDescription+Extension.swift` | `makeHEVCConfigurationBox()` 實作（iOS 14+ `GetParameterSetAtIndex`） |
+| `RTMPHaishinKit/Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `data` getter 完整序列化修復 |
 | `Sources/Mixer/AudioRouteManager.swift` | **新增** — AVAudioSession + AVAudioEngine 管理 |
 | `Sources/Mixer/MediaMixer.swift` | 新增 `setVoiceChatEnabled(_:)`、`audioRouteManager` 屬性 |
 
@@ -808,3 +811,105 @@ private func didSend(_ data: Data, error: Error?) {
 - 消除 consumer Task 的 `for await` context switch
 - 消除 `withCheckedThrowingContinuation` per-chunk 橋接
 - 低碼率 / 音訊 chunk 行為不變（立刻送出）
+
+---
+
+## 26. HEVC Profile 自動降階（Fallback）機制
+
+**檔案**:
+- `Sources/Codec/VideoCodecSettings.swift`
+- `Sources/Codec/VTSessionMode.swift`
+
+### 問題
+
+HEVC 編碼需要硬體支援特定的 profile level：
+- **Main** — A9+（iPhone 6s 以上）
+- **Main10**（10-bit）— A12+（iPhone XS 以上）
+- **Main42210**（4:2:2 10-bit）— A13+（iPhone 11 以上）
+
+當 `profileLevel` 設為裝置不支援的 HEVC profile（例如在 A11 裝置上設 `Main10_AutoLevel`），`VTCompressionSession` 建立或 `VTSessionSetProperty` 會直接失敗。原先的錯誤被 `catch` 吞掉後只出 warn log，session 保持 nil，後續所有 video frame 都被丟棄 — 表現為 HEVC 完全無法工作。
+
+### 修復
+
+1. **`VideoCodecSettings.hevcProfileTiers`** — 定義 HEVC profile 由高至低的階層
+2. **`VideoCodecSettings.hevcFallbackChain(for:)`** — 根據使用者請求的 profile 回傳降階鏈（例如 `Main42210` → `Main10` → `Main`）
+3. **`VTSessionMode.makeSession()`** — HEVC 格式時依序嘗試降階鏈中的每個 profile，直到其中一個成功建立 session
+
+```swift
+// 使用者請求 Main10，A11 裝置不支援 → 自動降階至 Main
+let chain = VideoCodecSettings.hevcFallbackChain(for: "HEVC_Main10_AutoLevel")
+// → ["HEVC_Main10_AutoLevel", "HEVC_Main_AutoLevel"]
+```
+
+### 行為
+
+- 成功降階時以 `logger.info` 記錄實際使用的 profile
+- 所有 profile 都失敗則拋出最後一個錯誤
+- H.264 路徑不受影響（維持原有行為）
+- 不影響 `profileLevel` 屬性的值，僅在 session 建立時覆寫 VT option
+
+---
+
+## 27. E-RTMP HEVC 修復：HEVC Sequence Header 無法送出
+
+**檔案**:
+- `RTMPHaishinKit/Sources/Extension/CMVideoFormatDescription+Extension.swift`
+- `RTMPHaishinKit/Sources/Codec/HEVCDecoderConfigurationRecord.swift`
+
+### 問題：`makeHEVCConfigurationBox()` 為空 stub
+
+HEVC Encoder 輸出 `CMSampleBuffer` 時，VT 的 format description **不一定**包含 `hvcC` extension atom。此時 `configurationBox` 走 fallback 路徑 `makeHEVCConfigurationBox()`，但該函數直接 `return nil`。
+
+後果：
+- `RTMPVideoMessage(streamId:timestamp:formatDescription:)` 因 `configurationBox` 為 nil → 建構子回傳 nil
+- HEVC **sequence header 從未送出**
+- receiver 收不到 `HEVCDecoderConfigurationRecord`，無法解碼任何 HEVC 幀
+- 表現為全黑畫面或串流無效
+
+### 問題：`HEVCDecoderConfigurationRecord.data` getter 不完整
+
+寫入序列化時僅寫 `configurationVersion`（1 byte），其餘 20+ 個欄位以及 VPS/SPS/PPS NALU array 全部遺失。
+影響：
+- `makeHEVCConfigurationBox()` 即使正確建構 record，呼叫 `record.data` 回傳的資料也無法被 decoder 解析
+- 任何重新序列化 HEVC config record 的情境（parse-then-write）都會產出損毀輸出
+
+### 修復
+
+**`HEVCDecoderConfigurationRecord.data`** — 完整實作 serialization，順序與欄位對應 ISO/IEC 14496-15 8.3.3.1.2：
+
+```
+configurationVersion          (1 byte)
+general_profile_space/tier/idc (1 byte, packed)
+general_profile_compatibility  (4 bytes)
+general_constraint_indicator   (6 bytes: UI32 + UI16)
+general_level_idc              (1 byte)
+min_spatial_segmentation_idc   (2 bytes, lower 12 bits)
+parallelismType                (1 byte, lower 2 bits)
+chromaFormat                   (1 byte, lower 2 bits)
+bitDepthLumaMinus8             (1 byte, lower 3 bits)
+bitDepthChromaMinus8           (1 byte, lower 3 bits)
+avgFrameRate                   (2 bytes)
+constantFrameRate + temporal   (1 byte, packed)
+numOfArrays                    (1 byte)
+[
+  nalUnitType | 0xC0           (1 byte)
+  numNalus                      (2 bytes)
+  [nalUnitLength + nalUnitData] (repeated per NALU)
+] (repeated per array entry)
+```
+
+**`makeHEVCConfigurationBox()`** — 在 iOS 14+ / macOS 11+ 使用 `CMVideoFormatDescriptionGetParameterSetAtIndex` 提取 VPS/SPS/PPS，填入 `HEVCDecoderConfigurationRecord` 後回傳 `record.data`。
+
+```swift
+// 從 format description 依序取得 parameter sets：
+// index 0: VPS
+// index 1: SPS
+// index 2: PPS
+// 根據 NAL unit header 的 nal_unit_type 分類後填入 record.array
+```
+
+### 行為
+
+- 優先路徑（format description 有 `hvcC` extension atom）不變
+- Fallback 路徑現在正確產生 hvcC box
+- 需要 iOS 14+（舊版 OS 無法使用 `CMVideoFormatDescriptionGetParameterSetAtIndex`，仍回 nil）

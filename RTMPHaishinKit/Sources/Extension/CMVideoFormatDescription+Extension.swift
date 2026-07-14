@@ -1,5 +1,6 @@
 import CoreImage
 import CoreMedia
+import HaishinKit
 import VideoToolbox
 
 extension CMVideoFormatDescription {
@@ -66,7 +67,48 @@ extension CMVideoFormatDescription {
     }
 
     private func makeHEVCConfigurationBox() -> Data? {
-        nil
+        guard #available(iOS 14.0, tvOS 14.0, macOS 11.0, watchOS 7.0, *) else {
+            return nil
+        }
+        var totalCount: Int = 0
+        var nalUnitHeaderLength: Int32 = 0
+        guard CMVideoFormatDescriptionGetParameterSetAtIndex(
+            self,
+            parameterSetIndex: 0,
+            parameterSetPointerOut: nil,
+            parameterSetSizeOut: nil,
+            parameterSetCountOut: &totalCount,
+            nalUnitHeaderLengthOut: &nalUnitHeaderLength
+        ) == noErr, totalCount > 0 else {
+            return nil
+        }
+        var record = HEVCDecoderConfigurationRecord()
+        record.configurationVersion = 1
+        record.lengthSizeMinusOne = UInt8(max(Int32(nalUnitHeaderLength) - 1, 0))
+        for i in 0..<totalCount {
+            var ptr: UnsafePointer<UInt8>?
+            var size: Int = 0
+            guard CMVideoFormatDescriptionGetParameterSetAtIndex(
+                self,
+                parameterSetIndex: i,
+                parameterSetPointerOut: &ptr,
+                parameterSetSizeOut: &size,
+                parameterSetCountOut: nil,
+                nalUnitHeaderLengthOut: nil
+            ) == noErr, let ptr, size > 0 else {
+                continue
+            }
+            let naluData = Data(bytes: ptr, count: size)
+            guard naluData.count >= 2 else { continue }
+            let nalTypeValue = (naluData[0] >> 1) & 0x3F
+            guard let nalType = HEVCNALUnitType(rawValue: nalTypeValue) else { continue }
+            if record.array[nalType] == nil {
+                record.array[nalType] = []
+            }
+            record.array[nalType]?.append(naluData)
+        }
+        record.numberOfArrays = UInt8(record.array.count)
+        return record.data
     }
 
     func makeDecodeConfigurtionRecord() -> (any DecoderConfigurationRecord)? {

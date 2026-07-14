@@ -78,6 +78,28 @@ extension HEVCDecoderConfigurationRecord: DataConvertible {
         get {
             let buffer = ByteArray()
                 .writeUInt8(configurationVersion)
+                .writeUInt8((generalProfileSpace & 0x3) << 6 | (generalTierFlag ? 0x20 : 0) | (generalProfileIdc & 0x1F))
+                .writeUInt32(generalProfileCompatibilityFlags)
+                .writeUInt32(UInt32(generalConstraintIndicatorFlags >> 16))
+                .writeUInt16(UInt16(generalConstraintIndicatorFlags & 0xFFFF))
+                .writeUInt8(generalLevelIdc)
+                .writeUInt16(minSpatialSegmentationIdc & 0xFFF)
+                .writeUInt8(parallelismType & 0x3)
+                .writeUInt8(chromaFormat & 0x3)
+                .writeUInt8(bitDepthLumaMinus8 & 0x7)
+                .writeUInt8(bitDepthChromaMinus8 & 0x7)
+                .writeUInt16(avgFrameRate)
+                .writeUInt8((constantFrameRate & 0x3) << 6 | (numTemporalLayers & 0x7) << 3 | (temporalIdNested & 0x1) << 1 | (lengthSizeMinusOne & 0x3))
+                .writeUInt8(numberOfArrays)
+            for nalType in array.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+                guard let nalus = array[nalType], !nalus.isEmpty else { continue }
+                _ = buffer.writeUInt8(0x80 | 0x40 | nalType.rawValue)
+                _ = buffer.writeUInt16(UInt16(nalus.count))
+                for nalu in nalus {
+                    _ = buffer.writeUInt16(UInt16(nalu.count))
+                    _ = buffer.writeBytes(nalu)
+                }
+            }
             return buffer.data
         }
         set {

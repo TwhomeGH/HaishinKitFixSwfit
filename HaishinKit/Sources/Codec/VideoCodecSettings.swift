@@ -152,6 +152,23 @@ public struct VideoCodecSettings: Codable, Sendable {
 
     package var format: Format = .h264
 
+    /// HEVC profile tiers ordered from most to least hardware-demanding.
+    /// Used for automatic fallback when a device does not support the requested profile.
+    package static let hevcProfileTiers: [String] = [
+        String(kVTProfileLevel_HEVC_Main42210_AutoLevel),
+        String(kVTProfileLevel_HEVC_Main10_AutoLevel),
+        String(kVTProfileLevel_HEVC_Main_AutoLevel),
+    ]
+
+    /// Returns a fallback chain of HEVC profiles starting from the requested profile.
+    /// Falls back to simpler profiles when the device does not support the requested one.
+    package static func hevcFallbackChain(for requestedProfile: String) -> [String] {
+        if let startIndex = hevcProfileTiers.firstIndex(of: requestedProfile) {
+            return Array(hevcProfileTiers[startIndex...])
+        }
+        return [requestedProfile, String(kVTProfileLevel_HEVC_Main_AutoLevel)]
+    }
+
     /// Creates a new VideoCodecSettings instance.
     public init(
         videoSize: CGSize = .init(width: 854, height: 480),
