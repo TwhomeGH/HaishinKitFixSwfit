@@ -898,18 +898,15 @@ numOfArrays                    (1 byte)
 ] (repeated per array entry)
 ```
 
-**`makeHEVCConfigurationBox()`** — 在 iOS 14+ / macOS 11+ 使用 `CMVideoFormatDescriptionGetParameterSetAtIndex` 提取 VPS/SPS/PPS，填入 `HEVCDecoderConfigurationRecord` 後回傳 `record.data`。
+**`makeHEVCConfigurationBox()`** — 使用 `CMFormatDescription.parameterSets`（iOS 13+）提取 VPS/SPS/PPS，填入 `HEVCDecoderConfigurationRecord` 後回傳 `record.data`。
 
 ```swift
-// 從 format description 依序取得 parameter sets：
-// index 0: VPS
-// index 1: SPS
-// index 2: PPS
-// 根據 NAL unit header 的 nal_unit_type 分類後填入 record.array
+// 遍歷 parameterSets 中的每個 NAL unit data：
+// 根據 HEVC NAL unit header 的 nal_unit_type 分類後填入 record.array
 ```
 
 ### 行為
 
 - 優先路徑（format description 有 `hvcC` extension atom）不變
 - Fallback 路徑現在正確產生 hvcC box
-- 需要 iOS 14+（舊版 OS 無法使用 `CMVideoFormatDescriptionGetParameterSetAtIndex`，仍回 nil）
+- 需要 iOS 13+（使用 `CMFormatDescription.parameterSets` 屬性，無版本疑慮）

@@ -1,7 +1,5 @@
 import CoreImage
 import CoreMedia
-import Darwin
-import Foundation
 import HaishinKit
 import VideoToolbox
 
@@ -69,39 +67,15 @@ extension CMVideoFormatDescription {
     }
 
     private func makeHEVCConfigurationBox() -> Data? {
-        guard #available(iOS 14.0, tvOS 14.0, macOS 11.0, watchOS 7.0, *) else {
-            return nil
-        }
-        typealias GetParameterSetFunc = @convention(c) (
-            CMFormatDescription?,
-            Int,
-            UnsafeMutablePointer<UnsafePointer<UInt8>?>?,
-            UnsafeMutablePointer<Int>?,
-            UnsafeMutablePointer<Int>?,
-            UnsafeMutablePointer<Int32>?
-        ) -> OSStatus
-        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
-        guard let funcPtr = dlsym(RTLD_DEFAULT, "CMVideoFormatDescriptionGetParameterSetAtIndex") else {
-            return nil
-        }
-        let getParameterSet = unsafeBitCast(funcPtr, to: GetParameterSetFunc.self)
-        var totalCount: Int = 0
-        var nalUnitHeaderLength: Int32 = 0
-        guard getParameterSet(self, 0, nil, nil, &totalCount, &nalUnitHeaderLength) == noErr,
-              totalCount > 0 else {
+        let nalUnitHeaderLength = self.nalUnitHeaderLength ?? 4
+        let parSets = self.parameterSets
+        guard parSets.count > 0 else {
             return nil
         }
         var record = HEVCDecoderConfigurationRecord()
         record.configurationVersion = 1
         record.lengthSizeMinusOne = UInt8(max(Int32(nalUnitHeaderLength) - 1, 0))
-        for i in 0..<totalCount {
-            var ptr: UnsafePointer<UInt8>?
-            var size: Int = 0
-            guard getParameterSet(self, i, &ptr, &size, nil, nil) == noErr,
-                  let ptr, size > 0 else {
-                continue
-            }
-            let naluData = Data(bytes: ptr, count: size)
+        for naluData in parSets {
             guard naluData.count >= 2 else { continue }
             let nalTypeValue = (naluData[0] >> 1) & 0x3F
             guard let nalType = HEVCNALUnitType(rawValue: nalTypeValue) else { continue }
