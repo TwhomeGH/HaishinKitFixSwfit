@@ -487,9 +487,10 @@ struct RTMPVideoMessage: RTMPMessage {
     }
 
     var isSupported: Bool {
-        return isExHeader ?
-            payload[1] == 0x68 && payload[2] == 0x76 && payload[3] == 0x63 && payload[4] == 0x31 :
-            payload[0] & 0b01110000 >> 4 == RTMPVideoCodec.avc.rawValue
+        if isExHeader {
+            return payload[1] == 0x68 && payload[2] == 0x76 && payload[3] == 0x63 && payload[4] == 0x31
+        }
+        return RTMPVideoCodec(rawValue: payload[0] & 0x0F)?.isSupported == true
     }
 
     var compositionTime: Int32 {
@@ -528,7 +529,7 @@ struct RTMPVideoMessage: RTMPMessage {
             guard let configurationBox = formatDescription.configurationBox else {
                 return nil
             }
-            var buffer = Data([0b10000000 | RTMPFrameType.key.rawValue << 4 | RTMPVideoPacketType.sequenceStart.rawValue, 0x68, 0x76, 0x63, 0x31])
+            var buffer = Data([RTMPFrameType.key.rawValue << 4 | RTMPVideoCodec.hevc.rawValue, RTMPAVCPacketType.seq.rawValue, 0, 0, 0])
             if let trackId, trackId != UInt8.max {
                 buffer.append(trackId)
             }
@@ -555,7 +556,7 @@ struct RTMPVideoMessage: RTMPMessage {
             payload = buffer
         case .hevc:
             let compositionTime = sampleBuffer.getCompositionTime(Self.ctsOffset)
-            var buffer = Data([0b10000000 | ((keyframe ? RTMPFrameType.key.rawValue : RTMPFrameType.inter.rawValue) << 4) | RTMPVideoPacketType.codedFrames.rawValue, 0x68, 0x76, 0x63, 0x31])
+            var buffer = Data([((keyframe ? RTMPFrameType.key.rawValue : RTMPFrameType.inter.rawValue) << 4) | RTMPVideoCodec.hevc.rawValue, RTMPAVCPacketType.nal.rawValue])
             buffer.append(contentsOf: compositionTime.bigEndian.data[1..<4])
             buffer.append(data)
             payload = buffer
@@ -601,10 +602,17 @@ struct RTMPVideoMessage: RTMPMessage {
                 return config.makeFormatDescription()
             }
         } else {
-            if payload[0] & 0b01110000 >> 4 == RTMPVideoCodec.avc.rawValue {
+            switch payload[0] & 0x0F {
+            case RTMPVideoCodec.avc.rawValue:
                 var config = AVCDecoderConfigurationRecord()
                 config.data = payload.subdata(in: RTMPTagType.video.headerSize..<payload.count)
                 return config.makeFormatDescription()
+            case RTMPVideoCodec.hevc.rawValue:
+                var config = HEVCDecoderConfigurationRecord()
+                config.data = payload.subdata(in: RTMPTagType.video.headerSize..<payload.count)
+                return config.makeFormatDescription()
+            default:
+                break
             }
         }
         return nil

@@ -220,6 +220,8 @@ enum RTMPVideoCodec: UInt8 {
     case screen2 = 6
     /// The AVC codec.
     case avc = 7
+    /// The HEVC codec (legacy extended CodecID=12).
+    case hevc = 12
     /// The unknown codec.
     case unknown = 0xFF
 
@@ -237,7 +239,7 @@ enum RTMPVideoCodec: UInt8 {
             return false
         case .screen2:
             return false
-        case .avc:
+        case .avc, .hevc:
             return true
         case .unknown:
             return false

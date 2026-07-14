@@ -359,8 +359,10 @@ mixer.setVoiceChatEnabled(false)
 | `Sources/Codec/AVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
 | `Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `makeFormatDescription()` 防陣列越界 |
 | `Sources/Codec/VTSessionMode.swift` | HEVC profile fallback 機制；`makeSession()` 重構 |
-| `RTMPHaishinKit/Sources/Extension/CMVideoFormatDescription+Extension.swift` | `makeHEVCConfigurationBox()` 實作（iOS 14+ `GetParameterSetAtIndex`） |
+| `RTMPHaishinKit/Sources/Extension/CMVideoFormatDescription+Extension.swift` | `makeHEVCConfigurationBox()` 實作（iOS 13+ `parameterSets`） |
 | `RTMPHaishinKit/Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `data` getter 完整序列化修復 |
+| `RTMPHaishinKit/Sources/RTMP/RTMPFoundation.swift` | 新增 `RTMPVideoCodec.hevc = 12` |
+| `RTMPHaishinKit/Sources/RTMP/RTMPMessage.swift` | HEVC 改用 CodecID=12 Legacy 格式；`isSupported`/`makeFormatDescription` 相容修復 |
 | `Sources/Mixer/AudioRouteManager.swift` | **新增** — AVAudioSession + AVAudioEngine 管理 |
 | `Sources/Mixer/MediaMixer.swift` | 新增 `setVoiceChatEnabled(_:)`、`audioRouteManager` 屬性 |
 
@@ -910,3 +912,19 @@ numOfArrays                    (1 byte)
 - 優先路徑（format description 有 `hvcC` extension atom）不變
 - Fallback 路徑現在正確產生 hvcC box
 - 需要 iOS 13+（使用 `CMFormatDescription.parameterSets` 屬性，無版本疑慮）
+
+### `RTMPVideoMessage` HEVC 封包格式修正
+
+**問題**: HEVC 影片封包使用 E-RTMP v2 ExVideoHeader 格式（`0x80 | frameType<<4 | packetType` + FourCC `hvc1`），但 SRS 5.x / Oryx 5 只支援 CodecID=12 的 Legacy 擴展格式。
+
+**症狀**: SRS 5 回 `drop unknown header video, bytes[0]=0xa1` — 因為 ExVideoHeader 的 bit 7 (isExHeader=1) 讓 legacy FrameType 檢查（預期 1-5）失敗。
+
+**修復**: HEVC 改用 CodecID=12 的 Legacy 擴展格式（與 AVC 相同結構）：
+```
+Byte 0: FrameType(4) | CodecID(12 = 0x0C)
+Byte 1: PacketType (0=seq, 1=nal)
+Bytes 2-4: CompositionTime (SI24)
+Data: hvcC box / HEVC NALUs
+```
+
+同時 `RTMPVideoMessage.isSupported` 與 `makeFormatDescription()` 增加 CodecID=12 的判斷路徑，確保接收端也能正確解析兩種格式。
