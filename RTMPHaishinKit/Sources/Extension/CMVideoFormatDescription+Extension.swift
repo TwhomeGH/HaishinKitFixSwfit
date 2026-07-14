@@ -1,5 +1,7 @@
 import CoreImage
 import CoreMedia
+import Darwin
+import Foundation
 import HaishinKit
 import VideoToolbox
 
@@ -70,16 +72,23 @@ extension CMVideoFormatDescription {
         guard #available(iOS 14.0, tvOS 14.0, macOS 11.0, watchOS 7.0, *) else {
             return nil
         }
+        typealias GetParameterSetFunc = @convention(c) (
+            CMFormatDescription?,
+            Int,
+            UnsafeMutablePointer<UnsafePointer<UInt8>?>?,
+            UnsafeMutablePointer<Int>?,
+            UnsafeMutablePointer<Int>?,
+            UnsafeMutablePointer<Int32>?
+        ) -> OSStatus
+        let RTLD_DEFAULT = UnsafeMutableRawPointer(bitPattern: -2)
+        guard let funcPtr = dlsym(RTLD_DEFAULT, "CMVideoFormatDescriptionGetParameterSetAtIndex") else {
+            return nil
+        }
+        let getParameterSet = unsafeBitCast(funcPtr, to: GetParameterSetFunc.self)
         var totalCount: Int = 0
         var nalUnitHeaderLength: Int32 = 0
-        guard CMVideoFormatDescriptionGetParameterSetAtIndex(
-            self,
-            parameterSetIndex: 0,
-            parameterSetPointerOut: nil,
-            parameterSetSizeOut: nil,
-            parameterSetCountOut: &totalCount,
-            nalUnitHeaderLengthOut: &nalUnitHeaderLength
-        ) == noErr, totalCount > 0 else {
+        guard getParameterSet(self, 0, nil, nil, &totalCount, &nalUnitHeaderLength) == noErr,
+              totalCount > 0 else {
             return nil
         }
         var record = HEVCDecoderConfigurationRecord()
@@ -88,14 +97,8 @@ extension CMVideoFormatDescription {
         for i in 0..<totalCount {
             var ptr: UnsafePointer<UInt8>?
             var size: Int = 0
-            guard CMVideoFormatDescriptionGetParameterSetAtIndex(
-                self,
-                parameterSetIndex: i,
-                parameterSetPointerOut: &ptr,
-                parameterSetSizeOut: &size,
-                parameterSetCountOut: nil,
-                nalUnitHeaderLengthOut: nil
-            ) == noErr, let ptr, size > 0 else {
+            guard getParameterSet(self, i, &ptr, &size, nil, nil) == noErr,
+                  let ptr, size > 0 else {
                 continue
             }
             let naluData = Data(bytes: ptr, count: size)
