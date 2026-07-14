@@ -205,7 +205,8 @@ public struct VideoCodecSettings: Codable, Sendable {
     func apply(_ codec: VideoCodec, rhs: VideoCodecSettings) {
         if bitRate != rhs.bitRate {
             logger.info("bitRate change from ", rhs.bitRate, " to ", bitRate)
-            let option = VTSessionOption(key: bitRateMode.key, value: NSNumber(value: bitRate))
+            let key: VTSessionOptionKey = bitRateMode == .variable ? .averageBitRate : bitRateMode.key
+            let option = VTSessionOption(key: key, value: NSNumber(value: bitRate))
             _ = codec.session?.setOption(option)
         }
         if frameInterval != rhs.frameInterval {
@@ -255,7 +256,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         var options = Set<VTSessionOption>([
             .init(key: .realTime, value: kCFBooleanTrue),
             .init(key: .profileLevel, value: profileLevel as NSObject),
-            .init(key: bitRateMode.key, value: NSNumber(value: bitRate)),
+            .init(key: bitRateMode == .variable ? .averageBitRate : bitRateMode.key, value: NSNumber(value: bitRate)),
             .init(key: .allowFrameReordering, value: (allowFrameReordering ?? false) as NSObject),
             .init(key: .pixelTransferProperties, value: [
                 "ScalingMode": scalingMode.rawValue
@@ -269,6 +270,9 @@ public struct VideoCodecSettings: Codable, Sendable {
                 limits[1] = dataRateLimits[1] == 0 ? Double(1.0) : dataRateLimits[1]
                 options.insert(.init(key: .dataRateLimits, value: limits as NSArray))
             }
+        }
+        if bitRateMode == .variable {
+            options.insert(.init(key: .variableBitRate, value: kCFBooleanTrue))
         }
         if bitRateMode == .quality, let quality {
             options.insert(.init(key: .quality, value: NSNumber(value: quality)))

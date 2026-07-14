@@ -4,14 +4,39 @@
 
 ---
 
-## 1. VBR (Variable BitRate) 支援版本修正
+## 1. VBR (Variable BitRate) 支援修正與 Bug 修復
 
 **檔案**: `Sources/Codec/VTSessionOptionKey.swift` `Sources/Codec/VideoCodecSettings.swift`
 
+### Availability 修正
 - `kVTCompressionPropertyKey_VariableBitRate` 的 `@available` 從 **iOS 26.0** 下修至 **iOS 13.0**
 - 同步修正 `VideoCodecSettings.BitRateMode.variable` 的 availability
 
 > 原因：VBR constant 在 iOS 13 實際上就已存在並可運作，Apple 直到 iOS 26 才正式公開文檔。
+
+### Bug 修復：`VariableBitRate` 屬性值型別錯誤
+
+**問題**：`makeOptions()` 與 `apply()` 將 `bitRate`（整數）直接傳入 `kVTCompressionPropertyKey_VariableBitRate`。但此屬性是 `CFBoolean` 開關（enable/disable），應傳入 `kCFBooleanTrue` 而非數值。
+
+後果：
+- `.variable` 模式下 `kVTCompressionPropertyKey_AverageBitRate` 從未被設定，encoder 沒有目標碼率
+- 即使 VBV 參數正確，VBR 也無法正常運作
+
+**修復**：
+- `makeOptions()` 與 `apply()` 中，`.variable` 模式改以 `.averageBitRate` key 傳入 `bitRate` 數值（作為目標碼率）
+- `.variable` 模式額外插入 `VariableBitRate = kCFBooleanTrue` 啟用 VBR
+
+```swift
+// ❌ 原本：VariableBitRate = NSNumber(bitRate) — 型別錯誤
+.init(key: .variableBitRate, value: NSNumber(value: bitRate))
+
+// ✅ 修正後：AverageBitRate = bitRate（目標碼率）+ VariableBitRate = true（啟用 VBR）
+.init(key: .averageBitRate, value: NSNumber(value: bitRate))
+// ... 並在 options 中加入：
+options.insert(.init(key: .variableBitRate, value: kCFBooleanTrue))
+```
+
+**生效條件**：所有使用 `bitRateMode = .variable` 的情境。VBV 約束（iOS 26+）仍由 `StreamVideoAdaptiveBitRateStrategy.deriveVBV()` 自動設定。
 
 ---
 
