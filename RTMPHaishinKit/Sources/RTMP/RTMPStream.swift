@@ -277,8 +277,10 @@ public actor RTMPStream {
             switch readyState {
             case .publishing:
                 guard let message = RTMPVideoMessage(streamId: id, timestamp: 0, formatDescription: videoFormat) else {
+                    Task { await connection?.log(.warn, "video: sequence header creation failed") }
                     return
                 }
+                Task { await connection?.log(.debug, "video: sequence header sent, size=\(message.payload.count) first=0x\(String(format: "%02x", message.payload[0]))") }
                 doOutput(oldValue == nil ? .zero : .one, chunkStreamId: .video, message: message)
             default:
                 break
