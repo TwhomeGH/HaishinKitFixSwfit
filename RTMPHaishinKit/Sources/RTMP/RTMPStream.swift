@@ -2,6 +2,7 @@
 import AVFoundation
 import Combine
 import HaishinKit
+import VideoToolbox
 
 #if canImport(UIKit)
 import UIKit
@@ -884,7 +885,7 @@ extension RTMPStream: _Stream {
                 return true
             }
             settings.format = .h264
-            settings.profileLevel = "H264_High_AutoLevel"
+            settings.profileLevel = kVTProfileLevel_H264_High_AutoLevel as String
             await connection.log(.warn, "HEVC not supported by server, fallback to H.264")
         default:
             return true
