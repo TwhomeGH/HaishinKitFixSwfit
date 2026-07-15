@@ -3,6 +3,8 @@ import VideoToolbox
 
 /// Constraints on the video codec compression settings.
 public struct VideoCodecSettings: Codable, Sendable {
+    /// The number of frame rate for 60fps.
+    public static let frameInterval60 = (1 / 60) - 0.001
     /// The number of frame rate for 30fps.
     public static let frameInterval30 = (1 / 30) - 0.001
     /// The number of frame rate for 10fps.

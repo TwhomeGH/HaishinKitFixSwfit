@@ -363,6 +363,9 @@ mixer.setVoiceChatEnabled(false)
 | `RTMPHaishinKit/Sources/Codec/HEVCDecoderConfigurationRecord.swift` | `data` getter 完整序列化修復 |
 | `RTMPHaishinKit/Sources/RTMP/RTMPFoundation.swift` | 新增 `RTMPVideoCodec.hevc = 12` |
 | `RTMPHaishinKit/Sources/RTMP/RTMPMessage.swift` | HEVC 改用 CodecID=12 Legacy 格式；`isSupported`/`makeFormatDescription` 相容修復 |
+| `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift` | 新增 `serverSupportedVideoCodecs` 與 connect response 解析 |
+| `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift` | 新增 `ensureVideoCodecSupported(by:)`；追加 `import VideoToolbox` |
+| `HaishinKit/Sources/Codec/VideoCodecSettings.swift` | 新增 `frameInterval60` 常數 |
 | `Sources/Mixer/AudioRouteManager.swift` | **新增** — AVAudioSession + AVAudioEngine 管理 |
 | `Sources/Mixer/MediaMixer.swift` | 新增 `setVoiceChatEnabled(_:)`、`audioRouteManager` 屬性 |
 
@@ -928,3 +931,64 @@ Data: hvcC box / HEVC NALUs
 ```
 
 同時 `RTMPVideoMessage.isSupported` 與 `makeFormatDescription()` 增加 CodecID=12 的判斷路徑，確保接收端也能正確解析兩種格式。
+
+### `frameInterval60` 新增
+
+補上缺少的 60fps 對應常數：
+
+```swift
+public static let frameInterval60 = (1 / 60) - 0.001
+```
+
+---
+
+## 28. Server Codec Capability 偵測與自動降級
+
+**檔案**:
+- `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+### 問題
+
+當 client 設定 HEVC 編碼推流時，若目標 server（如 Twitch）不支援 HEVC，會因為 server 無法解碼而導致連線異常或串流不可播放。原本 library 完全沒有檢查 server 端是否支援所選 codec。
+
+### 修復
+
+**`RTMPConnection.serverSupportedVideoCodecs`** — connect 回應自動解析 server 的 `videoFourCcInfoMap`：
+
+```swift
+// 儲存 server 宣告支援的 video codec FourCC 集合
+public private(set) var serverSupportedVideoCodecs: Set<String> = []
+```
+
+`_result` 處理時從 AMF response 的 `videoFourCcInfoMap` 物件提取 key（如 `hvc1`、`av01`、`vp09`），僅保留 `canDecode` 旗標（value & 0x02 != 0）的 codec。
+
+不支援時出 warn log：
+```
+[WARN] Server does NOT support HEVC/hvc1, will fallback to H.264
+```
+
+**`RTMPStream.ensureVideoCodecSupported(by:)`** — 提供流層自動降級方法：
+
+```swift
+@discardableResult
+public func ensureVideoCodecSupported(by connection: RTMPConnection) async -> Bool
+```
+
+- 檢查 `connection.serverSupportedVideoCodecs` 是否包含 `hvc1`
+- 若不包含且當前設定為 `.hevc` → 自動切換為 `.h264`，profile 設 `High_AutoLevel`
+- 回傳 `false` 表示發生降級
+
+### 使用方式
+
+在 connect 成功後呼叫：
+
+```swift
+if let conn = rtmpConnection {
+    let supported = await rtmpStream.ensureVideoCodecSupported(by: conn)
+    if !supported {
+        RPConfig.shared.state.videoCodec = "H264"
+        await applyAllVideoSettings(width: width, height: height)
+    }
+}
+```
