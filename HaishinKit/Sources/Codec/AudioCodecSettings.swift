@@ -135,7 +135,7 @@ public struct AudioCodecSettings: Codable, Sendable {
         }
 
         /// Human-readable description including the audio object type.
-        var audioDescription: String {
+        package var audioDescription: String {
             switch self {
             case .aac:
                 return "AAC LC"
