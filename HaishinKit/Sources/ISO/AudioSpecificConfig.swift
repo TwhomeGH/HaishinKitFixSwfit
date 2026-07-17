@@ -52,7 +52,7 @@ package struct AudioSpecificConfig: Equatable {
         }
     }
 
-    enum SamplingFrequency: UInt8 {
+    package enum SamplingFrequency: UInt8 {
         case hz96000 = 0
         case hz88200 = 1
         case hz64000 = 2
@@ -132,7 +132,7 @@ package struct AudioSpecificConfig: Equatable {
         }
     }
 
-    enum ChannelConfiguration: UInt8 {
+    package enum ChannelConfiguration: UInt8 {
         case definedInAOTSpecificConfig = 0
         case frontCenter = 1
         case frontLeftAndFrontRight = 2
