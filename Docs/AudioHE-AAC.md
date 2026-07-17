@@ -4,7 +4,7 @@
 
 ```swift
 // 自動選擇 device 支援的最佳 AAC 格式（heAacV2 → heAac → aac）
-var audioSettings = await mediaMixer.audioMixerSettings
+var audioSettings = await rtmpStream.audioSettings
 audioSettings.format = AudioCodecSettings.bestAacFormat
 await mediaMixer.setAudioMixerSettings(audioSettings)
 
