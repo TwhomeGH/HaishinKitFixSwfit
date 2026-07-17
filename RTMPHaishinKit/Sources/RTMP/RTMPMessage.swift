@@ -410,6 +410,7 @@ struct RTMPAudioMessage: RTMPMessage {
             var buffer = Data([Self.aacHeader, RTMPAACPacketType.seq.rawValue])
             buffer.append(contentsOf: config.bytes)
             self.payload = buffer
+            logger.info("audio: AAC sequence header type=\(config.type.rawValue) freq=\(config.frequency.rawValue) ch=\(config.channelConfig.rawValue)")
         }
     }
 

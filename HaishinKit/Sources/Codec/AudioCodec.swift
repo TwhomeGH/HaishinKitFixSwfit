@@ -165,7 +165,7 @@ final class AudioCodec {
             audioTime.reset()
         }
         if logger.isEnabledFor(level: .info) {
-            logger.info("converter:", converter ?? "nil", ",inputFormat:", inputFormat, ",outputFormat:", outputFormat)
+            logger.info("audio: format=\(settings.format.audioDescription) input=\(inputFormat) output=\(outputFormat)")
         }
         return converter
     }

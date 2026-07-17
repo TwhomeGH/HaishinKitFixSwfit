@@ -138,7 +138,7 @@ enum EnhancedRTMPCapability {
 extension AudioCodecSettings.Format {
     var codecid: Int {
         switch self {
-        case .aac:
+        case .aac, .heAac, .heAacV2:
             return Int(RTMPAudioCodec.aac.rawValue)
         case .opus:
             return Int(RTMPAudioFourCC.opus.rawValue)

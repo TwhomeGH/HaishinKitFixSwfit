@@ -19,6 +19,7 @@ package struct AudioSpecificConfig: Equatable {
         case twinqVQ = 7
         case celp = 8
         case hxvc = 9
+        case aacPs = 29
 
         init?(objectID: MPEG4ObjectID?) {
             switch objectID {
@@ -43,6 +44,9 @@ package struct AudioSpecificConfig: Equatable {
             case .none:
                 return nil
             @unknown default:
+                if let rawValue = (objectID?.rawValue).map(UInt8.init), let t = AudioObjectType(rawValue: rawValue) {
+                    self = t
+                }
                 return nil
             }
         }

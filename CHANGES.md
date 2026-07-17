@@ -366,6 +366,11 @@ mixer.setVoiceChatEnabled(false)
 | `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift` | 新增 `serverSupportedVideoCodecs` 與 connect response 解析 |
 | `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift` | 新增 `ensureVideoCodecSupported(by:)`；追加 `import VideoToolbox` |
 | `HaishinKit/Sources/Codec/VideoCodecSettings.swift` | 新增 `frameInterval60` 常數 |
+| `HaishinKit/Sources/Codec/AudioCodecSettings.swift` | 新增 `.heAac`/`.heAacV2` 格式、`bestAacFormat`、`isDeviceSupported` |
+| `HaishinKit/Sources/Codec/AudioCodec.swift` | 改進 audio format log |
+| `HaishinKit/Sources/ISO/AudioSpecificConfig.swift` | 新增 `.aacPs = 29`、`AudioObjectType` 支援未知 rawValue |
+| `RTMPHaishinKit/Sources/RTMP/RTMPEnhanced.swift` | `codecid` 延伸 `.heAac`/`.heAacV2` |
+| `RTMPHaishinKit/Sources/RTMP/RTMPMessage.swift` | RTMPAudioMessage 新增 AAC type log |
 | `Sources/Mixer/AudioRouteManager.swift` | **新增** — AVAudioSession + AVAudioEngine 管理 |
 | `Sources/Mixer/MediaMixer.swift` | 新增 `setVoiceChatEnabled(_:)`、`audioRouteManager` 屬性 |
 
@@ -992,3 +997,63 @@ if let conn = rtmpConnection {
     }
 }
 ```
+
+---
+
+## 29. HE-AAC v1/v2 支援與自動降級
+
+**檔案**:
+- `HaishinKit/Sources/Codec/AudioCodecSettings.swift`
+- `HaishinKit/Sources/ISO/AudioSpecificConfig.swift`
+- `HaishinKit/Sources/Codec/AudioCodec.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPEnhanced.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPMessage.swift`
+
+### 新增格式
+
+`AudioCodecSettings.Format` 新增兩種高效 AAC 格式：
+
+| 格式 | CoreAudio FormatID | AudioObjectType | 說明 |
+|---|---|---|---|
+| `.aac` | `kAudioFormatMPEG4AAC` | 2 (AAC LC) | 標準 AAC |
+| `.heAac` | `kAudioFormatMPEG4AAC_HE` | 5 (SBR) | HE-AAC v1 (AAC+SBR) |
+| `.heAacV2` | `kAudioFormatMPEG4AAC_HE_V2` | 29 (PS) | HE-AAC v2 (AAC+SBR+PS) |
+
+### Device 支援偵測
+
+`AudioCodecSettings.Format.isDeviceSupported` 透過 `AudioConverterNew` 測試特定 `AudioFormatID` 是否可用：
+
+```swift
+var isDeviceSupported: Bool {
+    switch self {
+    case .heAacV2:
+        return AudioCodecSettings.isAacFormatSupported(kAudioFormatMPEG4AAC_HE_V2)
+    case .heAac:
+        return AudioCodecSettings.isAacFormatSupported(kAudioFormatMPEG4AAC_HE)
+    case .aac, .opus, .pcm:
+        return true
+    }
+}
+```
+
+### 自動降級鏈
+
+`AudioCodecSettings.bestAacFormat` 依序嘗試 `heAacV2 → heAac → aac`，只回傳 device 真正支援的格式：
+
+```swift
+public static var bestAacFormat: Format {
+    for format in preferredAacFormats {
+        if format.isDeviceSupported { return format }
+    }
+    return .aac
+}
+```
+
+### RTMP 相容性
+
+HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 AudioSpecificConfig 中的 `AudioObjectType`。接收端會自動根據 ASC 判斷實際格式。
+
+### Log 輸出
+
+- `AudioCodec` 建立 converter 時輸出 `audio: format=HE-AAC v2 (AAC+SBR+PS) input=... output=...`
+- `RTMPAudioMessage` 送出 sequence header 時輸出 `audio: AAC sequence header type=29 freq=... ch=...`

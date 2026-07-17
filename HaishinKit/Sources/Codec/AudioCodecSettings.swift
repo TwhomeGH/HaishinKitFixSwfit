@@ -14,6 +14,10 @@ public struct AudioCodecSettings: Codable, Sendable {
     public enum Format: String, Codable, Sendable, CaseIterable {
         /// The AAC format.
         case aac
+        /// The HE-AAC v1 format (AAC LC + SBR).
+        case heAac
+        /// The HE-AAC v2 format (AAC LC + SBR + Parametric Stereo).
+        case heAacV2
         /// The OPUS format.
         case opus
         /// The PCM format.
@@ -23,6 +27,10 @@ public struct AudioCodecSettings: Codable, Sendable {
             switch self {
             case .aac:
                 return kAudioFormatMPEG4AAC
+            case .heAac:
+                return kAudioFormatMPEG4AAC_HE
+            case .heAacV2:
+                return kAudioFormatMPEG4AAC_HE_V2
             case .opus:
                 return kAudioFormatOpus
             case .pcm:
@@ -34,6 +42,10 @@ public struct AudioCodecSettings: Codable, Sendable {
             switch self {
             case .aac:
                 return UInt32(MPEG4ObjectID.AAC_LC.rawValue)
+            case .heAac:
+                return UInt32(MPEG4ObjectID.AAC_SBR.rawValue)
+            case .heAacV2:
+                return UInt32(AudioSpecificConfig.AudioObjectType.aacPs.rawValue)
             case .opus:
                 return 0
             case .pcm:
@@ -47,6 +59,8 @@ public struct AudioCodecSettings: Codable, Sendable {
             switch self {
             case .aac:
                 return 1
+            case .heAac, .heAacV2:
+                return 1
             case .opus:
                 return 1
             case .pcm:
@@ -56,9 +70,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
         var bitsPerChannel: UInt32 {
             switch self {
-            case .aac:
-                return 0
-            case .opus:
+            case .aac, .heAac, .heAacV2, .opus:
                 return 0
             case .pcm:
                 return 32
@@ -67,9 +79,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
         var bytesPerPacket: UInt32 {
             switch self {
-            case .aac:
-                return 0
-            case .opus:
+            case .aac, .heAac, .heAacV2, .opus:
                 return 0
             case .pcm:
                 return (bitsPerChannel / 8)
@@ -78,9 +88,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
         var bytesPerFrame: UInt32 {
             switch self {
-            case .aac:
-                return 0
-            case .opus:
+            case .aac, .heAac, .heAacV2, .opus:
                 return 0
             case .pcm:
                 return (bitsPerChannel / 8)
@@ -89,9 +97,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
         var inputBufferCounts: Int {
             switch self {
-            case .aac:
-                return 6
-            case .opus:
+            case .aac, .heAac, .heAacV2, .opus:
                 return 6
             case .pcm:
                 return 1
@@ -100,9 +106,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
         var outputBufferCounts: Int {
             switch self {
-            case .aac:
-                return 1
-            case .opus:
+            case .aac, .heAac, .heAacV2, .opus:
                 return 1
             case .pcm:
                 return 24
@@ -118,6 +122,34 @@ public struct AudioCodecSettings: Codable, Sendable {
             }
         }
 
+        /// Checks whether this audio format is supported on the current device.
+        var isDeviceSupported: Bool {
+            switch self {
+            case .heAacV2:
+                return AudioCodecSettings.isAacFormatSupported(kAudioFormatMPEG4AAC_HE_V2)
+            case .heAac:
+                return AudioCodecSettings.isAacFormatSupported(kAudioFormatMPEG4AAC_HE)
+            case .aac, .opus, .pcm:
+                return true
+            }
+        }
+
+        /// Human-readable description including the audio object type.
+        var audioDescription: String {
+            switch self {
+            case .aac:
+                return "AAC LC"
+            case .heAac:
+                return "HE-AAC v1 (AAC+SBR)"
+            case .heAacV2:
+                return "HE-AAC v2 (AAC+SBR+PS)"
+            case .opus:
+                return "Opus"
+            case .pcm:
+                return "PCM"
+            }
+        }
+
         package func makeSampleRate(_ input: Float64, output: Float64) -> Float64 {
             let sampleRate = output == 0 ? input : output
             guard let supportedSampleRate else {
@@ -128,7 +160,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
         func makeFramesPerPacket(_ sampleRate: Double) -> UInt32 {
             switch self {
-            case .aac:
+            case .aac, .heAac, .heAacV2:
                 return 1024
             case .opus:
                 // https://www.rfc-editor.org/rfc/rfc6716#section-2.1.4
@@ -140,11 +172,18 @@ public struct AudioCodecSettings: Codable, Sendable {
         }
 
         func makeAudioBuffer(_ format: AVAudioFormat) -> AVAudioBuffer? {
+            let maxPacketSize: Int
             switch self {
-            case .aac:
-                return AVAudioCompressedBuffer(format: format, packetCapacity: 1, maximumPacketSize: 1024 * Int(format.channelCount))
-            case .opus:
-                return AVAudioCompressedBuffer(format: format, packetCapacity: 1, maximumPacketSize: 1024 * Int(format.channelCount))
+            case .heAacV2:
+                maxPacketSize = 4096 * Int(format.channelCount)
+            case .heAac:
+                maxPacketSize = 2048 * Int(format.channelCount)
+            default:
+                maxPacketSize = 1024 * Int(format.channelCount)
+            }
+            switch self {
+            case .aac, .heAac, .heAacV2, .opus:
+                return AVAudioCompressedBuffer(format: format, packetCapacity: 1, maximumPacketSize: maxPacketSize)
             case .pcm:
                 return AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024)
             }
@@ -178,6 +217,52 @@ public struct AudioCodecSettings: Codable, Sendable {
                 channelLayout: config?.audioChannelLayout
             )
         }
+    }
+
+    /// The preferred AAC formats in order of preference (best first).
+    public static let preferredAacFormats: [Format] = [.heAacV2, .heAac, .aac]
+
+    /// Returns the best AAC format supported by the current device.
+    /// Falls back through heAacV2 → heAac → aac.
+    public static var bestAacFormat: Format {
+        for format in preferredAacFormats {
+            if format.isDeviceSupported {
+                return format
+            }
+        }
+        return .aac
+    }
+
+    /// Checks whether a specific AAC format ID is supported on the current device.
+    package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
+        var inDesc = AudioStreamBasicDescription(
+            mSampleRate: 44100,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsPacked | kAudioFormatFlagIsSignedInteger,
+            mBytesPerPacket: 2,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 2,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 16,
+            mReserved: 0
+        )
+        var outDesc = AudioStreamBasicDescription(
+            mSampleRate: 44100,
+            mFormatID: formatID,
+            mFormatFlags: 0,
+            mBytesPerPacket: 0,
+            mFramesPerPacket: 1024,
+            mBytesPerFrame: 0,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 0,
+            mReserved: 0
+        )
+        var audioConverter: AudioConverterRef?
+        let status = AudioConverterNew(&inDesc, &outDesc, &audioConverter)
+        if let audioConverter {
+            AudioConverterDispose(audioConverter)
+        }
+        return status == noErr
     }
 
     /// Specifies the bitRate of audio output.
