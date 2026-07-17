@@ -215,9 +215,9 @@ package struct AudioSpecificConfig: Equatable {
         }
     }
 
-    let type: AudioObjectType
-    let frequency: SamplingFrequency
-    let channelConfig: ChannelConfiguration
+    package let type: AudioObjectType
+    package let frequency: SamplingFrequency
+    package let channelConfig: ChannelConfiguration
     let frameLengthFlag = false
 
     package var bytes: [UInt8] {
