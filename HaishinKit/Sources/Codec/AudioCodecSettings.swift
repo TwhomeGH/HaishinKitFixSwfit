@@ -235,7 +235,7 @@ public struct AudioCodecSettings: Codable, Sendable {
 
     /// Checks whether a specific AAC format ID is supported on the current device.
     package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
-        let inDesc = AudioStreamBasicDescription(
+        var inDesc = AudioStreamBasicDescription(
             mSampleRate: 44100,
             mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
@@ -257,7 +257,7 @@ public struct AudioCodecSettings: Codable, Sendable {
             mBitsPerChannel: 0,
             mReserved: 0
         )
-        let inputFormat = AVAudioFormat(streamDescription: inDesc)
+        let inputFormat = AVAudioFormat(streamDescription: &inDesc)
         let outputFormat = AVAudioFormat(streamDescription: &outDesc)
         guard let inputFormat, let outputFormat else {
             return false
