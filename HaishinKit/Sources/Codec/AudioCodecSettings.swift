@@ -235,15 +235,15 @@ public struct AudioCodecSettings: Codable, Sendable {
 
     /// Checks whether a specific AAC format ID is supported on the current device.
     package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
-        var inDesc = AudioStreamBasicDescription(
+        let inDesc = AudioStreamBasicDescription(
             mSampleRate: 44100,
             mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsPacked | kAudioFormatFlagIsSignedInteger,
-            mBytesPerPacket: 2,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 8,
             mFramesPerPacket: 1,
-            mBytesPerFrame: 2,
+            mBytesPerFrame: 8,
             mChannelsPerFrame: 2,
-            mBitsPerChannel: 16,
+            mBitsPerChannel: 32,
             mReserved: 0
         )
         var outDesc = AudioStreamBasicDescription(
@@ -257,12 +257,12 @@ public struct AudioCodecSettings: Codable, Sendable {
             mBitsPerChannel: 0,
             mReserved: 0
         )
-        var audioConverter: AudioConverterRef?
-        let status = AudioConverterNew(&inDesc, &outDesc, &audioConverter)
-        if let audioConverter {
-            AudioConverterDispose(audioConverter)
+        let inputFormat = AVAudioFormat(streamDescription: inDesc)
+        let outputFormat = AVAudioFormat(streamDescription: &outDesc)
+        guard let inputFormat, let outputFormat else {
+            return false
         }
-        return status == noErr
+        return AVAudioConverter(from: inputFormat, to: outputFormat) != nil
     }
 
     /// Specifies the bitRate of audio output.
