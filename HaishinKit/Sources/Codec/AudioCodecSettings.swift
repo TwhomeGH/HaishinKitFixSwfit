@@ -235,12 +235,6 @@ public struct AudioCodecSettings: Codable, Sendable {
 
     /// Checks whether a specific AAC format ID is supported on the current device.
     package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
-        if #available(iOS 17.0, tvOS 17.0, macOS 14.0, watchOS 10.0, *) {
-            return AVAudioApplication.shared.supportedAudioFormats.contains { $0.formatID == formatID }
-        }
-        if AVAudioSession.sharedInstance().availableEncoders.contains(where: { $0.formatID == formatID }) {
-            return true
-        }
         var inDesc = AudioStreamBasicDescription(
             mSampleRate: 44100,
             mFormatID: kAudioFormatLinearPCM,
