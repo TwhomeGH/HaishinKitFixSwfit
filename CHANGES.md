@@ -1019,22 +1019,28 @@ if let conn = rtmpConnection {
 | `.heAac` | `kAudioFormatMPEG4AAC_HE` | 5 (SBR) | HE-AAC v1 (AAC+SBR) |
 | `.heAacV2` | `kAudioFormatMPEG4AAC_HE_V2` | 29 (PS) | HE-AAC v2 (AAC+SBR+PS) |
 
-### Device 支援偵測
+### Device 支援偵測（三層檢測）
 
-`AudioCodecSettings.Format.isDeviceSupported` 透過 `AudioConverterNew` 測試特定 `AudioFormatID` 是否可用：
+`AudioCodecSettings.Format.isDeviceSupported` 依序嘗試三種方式檢查 HE-AAC 是否可用：
+
+1. **iOS 17+** → `AVAudioApplication.shared.supportedAudioFormats`
+2. **Fallback** → `AVAudioSession.sharedInstance().availableEncoders`
+3. **最後防線** → `AudioConverterNew` 使用 **stereo (2ch) + 44.1kHz** 測試編碼器是否回應 `noErr`
 
 ```swift
-var isDeviceSupported: Bool {
-    switch self {
-    case .heAacV2:
-        return AudioCodecSettings.isAacFormatSupported(kAudioFormatMPEG4AAC_HE_V2)
-    case .heAac:
-        return AudioCodecSettings.isAacFormatSupported(kAudioFormatMPEG4AAC_HE)
-    case .aac, .opus, .pcm:
+package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
+    if #available(iOS 17.0, tvOS 17.0, macOS 14.0, watchOS 10.0, *) {
+        return AVAudioApplication.shared.supportedAudioFormats.contains { $0.formatID == formatID }
+    }
+    if AVAudioSession.sharedInstance().availableEncoders.contains(where: { $0.formatID == formatID }) {
         return true
     }
+    // AudioConverterNew with 2ch stereo test
+    ...
 }
 ```
+
+> 原本用 mono (1ch) + `mFramesPerPacket: 1024` 測試，HE-AAC 需要 stereo 才能啟用，所以一直回 false。
 
 ### 自動降級鏈
 
