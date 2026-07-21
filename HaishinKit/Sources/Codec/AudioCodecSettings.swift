@@ -233,6 +233,21 @@ public struct AudioCodecSettings: Codable, Sendable {
         return .aac
     }
 
+    /// Returns the recommended bitrate for the best AAC format on this device.
+    /// - heAacV2: 48 kbps (parametric stereo is efficient at low bitrates)
+    /// - heAac:   72 kbps (SBR provides good quality at medium bitrates)
+    /// - aac:    128 kbps (full stereo needs higher bitrate)
+    public static var bestAacBitrate: Int {
+        switch bestAacFormat {
+        case .heAacV2:
+            return 48_000
+        case .heAac:
+            return 72_000
+        case .aac, .pcm:
+            return 128_000
+        }
+    }
+
     /// Checks whether a specific AAC format ID is supported on the current device.
     package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
         var inDesc = AudioStreamBasicDescription(
