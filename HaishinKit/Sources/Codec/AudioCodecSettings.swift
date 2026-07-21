@@ -245,6 +245,10 @@ public struct AudioCodecSettings: Codable, Sendable {
             return 72_000
         case .aac, .pcm, .opus:
             return 128_000
+        
+        default:
+            return 64_000
+
         }
     }
 
