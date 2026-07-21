@@ -304,8 +304,7 @@ public actor RTMPStream {
     deinit {
         publishTask?.cancel()
         outputContinuation?.finish()
-        mixerAudioContinuation?.finish()
-        mixerVideoContinuation?.finish()
+        mixerOutputBridge.finish()
         outputs.removeAll()
     }
 
