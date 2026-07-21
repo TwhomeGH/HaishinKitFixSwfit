@@ -105,6 +105,14 @@ package final class OutgoingStream: @unchecked Sendable {
         videoCodec.stopRunning()
         videoCodec.startRunning()
     }
+
+    package func restartAudioCodec() {
+        guard isRunning else {
+            return
+        }
+        audioCodec.stopRunning()
+        audioCodec.startRunning()
+    }
 }
 
 extension OutgoingStream: Runner {

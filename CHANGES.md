@@ -36,7 +36,38 @@
 options.insert(.init(key: .variableBitRate, value: kCFBooleanTrue))
 ```
 
-**生效條件**：所有使用 `bitRateMode = .variable` 的情境。VBV 約束（iOS 26+）仍由 `StreamVideoAdaptiveBitRateStrategy.deriveVBV()` 自動設定。
+**生效條件**：所有使用 `bitRateMode = .variable` 的情境。
+
+### VBR 模式改進：自動套用資料率限制
+
+**檔案**: `Sources/Codec/VideoCodecSettings.swift`
+
+#### 改動
+
+1. **`dataRateLimits` 延伸至 VBR 模式**（`makeOptions()` + `apply()`）
+   - 原本 `.variable` 模式完全跳過 `dataRateLimits` 設定，encoder 無軟上限
+   - 現在 `.variable` 與 `.average` 共用同一套 `dataRateLimits` 邏輯：
+     - 自動值：`bitRate / 8 * 1.5` bytes/s，1 秒窗口（即 1.5× bitrate 軟上限）
+     - 使用者可手動設定自訂值
+   - 此保護在所有 iOS 版本上皆有效
+
+2. **`vbvMaxBitRate` / `vbvBufferDuration` 自動計算**（`makeOptions()`）
+   - VBR 模式下若使用者未指定，自動設 `vbvMaxBitRate = bitRate * 12/10`、`vbvBufferDuration = 1.0`
+   - 集中於 iOS 26.0+ 的 `#available` 區塊內，與其他 VBV 參數一起管理
+
+3. **`apply()` bitrate 變更路徑同步更新限制**
+   - VBR bitrate 變更時重新計算 `dataRateLimits` 寫入 VT session
+   - iOS 26.0+ 自動補上 `vbvMaxBitRate` / `vbvBufferDuration`（當使用者未自訂時）
+
+#### 原因
+
+VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏 `dataRateLimits`（軟上限），這些大 frame 會塞爆 RTMP output queue，觸發 `publishInsufficientBWOccured`，導致 bitrate 死亡螺旋。`dataRateLimits` 提供 1.5× 軟上限約束，在**所有 iOS 版本**上防止 encoder 暴衝。
+
+#### 生效條件
+
+- `bitRateMode == .variable`
+- `dataRateLimits`：**所有 iOS 版本**
+- `vbvMaxBitRate` / `vbvBufferDuration`：iOS 26.0+ / tvOS 26.0+ / macOS 26.0+
 
 ---
 
@@ -703,7 +734,7 @@ VBR 模式下 encoder 在複雜場景可能瞬間噴出遠高於目標 `bitRate`
 
 - iOS 26.0+ / tvOS 26.0+ / macOS 26.0+
 - `bitRateMode == .variable`
-- 低於 iOS 26 的裝置不設 VBV（VideoToolbox 不認識這些 key）
+- 低於 iOS 26 的裝置改由 `dataRateLimits` 提供 1.5× 軟上限保護（所有版本皆支援）
 
 ---
 
@@ -1063,3 +1094,61 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 - `AudioCodec` 建立 converter 時輸出 `audio: format=HE-AAC v2 (AAC+SBR+PS) input=... output=...`
 - `RTMPAudioMessage` 送出 sequence header 時輸出 `audio: AAC sequence header type=29 freq=... ch=...`
+
+---
+
+## 30. VIDEO/AUDIO 管線傳遞設計修正
+
+### 30.1 Egress Drop Policy 衝突修復
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+
+**問題**: `RTMPConnection.outputContinuation` 使用 `.bufferingOldest(512)`，而上游 `RTMPStream.outputContinuation` 使用 `.bufferingNewest(256)`。兩個串接的 AsyncStream 使用不相容的 drop policy — 當 socket 慢時，上層丟最新 frame（可接受），下層丟最舊 chunk data，可能破壞 RTMP 串流的訊息結構完整性。
+
+**修復**: `RTMPConnection.outputContinuation` 改為 `.bufferingNewest(512)`，兩層統一使用「丟最新」策略，確保資料完整性。
+
+### 30.2 消除 nonisolated(unsafe) + 每幀 Task{} 分配
+
+**新增檔案**: `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`
+
+**問題**:
+1. `mixerAudioContinuation` / `mixerVideoContinuation` 標記為 `nonisolated(unsafe)`，繞過 Swift actor 隔離檢查
+2. 每幀透過 `Task { continuation?.yield(...) }` 跨越 actor 邊界，30fps video + ~50fps audio PCM = 每秒 80+ 次 `Task` 分配
+
+**修復**: 
+- 新增 `MediaMixerOutputBridge`（`@unchecked Sendable`），將 continuations 儲存在非 actor 容器中
+- `RTMPStream` 以 `nonisolated let mixerOutputBridge` 持有，在 `mixer(_:didOutput:)` 中直接呼叫 `bridge.yieldVideo/Audio`，消除 Task 分配
+- 移除 `nonisolated(unsafe)` 標記
+
+### 30.3 消除 startOutputConsumer 多餘 Task{} 包裝
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**問題**: `startOutputConsumer` 中 `await Task { await conn.doOutput(...) }.value` 會額外分配一個 Task，而直接 `await conn.doOutput(...)` 效果完全相同。
+
+**修復**: 移除 `Task { }.value` 包裝。
+
+### 30.4 VideoCodec.outputStream 加入容量上限
+
+**檔案**: `HaishinKit/Sources/Codec/VideoCodec.swift`
+
+**問題**: `@AsyncStreamedFlow` 預設 `.unbounded`，若下游 consumer 延遲則 encoded frame 在記憶體中無限累積。
+
+**修復**: 改為 `.bufferingNewest(60)`，最多緩衝 60 個 encoded frame（約 2 秒 @ 30fps），超額時丟棄最舊幀。
+
+### 30.5 加入 Audio Pipeline Stall 檢測
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`, `HaishinKit/Sources/Stream/OutgoingStream.swift`
+
+**問題**: Video 有 stall 檢測與 `restartVideoPipeline()`，但 Audio 完全沒有對應機制。
+
+**修復**:
+- 新增 `audioInputFrames` 計數器（每幀 PCM 送入 codec 時 +1）
+- 新增 `audioStallCount` 計數器
+- 在 `NetworkMonitorEvent.status` 中檢測：`audioInputFrames > 0 && audioSentFrames == 0` 達 3 次連續 interval 即觸發 `restartAudioPipeline()`
+- 新增 `OutgoingStream.restartAudioCodec()` 與 `RTMPStream.restartAudioPipeline()`
+
+### 30.6 文件新增
+
+- `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`
+`

@@ -227,6 +227,23 @@ public struct VideoCodecSettings: Codable, Sendable {
             let key: VTSessionOptionKey = bitRateMode == .variable ? .averageBitRate : bitRateMode.key
             let option = VTSessionOption(key: key, value: NSNumber(value: bitRate))
             _ = codec.session?.setOption(option)
+            if bitRateMode == .variable, let dataRateLimits, dataRateLimits.count == 2 {
+                var limits = [Double](repeating: 0.0, count: 2)
+                limits[0] = dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0]
+                limits[1] = dataRateLimits[1] == 0 ? Double(1.0) : dataRateLimits[1]
+                let option = VTSessionOption(key: .dataRateLimits, value: limits as NSArray)
+                _ = codec.session?.setOption(option)
+            }
+            if bitRateMode == .variable, #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+                if vbvMaxBitRate == nil && rhs.vbvMaxBitRate == nil {
+                    let option = VTSessionOption(key: .vbvMaxBitRate, value: NSNumber(value: bitRate * 12 / 10))
+                    _ = codec.session?.setOption(option)
+                }
+                if vbvBufferDuration == nil && rhs.vbvBufferDuration == nil {
+                    let option = VTSessionOption(key: .vbvBufferDuration, value: NSNumber(value: 1.0))
+                    _ = codec.session?.setOption(option)
+                }
+            }
         }
         if frameInterval != rhs.frameInterval {
             codec.frameInterval = frameInterval
@@ -282,7 +299,7 @@ public struct VideoCodecSettings: Codable, Sendable {
             ] as NSObject)
         ])
         options.formUnion(makeKeyFrameIntervalOptions())
-        if bitRateMode == .average {
+        if bitRateMode == .average || bitRateMode == .variable {
             if let dataRateLimits, dataRateLimits.count == 2 {
                 var limits = [Double](repeating: 0.0, count: 2)
                 limits[0] = dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0]
@@ -297,6 +314,14 @@ public struct VideoCodecSettings: Codable, Sendable {
             options.insert(.init(key: .quality, value: NSNumber(value: quality)))
         }
         if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+            if bitRateMode == .variable {
+                if vbvMaxBitRate == nil {
+                    options.insert(.init(key: .vbvMaxBitRate, value: NSNumber(value: bitRate * 12 / 10)))
+                }
+                if vbvBufferDuration == nil {
+                    options.insert(.init(key: .vbvBufferDuration, value: NSNumber(value: 1.0)))
+                }
+            }
             if let vbvMaxBitRate {
                 options.insert(.init(key: .vbvMaxBitRate, value: NSNumber(value: vbvMaxBitRate)))
             }

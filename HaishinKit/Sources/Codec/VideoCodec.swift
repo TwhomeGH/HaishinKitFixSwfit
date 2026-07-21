@@ -19,7 +19,7 @@ final class VideoCodec {
         }
     }
     var passthrough = true
-    @AsyncStreamedFlow
+    @AsyncStreamedFlow(.bufferingNewest(60))
     var outputStream: AsyncStream<CMSampleBuffer>
     var frameInterval = VideoCodec.frameInterval
     private var startedAt: CMTime = .zero

@@ -219,6 +219,8 @@ public actor RTMPStream {
     private var frameCount: UInt16 = 0
     private var videoInputFrames: Int = 0
     private var videoStallCount: Int = 0
+    private var audioInputFrames: Int = 0
+    private var audioStallCount: Int = 0
     private var audioSentFrames: Int = 0
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
@@ -240,8 +242,7 @@ public actor RTMPStream {
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
     private var outputContinuation: AsyncStream<RTMPOutputItem>.Continuation?
     private var publishTask: Task<Void, Never>?
-    nonisolated(unsafe) private var mixerAudioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
-    nonisolated(unsafe) private var mixerVideoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
+    nonisolated private let mixerOutputBridge = MediaMixerOutputBridge()
     private(set) var id: UInt32 = RTMPStream.defaultID
     package lazy var incoming = IncomingStream(self)
     package lazy var outgoing = OutgoingStream()
@@ -754,8 +755,8 @@ public actor RTMPStream {
             of: CMSampleBuffer.self,
             bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts)
         )
-        mixerAudioContinuation = audioContinuation
-        mixerVideoContinuation = videoContinuation
+        mixerOutputBridge.setAudioContinuation(audioContinuation)
+        mixerOutputBridge.setVideoContinuation(videoContinuation)
 
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
@@ -803,10 +804,7 @@ public actor RTMPStream {
     private func stopPublishTasks() {
         publishTask?.cancel()
         publishTask = nil
-        mixerAudioContinuation?.finish()
-        mixerAudioContinuation = nil
-        mixerVideoContinuation?.finish()
-        mixerVideoContinuation = nil
+        mixerOutputBridge.finish()
     }
 
     private func startOutputConsumer() {
@@ -817,9 +815,7 @@ public actor RTMPStream {
                 guard let self else { return }
                 let conn = await self.connection
                 guard let conn else { continue }
-                let length = await Task {
-                    await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
-                }.value
+                let length = await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
                 await self.appendByteCount(length)
             }
         }
@@ -955,8 +951,11 @@ extension RTMPStream: _Stream {
             }
         default:
             outgoing.append(audioBuffer, when: when)
-            if audioBuffer is AVAudioPCMBuffer && audioSampleAccess {
-                outputs.forEach { $0.stream(self, didOutput: audioBuffer, when: when) }
+            if audioBuffer is AVAudioPCMBuffer {
+                audioInputFrames += 1
+                if audioSampleAccess {
+                    outputs.forEach { $0.stream(self, didOutput: audioBuffer, when: when) }
+                }
             }
         }
     }
@@ -970,6 +969,8 @@ extension RTMPStream: _Stream {
             readyState = .idle
             videoInputFrames = 0
             videoStallCount = 0
+            audioInputFrames = 0
+            audioStallCount = 0
         case .status:
             if audioSentFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
                 await connection?.log(.debug, "publish throughput",
@@ -986,8 +987,17 @@ extension RTMPStream: _Stream {
             } else {
                 videoStallCount = 0
             }
+            if readyState == .publishing && 0 < audioInputFrames && audioSentFrames == 0 {
+                audioStallCount += 1
+                if 3 <= audioStallCount {
+                    await restartAudioPipeline(reason: "encoded audio stalled while input is active")
+                }
+            } else {
+                audioStallCount = 0
+            }
             audioSentFrames = 0
             audioSentBytes = 0
+            audioInputFrames = 0
             videoInputFrames = 0
             videoSentBytes = 0
         default:
@@ -1031,6 +1041,20 @@ extension RTMPStream: _Stream {
         startPublishTasks()
         videoStallCount = 0
     }
+
+    private func restartAudioPipeline(reason: String) async {
+        guard await connection?.connected == true else {
+            await connection?.log(.warn, "skip restartAudioPipeline: connection is down", detail: reason)
+            audioStallCount = 0
+            return
+        }
+        await connection?.log(.warn, "Restarting audio pipeline", detail: reason)
+        stopPublishTasks()
+        outgoing.restartAudioCodec()
+        audioFormat = nil
+        startPublishTasks()
+        audioStallCount = 0
+    }
 }
 
 extension RTMPStream: MediaMixerOutput {
@@ -1047,12 +1071,10 @@ extension RTMPStream: MediaMixerOutput {
     }
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {
-        let continuation = mixerVideoContinuation
-        Task { continuation?.yield(sampleBuffer) }
+        mixerOutputBridge.yieldVideo(sampleBuffer)
     }
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput buffer: AVAudioPCMBuffer, when: AVAudioTime) {
-        let continuation = mixerAudioContinuation
-        Task { continuation?.yield((buffer, when)) }
+        mixerOutputBridge.yieldAudio(buffer, when: when)
     }
 }

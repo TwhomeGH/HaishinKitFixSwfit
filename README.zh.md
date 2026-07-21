@@ -9,8 +9,13 @@
 ## 🔧 與上游的差異
 
 - **VBR 支援版本修正**：`kVTCompressionPropertyKey_VariableBitRate` 從 iOS 13+ 即可使用（上游錯誤限制為 iOS 26+）
+- **VBR 資料率限制**：VBR 模式現已強制 `dataRateLimits`（1.5× 軟上限，所有 iOS 版本）+ 自動 `vbvMaxBitRate`（1.2× 硬上限，iOS 26+），防止 encoder 暴衝塞爆 RTMP 輸出佇列
 - **新增 bitrate 控制模式**：新增 `.quality` 模式、VBV 參數（`vbvMaxBitRate`、`vbvBufferDuration`、`vbvInitialDelayPercentage`）、`estimatedAverageBytesPerFrame`
 - **Adaptive BitRate 演算法重寫**：恢復速度加快（5s→20% 而非 15s→10%）、zero-byte 時 bitrate 砍半、加入降速冷卻機制
+- **Egress 管線 Drop Policy 統一**：RTMPStream → RTMPConnection → RTMPSocket 全部使用 `.bufferingNewest`，避免背壓下資料結構損壞
+- **MediaMixerOutput 橋接層**：消除 `nonisolated(unsafe)` continuation 與每幀 `Task{}` 分配（每秒約 80 次），改為直接 `Sendable` bridge yield
+- **Codec 輸出有界化**：`VideoCodec.outputStream` 上限 60 幀（`.bufferingNewest`），防止無限記憶體成長
+- **Audio stall 檢測**：新增 `restartAudioPipeline()` 對稱於 `restartVideoPipeline()`，從 silent audio encoder stall 中恢復
 - **NetworkMonitor 佇列偵測增強**：新增絕對佇列大小閾值（512KB）— 即使佇列不再成長也能偵測持續擁塞
 - **移除 Logboard 外部依賴**：改用 Apple 內建 OSLog，消除 git checkout 在 Windows 上的路徑問題
 - **RTMP User Control 截斷防 Crash**：收到少於 6 bytes 的 malformed 訊息不再 crash

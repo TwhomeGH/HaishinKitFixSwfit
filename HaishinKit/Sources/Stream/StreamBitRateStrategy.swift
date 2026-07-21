@@ -32,6 +32,7 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     private func deriveVBV(_ settings: inout VideoCodecSettings) {
         guard settings.bitRateMode == .variable else { return }
         settings.vbvMaxBitRate = settings.bitRate * 12 / 10
+        settings.vbvBufferDuration = settings.vbvBufferDuration ?? 1.0
     }
 
     public func adjustBitrate(_ event: NetworkMonitorEvent, stream: some StreamConvertible) async {
