@@ -12,7 +12,7 @@ This is an improved version of [HaishinKit/HaishinKit.swift](https://github.com/
 - **VBR data rate limits**: VBR mode now enforces `dataRateLimits` (1.5× soft cap) on all iOS versions + auto `vbvMaxBitRate` (1.2× hard cap) on iOS 26+, preventing encoder spikes from overwhelming the RTMP output queue
 - **New bitrate control modes**: Added `.quality` mode, VBV parameters (`vbvMaxBitRate`, `vbvBufferDuration`, `vbvInitialDelayPercentage`), `estimatedAverageBytesPerFrame`
 - **Adaptive BitRate strategy rework**: Faster recovery (5s instead of 15s), zero-byte now halves bitrate, cooldown mechanism to prevent thrashing
-- **Egress pipeline fix**: Unified `.bufferingNewest` drop policy across RTMPStream → RTMPConnection → RTMPSocket to prevent stream corruption under backpressure
+- **Egress pipeline fix**: Removed bounded AsyncStream at RTMPConnection output level — backpressure is handled entirely by `RTMPSocket.maxQueueBytesOut` (5MB) and `NetworkMonitor` queue detection, avoiding chunk-level drops that caused tearing
 - **MediaMixerOutput bridge**: Eliminated `nonisolated(unsafe)` continuations and per-frame `Task{}` allocations (~80/s), replaced with direct `Sendable` bridge yielding
 - **Bounded codec output**: `VideoCodec.outputStream` capped at 60 frames (`.bufferingNewest`) to prevent unbounded memory growth
 - **Audio stall detection**: Added `restartAudioPipeline()` symmetric to existing `restartVideoPipeline()`, recovering from silent audio encoder stalls

@@ -12,7 +12,7 @@
 - **VBR 資料率限制**：VBR 模式現已強制 `dataRateLimits`（1.5× 軟上限，所有 iOS 版本）+ 自動 `vbvMaxBitRate`（1.2× 硬上限，iOS 26+），防止 encoder 暴衝塞爆 RTMP 輸出佇列
 - **新增 bitrate 控制模式**：新增 `.quality` 模式、VBV 參數（`vbvMaxBitRate`、`vbvBufferDuration`、`vbvInitialDelayPercentage`）、`estimatedAverageBytesPerFrame`
 - **Adaptive BitRate 演算法重寫**：恢復速度加快（5s→20% 而非 15s→10%）、zero-byte 時 bitrate 砍半、加入降速冷卻機制
-- **Egress 管線 Drop Policy 統一**：RTMPStream → RTMPConnection → RTMPSocket 全部使用 `.bufferingNewest`，避免背壓下資料結構損壞
+- **Egress 管線修復**：移除 RTMPConnection 輸出層的 bounded AsyncStream — 背壓完全交由 `RTMPSocket.maxQueueBytesOut`（5MB）與 `NetworkMonitor` 佇列偵測處理，避免 chunk 層級丟失造成畫面撕裂
 - **MediaMixerOutput 橋接層**：消除 `nonisolated(unsafe)` continuation 與每幀 `Task{}` 分配（每秒約 80 次），改為直接 `Sendable` bridge yield
 - **Codec 輸出有界化**：`VideoCodec.outputStream` 上限 60 幀（`.bufferingNewest`），防止無限記憶體成長
 - **Audio stall 檢測**：新增 `restartAudioPipeline()` 對稱於 `restartVideoPipeline()`，從 silent audio encoder stall 中恢復

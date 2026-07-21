@@ -1103,9 +1103,9 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
 
-**問題**: `RTMPConnection.outputContinuation` 使用 `.bufferingOldest(512)`，而上游 `RTMPStream.outputContinuation` 使用 `.bufferingNewest(256)`。兩個串接的 AsyncStream 使用不相容的 drop policy — 當 socket 慢時，上層丟最新 frame（可接受），下層丟最舊 chunk data，可能破壞 RTMP 串流的訊息結構完整性。
+**問題**: `RTMPConnection.outputContinuation` 使用 `.bufferingOldest(512)`，而上游 `RTMPStream.outputContinuation` 使用 `.bufferingNewest(256)`。兩個串接的 AsyncStream 使用不相容的 drop policy — 當 socket 慢時，上層丟最新 frame（可接受），下層丟最舊 chunk data，可能破壞 RTMP 串流的訊息結構完整性。測試發現有 bound 時背壓下仍會丟 chunk 導致畫面撕裂。
 
-**修復**: `RTMPConnection.outputContinuation` 改為 `.bufferingNewest(512)`，兩層統一使用「丟最新」策略，確保資料完整性。
+**修復**: 移除 `RTMPConnection.outputContinuation` 的 bound 改為 `.unbounded`。背壓完全交給 `RTMPSocket.maxQueueBytesOut`（5MB）管理，讓資料自然回流至 `NetworkMonitor` 佇列偵測機制。
 
 ### 30.2 消除 nonisolated(unsafe) + 每幀 Task{} 分配
 
