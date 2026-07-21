@@ -3,9 +3,12 @@
 在你的 SampleHandler 中可以這樣用：
 
 ```swift
-// 自動選擇 device 支援的最佳 AAC 格式（heAacV2 → heAac → aac）
+// 自動選擇 device 支援的最佳 AAC 格式（heAacV2 → heAac → aac） 以及碼率
 var audioSettings = await rtmpStream.audioSettings
+audioSettings.bitRate = AudioCodecSettings.bestAacBitrate
 audioSettings.format = AudioCodecSettings.bestAacFormat
+
+
 await mediaMixer.setAudioMixerSettings(audioSettings)
 
 // Log 會顯示選擇結果
