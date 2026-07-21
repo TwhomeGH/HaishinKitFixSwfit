@@ -186,7 +186,8 @@ final actor RTMPSocket {
             queueBytesOut = max(0, queueBytesOut - data.count)
             return
         }
-        connection.send(content: data, completion: .contentProcessed { error in
+        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
             Task { await self.didSend(data, error: error) }
         })
     }

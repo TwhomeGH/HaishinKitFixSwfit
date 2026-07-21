@@ -759,7 +759,7 @@ public actor RTMPStream {
 
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
-        let videoInput = outgoing.videoInputStream
+        let videoInput = outgoing.prepareVideoInputStream()
 
         publishTask = Task { [weak self] in
             guard let self else { return }

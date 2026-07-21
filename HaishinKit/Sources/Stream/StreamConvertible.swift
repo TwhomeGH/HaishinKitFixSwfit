@@ -29,6 +29,10 @@ public protocol StreamConvertible: Actor, MediaMixerOutput {
     /// Sets the video input buffer counts.
     func setVideoInputBufferCounts(_ videoInputBufferCounts: Int)
 
+    /// The maximum memory budget (bytes) for buffered uncompressed video frames.
+    /// Used to auto-compute `videoInputBufferCounts` when no manual override is set.
+    var maxVideoBufferBytes: Int { get set }
+
     /// Appends a CMSampleBuffer.
     /// - Parameters:
     ///   - sampleBuffer:The sample buffer to append.
@@ -80,7 +84,12 @@ extension _Stream {
     }
 
     public func setVideoInputBufferCounts(_ videoInputBufferCounts: Int) {
-        outgoing.videoInputBufferCounts = max(1, videoInputBufferCounts)
+        outgoing.setVideoInputBufferCounts(videoInputBufferCounts >= 0 ? videoInputBufferCounts : nil)
+    }
+
+    public var maxVideoBufferBytes: Int {
+        get { outgoing.maxVideoBufferBytes }
+        set { outgoing.maxVideoBufferBytes = newValue }
     }
 
     public func setSoundTransform(_ soundTransform: SoundTransform) async {

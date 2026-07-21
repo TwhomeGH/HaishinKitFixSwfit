@@ -1099,56 +1099,22 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 ## 30. VIDEO/AUDIO 管線傳遞設計修正
 
-### 30.1 Egress Drop Policy 衝突修復
+詳細設計與架構說明請見 [Docs/OUTGOING_PIPELINE_REDESIGN.md#9-管線傳遞設計修正2026-07-月](Docs/OUTGOING_PIPELINE_REDESIGN.md#9-管線傳遞設計修正2026-07-月)。
 
-**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- 移除 `RTMPConnection.outputContinuation` bound（`.unbounded`）
+- 新增 `MediaMixerOutputBridge` — 消除 `nonisolated(unsafe)` + 每幀 `Task{}`
+- `DispatchQueue` pacing — 消除 frame burst 造成撕裂
+- Byte-based buffer 控制 — `maxVideoBufferBytes` + 自動計算幀數
+- Audio stall 檢測 — `restartAudioPipeline()` 對稱 video
+- `setVideoInputBufferCounts(-1)` 支援自動模式
 
-**問題**: `RTMPConnection.outputContinuation` 使用 `.bufferingOldest(512)`，而上游 `RTMPStream.outputContinuation` 使用 `.bufferingNewest(256)`。兩個串接的 AsyncStream 使用不相容的 drop policy — 當 socket 慢時，上層丟最新 frame（可接受），下層丟最舊 chunk data，可能破壞 RTMP 串流的訊息結構完整性。測試發現有 bound 時背壓下仍會丟 chunk 導致畫面撕裂。
+### 相關檔案
 
-**修復**: 移除 `RTMPConnection.outputContinuation` 的 bound 改為 `.unbounded`。背壓完全交給 `RTMPSocket.maxQueueBytesOut`（5MB）管理，讓資料自然回流至 `NetworkMonitor` 佇列偵測機制。
-
-### 30.2 消除 nonisolated(unsafe) + 每幀 Task{} 分配
-
-**新增檔案**: `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`
-
-**問題**:
-1. `mixerAudioContinuation` / `mixerVideoContinuation` 標記為 `nonisolated(unsafe)`，繞過 Swift actor 隔離檢查
-2. 每幀透過 `Task { continuation?.yield(...) }` 跨越 actor 邊界，30fps video + ~50fps audio PCM = 每秒 80+ 次 `Task` 分配
-
-**修復**: 
-- 新增 `MediaMixerOutputBridge`（`@unchecked Sendable`），將 continuations 儲存在非 actor 容器中
-- `RTMPStream` 以 `nonisolated let mixerOutputBridge` 持有，在 `mixer(_:didOutput:)` 中直接呼叫 `bridge.yieldVideo/Audio`，消除 Task 分配
-- 移除 `nonisolated(unsafe)` 標記
-
-### 30.3 消除 startOutputConsumer 多餘 Task{} 包裝
-
-**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
-
-**問題**: `startOutputConsumer` 中 `await Task { await conn.doOutput(...) }.value` 會額外分配一個 Task，而直接 `await conn.doOutput(...)` 效果完全相同。
-
-**修復**: 移除 `Task { }.value` 包裝。
-
-### 30.4 VideoCodec.outputStream 加入容量上限
-
-**檔案**: `HaishinKit/Sources/Codec/VideoCodec.swift`
-
-**問題**: `@AsyncStreamedFlow` 預設 `.unbounded`，若下游 consumer 延遲則 encoded frame 在記憶體中無限累積。
-
-**修復**: 改為 `.bufferingNewest(60)`，最多緩衝 60 個 encoded frame（約 2 秒 @ 30fps），超額時丟棄最舊幀。
-
-### 30.5 加入 Audio Pipeline Stall 檢測
-
-**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`, `HaishinKit/Sources/Stream/OutgoingStream.swift`
-
-**問題**: Video 有 stall 檢測與 `restartVideoPipeline()`，但 Audio 完全沒有對應機制。
-
-**修復**:
-- 新增 `audioInputFrames` 計數器（每幀 PCM 送入 codec 時 +1）
-- 新增 `audioStallCount` 計數器
-- 在 `NetworkMonitorEvent.status` 中檢測：`audioInputFrames > 0 && audioSentFrames == 0` 達 3 次連續 interval 即觸發 `restartAudioPipeline()`
-- 新增 `OutgoingStream.restartAudioCodec()` 與 `RTMPStream.restartAudioPipeline()`
-
-### 30.6 文件新增
-
-- `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`
+- `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`（新增）
+- `HaishinKit/Sources/Stream/OutgoingStream.swift`
+- `HaishinKit/Sources/Stream/StreamConvertible.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+- `HaishinKit/Sources/Codec/VideoCodec.swift`
 `

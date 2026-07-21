@@ -3,6 +3,11 @@ import Foundation
 
 /// An object that provides a stream ingest feature.
 package final class OutgoingStream: @unchecked Sendable {
+    /// The maximum total bytes for the video input buffer (uncompressed frames).
+    /// Used to compute a frame count that stays within this budget.
+    /// Default 15 MB (~5 frames at 1080p, ~10 at 720p).
+    package var maxVideoBufferBytes = 15 * 1024 * 1024
+
     package private(set) var isRunning = false
 
     /// The asynchronous sequence for audio output.
@@ -38,11 +43,34 @@ package final class OutgoingStream: @unchecked Sendable {
         }
     }
 
-    /// Specifies the video buffering count.
-    package var videoInputBufferCounts = 5 {
+    /// Specifies the video buffering count. Auto-computed from video resolution
+    /// and `maxVideoBufferBytes` unless manually set via `setVideoInputBufferCounts()`.
+    package private(set) var videoInputBufferCounts = 1 {
         didSet {
             videoInputBufferCounts = max(1, videoInputBufferCounts)
         }
+    }
+    /// Returns `true` when the user has explicitly set a custom `videoInputBufferCounts`.
+    /// When `false`, the count is auto-computed from `maxVideoBufferBytes` and video resolution.
+    package private(set) var videoInputBufferCountsOverridden = false
+
+    /// Overrides the auto-computed buffer count. Call with `nil` to re-enable auto-compute.
+    package func setVideoInputBufferCounts(_ count: Int?) {
+        if let count {
+            videoInputBufferCounts = max(1, count)
+            videoInputBufferCountsOverridden = true
+        } else {
+            videoInputBufferCountsOverridden = false
+        }
+    }
+
+    /// Prepares the video input stream for use. Auto-computes buffer count
+    /// from video resolution unless the user has set a custom value.
+    package func prepareVideoInputStream() -> AsyncStream<CMSampleBuffer> {
+        if !videoInputBufferCountsOverridden {
+            videoInputBufferCounts = computeVideoInputBufferCounts(for: videoCodec.settings.videoSize)
+        }
+        return videoInputStream
     }
 
     /// The asynchronous sequence for video input buffer.
@@ -59,6 +87,13 @@ package final class OutgoingStream: @unchecked Sendable {
 
     /// The video input format.
     package private(set) var videoInputFormat: CMFormatDescription?
+
+    /// Returns the optimal frame count for the given video size.
+    package func computeVideoInputBufferCounts(for size: CGSize) -> Int {
+        let bytesPerFrame = Int(size.width * size.height * 1.5)
+        guard bytesPerFrame > 0 else { return 5 }
+        return max(1, min(30, maxVideoBufferBytes / bytesPerFrame))
+    }
 
     private var audioCodec = AudioCodec()
     private var videoCodec = VideoCodec()

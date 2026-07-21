@@ -495,3 +495,108 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 | 移除 RTMPStream actor，改用 lock-based class | 進一步消除 mixer 路徑的 actor hop | 高（協定層需重構） |
 | 將 RTMPConnection.doOutput 也移出 actor | 完全消除 actor hop | 中 |
 | MPSC ring buffer 取代 AsyncStream | 120fps+ 4K | 高 |
+
+---
+
+## 9. 管線傳遞設計修正（2026-07 月）
+
+### 9.1 Egress Drop Policy — 移除 AsyncStream bound
+
+**檔案**: `RTMPConnection.swift:625`
+
+`RTMPConnection.outputContinuation` 原本使用 `.bufferingOldest(512)`。當 socket 慢時此層會丟最舊 chunk data，可能破壞 RTMP 串流結構。同時下游 `RTMPSocket` 已有 `maxQueueBytesOut = 5MB` 作為背壓，AsyncStream 層的 bound 是多餘的。
+
+**修正**: 改為 `.unbounded`，背壓完全交由 `RTMPSocket.maxQueueBytesOut` 管理，讓資料自然回流至 `NetworkMonitor` 佇列偵測機制。
+
+### 9.2 MediaMixerOutputBridge — 消除 nonisolated(unsafe) 與每幀 Task{}
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`（新增）
+
+原本 `mixerAudioContinuation` / `mixerVideoContinuation` 標記為 `nonisolated(unsafe)`，且 mixer 回呼透過 `Task { continuation?.yield(...) }` 將 frame 送入 pipeline。
+
+```
+// 原始（每幀開 Task）
+nonisolated func mixer(_:didOutput:) {
+    let c = mixerVideoContinuation      // nonisolated(unsafe)
+    Task { c?.yield(sampleBuffer) }      // ~80 Task/sec
+}
+```
+
+**問題**:
+1. `nonisolated(unsafe)` 繞過 compiler 隔離檢查
+2. 每秒 80+ 次 Task 分配（30fps video + ~50fps audio PCM）
+
+**修正**: 新增 `MediaMixerOutputBridge`（`@unchecked Sendable`），以 `nonisolated let` 在 actor 外持有 continuations，mixer 回呼直接呼叫 bridge：
+
+```swift
+// 現在（直接 DispatchQueue .async）
+nonisolated func mixer(_:didOutput:) {
+    mixerOutputBridge.yieldVideo(sampleBuffer)  // 無 Task
+}
+```
+
+### 9.3 DispatchQueue Pacing — 消除 frame burst 撕裂
+
+**檔案**: `MediaMixerOutputBridge.swift`
+
+橋接器改為 `DispatchQueue.async` 序列化 yield：
+
+```
+// 直接 yield（前版）：MediaMixer 暴衝 30 幀 → buffer(5) 丟 25 幀 → 撕裂
+// DispatchQueue（現在）：序列化 yield → 自然 pace → buffer 不溢滿
+```
+
+`DispatchQueue` 提供與 `Task{}` 同等的 pacing 效果，但無 Swift concurrency Task 每幀分配開銷。
+
+### 9.4 Byte-based Buffer 控制 — 以記憶體預算自動計算幀數
+
+**檔案**: `OutgoingStream.swift`, `StreamConvertible.swift`, `RTMPStream.swift`
+
+原本 `videoInputBufferCounts = 5` 固定值，不考慮解析度與記憶體限制。新增 `maxVideoBufferBytes`（預設 15MB）與自動計算：
+
+```swift
+// 根據解析度自動計算
+func computeVideoInputBufferCounts(for size: CGSize) -> Int {
+    let bytesPerFrame = size.width * size.height * 1.5  // NV12
+    return max(1, min(30, maxVideoBufferBytes / bytesPerFrame))
+}
+```
+
+| 解析度 | 每幀大小 | 自動 buffer 幀數 |
+|-------|---------|----------------|
+| 1080p | ~3.0 MB | 5 |
+| 720p | ~1.4 MB | 10 |
+| 540p | ~0.8 MB | 18 |
+| 360p | ~0.3 MB | 30 (上限) |
+
+**API 變更**:
+- `setVideoInputBufferCounts(Int)` 保留但傳 -1 可恢復自動模式
+- 新增 `maxVideoBufferBytes` 屬性
+
+### 9.5 Audio Pipeline Stall 檢測
+
+**檔案**: `RTMPStream.swift`, `OutgoingStream.swift`
+
+原本 Video 有 `restartVideoPipeline()` 但 Audio 完全沒有對應機制。
+
+**新增**:
+- `audioInputFrames` 計數器（PCM 送入 codec 時累加）
+- `audioStallCount` 累計器
+- 在 `NetworkMonitorEvent.status` 中檢測：`audioInputFrames > 0 && audioSentFrames == 0` 達 3 次連續 interval → 觸發 `restartAudioPipeline()`
+- `OutgoingStream.restartAudioCodec()` + `RTMPStream.restartAudioPipeline()`
+
+### 9.6 取消 video output unbounded
+
+VideoCodec.outputStream 原本想改 `.bufferingNewest(60)` 但造成撕裂（post-encode 丟幀破壞 frame 連續性），已恢復為 `.unbounded`。正確的背壓點是 encoder input stream（`.bufferingNewest(videoInputBufferCounts)`），而非 output。
+
+### 9.7 變更檔案總表
+
+| 檔案 | 變更 |
+|------|------|
+| `MediaMixerOutputBridge.swift` | **新增**：bridge 層，DispatchQueue pacing |
+| `RTMPConnection.swift` | 改 unbounded drop policy |
+| `RTMPStream.swift` | 改用 bridge、audio stall 檢測 |
+| `OutgoingStream.swift` | byte-based buffer 控制、restartAudioCodec |
+| `VideoCodec.swift` | 恢復 unbounded output stream |
+| `StreamConvertible.swift` | 新增 maxVideoBufferBytes 屬性 |
+| `RTMPSocket.swift` | 加入 weak self 避免 retain cycle |

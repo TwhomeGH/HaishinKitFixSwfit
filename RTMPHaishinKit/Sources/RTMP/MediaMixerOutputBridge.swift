@@ -3,6 +3,8 @@ import CoreMedia
 import Foundation
 
 final class MediaMixerOutputBridge: @unchecked Sendable {
+    private let videoQueue = DispatchQueue(label: "com.haishinkit.MediaMixerOutputBridge.video")
+    private let audioQueue = DispatchQueue(label: "com.haishinkit.MediaMixerOutputBridge.audio")
     private var audioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?
     private var videoContinuation: AsyncStream<CMSampleBuffer>.Continuation?
 
@@ -15,17 +17,25 @@ final class MediaMixerOutputBridge: @unchecked Sendable {
     }
 
     func yieldVideo(_ sampleBuffer: CMSampleBuffer) {
-        videoContinuation?.yield(sampleBuffer)
+        videoQueue.async { [weak self] in
+            self?.videoContinuation?.yield(sampleBuffer)
+        }
     }
 
     func yieldAudio(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) {
-        audioContinuation?.yield((buffer, when))
+        audioQueue.async { [weak self] in
+            self?.audioContinuation?.yield((buffer, when))
+        }
     }
 
     func finish() {
-        audioContinuation?.finish()
-        audioContinuation = nil
-        videoContinuation?.finish()
-        videoContinuation = nil
+        videoQueue.async { [weak self] in
+            self?.videoContinuation?.finish()
+            self?.videoContinuation = nil
+        }
+        audioQueue.async { [weak self] in
+            self?.audioContinuation?.finish()
+            self?.audioContinuation = nil
+        }
     }
 }
