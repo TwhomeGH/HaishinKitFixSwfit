@@ -53,9 +53,12 @@ final class VideoCodec {
             return
         }
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
-        let threshold = (settings.maxFrameDelayCount ?? 5) * 2
-        if pending > threshold * 2 {
-            frameInterval = 1.0 / 20.0
+        let threshold = settings.maxFrameDelayCount ?? 5
+        if pending > threshold * 3 {
+            frameInterval = 1.0 / 15.0
+            pendingFramesResetCount = 0
+        } else if pending > threshold * 2 {
+            frameInterval = 1.0 / 24.0
             pendingFramesResetCount = 0
         } else if pending > threshold {
             frameInterval = 1.0 / 30.0

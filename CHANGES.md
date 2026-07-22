@@ -1108,9 +1108,9 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - Audio stall 檢測 — `restartAudioPipeline()` 對稱 video
 - `setVideoInputBufferCounts(-1)` 支援自動模式
 - `maxFrameDelayCount` — 限制 VT 內部 buffer，減少 live latency
-- `adaptiveFrameThrottle` — 自動偵測 VT pending frames，暫緩編碼避免 GPU 競爭
-- `allowTemporalCompression` 可設 `false` — 防止 VT 因壓力主動丟幀
-- A/V sync on restart — pipeline 重啟後同步 audio/video 時間戳，防止音畫不同步
+- `adaptiveFrameThrottle` 改用更低的 threshold（maxFrameDelayCount 倍數），更快降速
+- `allowTemporalCompression` 可設 `false` — 防止 VT 因壓力主動丟幀（注意：需搭配充足 maxFrameDelayCount）
+- `dataRateLimits` VBR 模式自動啟用（不再依賴使用者設定），防止 bitrate 暴衝
 
 ### 相關檔案
 

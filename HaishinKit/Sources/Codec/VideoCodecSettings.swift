@@ -242,10 +242,12 @@ public struct VideoCodecSettings: Codable, Sendable {
             let key: VTSessionOptionKey = bitRateMode == .variable ? .averageBitRate : bitRateMode.key
             let option = VTSessionOption(key: key, value: NSNumber(value: bitRate))
             _ = codec.session?.setOption(option)
-            if bitRateMode == .variable, let dataRateLimits, dataRateLimits.count == 2 {
+            if bitRateMode == .variable {
+                let limits0 = dataRateLimits?[0] ?? 0
+                let limits1 = dataRateLimits?[1] ?? 0
                 var limits = [Double](repeating: 0.0, count: 2)
-                limits[0] = dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0]
-                limits[1] = dataRateLimits[1] == 0 ? Double(1.0) : dataRateLimits[1]
+                limits[0] = limits0 == 0 ? Double(bitRate) / 8 * 1.5 : limits0
+                limits[1] = limits1 == 0 ? Double(1.0) : limits1
                 let option = VTSessionOption(key: .dataRateLimits, value: limits as NSArray)
                 _ = codec.session?.setOption(option)
             }
@@ -324,12 +326,12 @@ public struct VideoCodecSettings: Codable, Sendable {
         ])
         options.formUnion(makeKeyFrameIntervalOptions())
         if bitRateMode == .average || bitRateMode == .variable {
-            if let dataRateLimits, dataRateLimits.count == 2 {
-                var limits = [Double](repeating: 0.0, count: 2)
-                limits[0] = dataRateLimits[0] == 0 ? Double(bitRate) / 8 * 1.5 : dataRateLimits[0]
-                limits[1] = dataRateLimits[1] == 0 ? Double(1.0) : dataRateLimits[1]
-                options.insert(.init(key: .dataRateLimits, value: limits as NSArray))
-            }
+            let limits0 = dataRateLimits?[0] ?? 0
+            let limits1 = dataRateLimits?[1] ?? 0
+            var limits = [Double](repeating: 0.0, count: 2)
+            limits[0] = limits0 == 0 ? Double(bitRate) / 8 * 1.5 : limits0
+            limits[1] = limits1 == 0 ? Double(1.0) : limits1
+            options.insert(.init(key: .dataRateLimits, value: limits as NSArray))
         }
         if bitRateMode == .variable {
             options.insert(.init(key: .variableBitRate, value: kCFBooleanTrue))
