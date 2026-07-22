@@ -22,11 +22,12 @@ extension VTDecompressionSession: VTSessionConvertible {
     ]
 
     @inline(__always)
+    @discardableResult
     func convert(
         _ sampleBuffer: CMSampleBuffer,
         forceKeyFrame _: Bool,
         continuation: AsyncStream<CMSampleBuffer>.Continuation?
-    ) throws {
+    ) throws -> Bool {
         var flagsOut: VTDecodeInfoFlags = []
         var _: VTEncodeInfoFlags = []
         let status = VTDecompressionSessionDecodeFrame(
@@ -73,6 +74,7 @@ extension VTDecompressionSession: VTSessionConvertible {
         if status != noErr {
             throw VTSessionError.failedToConvert(status: status)
         }
+        return false
     }
 
     func invalidate() {

@@ -1,4 +1,4 @@
-import AVFoundation
+import CoreMedia
 import Foundation
 import VideoToolbox
 
@@ -11,11 +11,13 @@ enum VTSessionError: Swift.Error {
 protocol VTSessionConvertible {
     func setOption(_ option: VTSessionOption) -> OSStatus
     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
+    /// Encode a frame. Returns true if VT dropped the frame.
+    @discardableResult
     func convert(
         _ sampleBuffer: CMSampleBuffer,
         forceKeyFrame: Bool,
         continuation: AsyncStream<CMSampleBuffer>.Continuation?
-    ) throws
+    ) throws -> Bool
     func invalidate()
 }
 

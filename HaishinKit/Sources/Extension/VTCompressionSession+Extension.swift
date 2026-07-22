@@ -9,13 +9,14 @@ extension VTCompressionSession {
 
 extension VTCompressionSession: VTSessionConvertible {
     @inline(__always)
+    @discardableResult
     func convert(
         _ sampleBuffer: CMSampleBuffer,
         forceKeyFrame: Bool,
         continuation: AsyncStream<CMSampleBuffer>.Continuation?
-    ) throws {
+    ) throws -> Bool {
         guard let imageBuffer = sampleBuffer.imageBuffer else {
-            return
+            return false
         }
         var flags: VTEncodeInfoFlags = []
         let frameProperties = forceKeyFrame ? [
@@ -37,6 +38,7 @@ extension VTCompressionSession: VTSessionConvertible {
         if status != noErr {
             throw VTSessionError.failedToConvert(status: status)
         }
+        return flags.contains(.frameDropped)
     }
 
     func invalidate() {

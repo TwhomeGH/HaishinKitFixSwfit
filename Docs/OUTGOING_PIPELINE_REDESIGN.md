@@ -601,6 +601,10 @@ VideoCodec.outputStream 原本想改 `.bufferingNewest(60)` 但造成撕裂（po
 | `VideoCodecSettings.swift` | 新增 `maxFrameDelayCount` 參數 |
 | `StreamConvertible.swift` | 新增 maxVideoBufferBytes 屬性 |
 | `RTMPSocket.swift` | 加入 weak self 避免 retain cycle |
+| `RTMPMessage.swift` | 新增接受 compositionTime 的 initializer |
+| `VTSessionConvertible.swift` | convert() 回傳 Bool 表示 frame drop |
+| `VTCompressionSession+Extension.swift` | frame drop 回傳邏輯 |
+| `VTDecompressionSession+Extension.swift` | 更新 protocol 實作 |
 
 ### 9.8 修正：B-frame CTO（Composition Time Offset）計算
 
@@ -620,3 +624,13 @@ RTMP CTO（composition time offset）是 24-bit signed integer，負數表示 B-
 `RTMPVideoMessage` 新增接受外部 `compositionTime` 的 initializer，讓 `RTMPStream` 傳入正確的 CTO。
 
 **效果**: `allowFrameReordering = true` 時 B-frame 也能正確計算 CTO，player 可正確 reorder frames → 無撕裂。
+
+### 9.9 VT frame drop 偵測 + expectedFrameRate 參數
+
+**檔案**: `VideoCodecSettings.swift`, `VTSessionConvertible.swift`, `VTCompressionSession+Extension.swift`, `VTDecompressionSession+Extension.swift`
+
+- `expectedFrameRate` 加入 `makeOptions()`，確保 VT session 建立時就知道 target framerate，rate control 更準確
+- `VTSessionConvertible.convert()` 回傳 `Bool` 表示 VT 是否丟棄了該 frame（檢查 `VTEncodeInfoFlags.frameDropped`）
+- `VideoCodec.append` 在 VT 丟幀時輸出 `"VideoCodec frame dropped by VT"` debug log
+
+**效果**: 可從 onLog 確認撕裂或 frame 丟失是否來自 VT 內部（因 encoder 塞車主動丟幀）。

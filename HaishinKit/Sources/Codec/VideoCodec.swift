@@ -69,7 +69,10 @@ final class VideoCodec {
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
                     let forceKeyFrame = shouldForceKeyFrame(sampleBuffer.presentationTimeStamp)
-                    try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: continuation)
+                    let dropped = try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: continuation)
+                    if dropped {
+                        logger.debug("VideoCodec frame dropped by VT", sampleBuffer.presentationTimeStamp)
+                    }
                     if forceKeyFrame {
                         lastKeyFramePresentationTimeStamp = sampleBuffer.presentationTimeStamp
                     }

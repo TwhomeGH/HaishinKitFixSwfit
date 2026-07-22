@@ -349,6 +349,9 @@ public struct VideoCodecSettings: Codable, Sendable {
         if let maxFrameDelayCount {
             options.insert(.init(key: .maxFrameDelayCount, value: NSNumber(value: maxFrameDelayCount)))
         }
+        if let expectedFrameRate {
+            options.insert(.init(key: .expectedFrameRate, value: expectedFrameRate as CFNumber))
+        }
         #if os(macOS)
         if isHardwareAcceleratedEnabled {
             options.insert(.init(key: .encoderID, value: format.encoderID))
