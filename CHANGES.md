@@ -1112,6 +1112,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `allowTemporalCompression` 可設 `false` — 防止 VT 因壓力主動丟幀
 - `dataRateLimits` VBR 模式自動啟用（不再依賴使用者設定），防止 bitrate 暴衝
 - A/V sync on restart — pipeline 重啟後同步 audio/video 時間戳，防止音畫不同步
+- `RTMPTimestamp.invalidSequence` 不再 throw → resync 取代 silent drop，消除 DTS 空洞
 
 ### 相關檔案
 

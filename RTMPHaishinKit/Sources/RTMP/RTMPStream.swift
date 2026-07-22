@@ -898,19 +898,18 @@ extension RTMPStream: _Stream {
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
-                do {
-                    let decodeTimeStamp = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
-                    let timedelta = try videoTimestamp.update(decodeTimeStamp)
-                    frameCount += 1
-                    videoFormat = sampleBuffer.formatDescription
-                    let compositionTime: Int32
-                    if sampleBuffer.decodeTimeStamp.isValid {
-                        compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
-                    } else {
-                        compositionTime = Int32((sampleBuffer.presentationTimeStamp.seconds - CMTime(value: videoDecodeOrder, timescale: sampleBuffer.presentationTimeStamp.timescale).seconds) * 1000)
-                    }
-                    videoDecodeOrder += 1
-                    guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, compositionTime: compositionTime, sampleBuffer: sampleBuffer) else {
+                let decodeTimeStamp = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
+                let timedelta = videoTimestamp.update(decodeTimeStamp, source: "video")
+                frameCount += 1
+                videoFormat = sampleBuffer.formatDescription
+                let compositionTime: Int32
+                if sampleBuffer.decodeTimeStamp.isValid {
+                    compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
+                } else {
+                    compositionTime = Int32((sampleBuffer.presentationTimeStamp.seconds - CMTime(value: videoDecodeOrder, timescale: sampleBuffer.presentationTimeStamp.timescale).seconds) * 1000)
+                }
+                videoDecodeOrder += 1
+                guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, compositionTime: compositionTime, sampleBuffer: sampleBuffer) else {
                         Task { await connection?.log(.debug, "append(video): RTMPVideoMessage creation failed") }
                         return
                     }
@@ -947,18 +946,15 @@ extension RTMPStream: _Stream {
     public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
         switch audioBuffer {
         case let audioBuffer as AVAudioCompressedBuffer:
-            do {
-                let timedelta = try audioTimestamp.update(when)
-                audioFormat = audioBuffer.format
-                guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
-                    Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
-                    return
-                }
-                audioSentFrames += 1
-                audioSentBytes += message.payload.count
-                doOutput(.one, chunkStreamId: .audio, message: message)
-            } catch {
-                logger.warn(error)
+            let timedelta = audioTimestamp.update(when, source: "audio")
+            audioFormat = audioBuffer.format
+            guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
+                Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
+                return
+            }
+            audioSentFrames += 1
+            audioSentBytes += message.payload.count
+            doOutput(.one, chunkStreamId: .audio, message: message)
             }
         default:
             outgoing.append(audioBuffer, when: when)

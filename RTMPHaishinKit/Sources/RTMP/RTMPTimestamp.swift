@@ -9,10 +9,6 @@ protocol RTMPTimeConvertible {
 private let kRTMPTimestamp_defaultTimeInterval: TimeInterval = 0
 
 struct RTMPTimestamp<T: RTMPTimeConvertible> {
-    enum Error: Swift.Error {
-        case invalidSequence
-    }
-
     private var startedAt = kRTMPTimestamp_defaultTimeInterval
     private(set) var updatedAt = kRTMPTimestamp_defaultTimeInterval
     private var timedeltaFraction: TimeInterval = kRTMPTimestamp_defaultTimeInterval
@@ -20,11 +16,14 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     private var rolloverCount: UInt64 = 0
     private var lastDelta: TimeInterval = 0
 
-    mutating func update(_ value: T) throws -> UInt32 {
-        guard updatedAt < value.seconds else {
-            throw Error.invalidSequence
-        }
+    mutating func update(_ value: T, source: String = "") throws -> UInt32 {
         if startedAt == 0 {
+            startedAt = value.seconds
+            updatedAt = value.seconds
+            return 0
+        }
+        if value.seconds <= updatedAt {
+            logger.warn("RTMPTimestamp invalid sequence: \(source) new=\(value.seconds) last=\(updatedAt)")
             startedAt = value.seconds
             updatedAt = value.seconds
             return 0
