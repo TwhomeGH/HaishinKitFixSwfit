@@ -44,30 +44,37 @@ final class VideoCodec {
         }
     }
     private(set) var outputFormat: CMFormatDescription?
+    /// Tracks consecutive clears before restoring 60fps (need ~30 for ~1s stability).
     private var pendingFramesResetCount: Int = 0
+    /// When temporal compression is off and throttle activated, 10s cooldown
+    /// prevents rapid 60↔30fps oscillation.
+    private var throttleCooldownUntil: Date?
 
     private func updateAdaptiveFrameInterval() {
         guard settings.adaptiveFrameThrottle else {
             frameInterval = VideoCodec.frameInterval
             pendingFramesResetCount = 0
+            throttleCooldownUntil = nil
             return
         }
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
         let threshold = settings.maxFrameDelayCount ?? 5
-        if pending > threshold * 3 {
-            frameInterval = 1.0 / 15.0
-            pendingFramesResetCount = 0
-        } else if pending > threshold * 2 {
-            frameInterval = 1.0 / 24.0
-            pendingFramesResetCount = 0
-        } else if pending > threshold {
+        if pending > threshold {
+            // Under load: throttle to 30fps
             frameInterval = 1.0 / 30.0
             pendingFramesResetCount = 0
-        } else if pending == 0 {
+            if !settings.allowTemporalCompression {
+                throttleCooldownUntil = Date().addingTimeInterval(10)
+            }
+        } else if pending == 0, throttleCooldownUntil == nil || Date() >= throttleCooldownUntil! {
             pendingFramesResetCount += 1
-            if pendingFramesResetCount >= 5 {
+            if pendingFramesResetCount >= 30 {
+                throttleCooldownUntil = nil
                 frameInterval = VideoCodec.frameInterval
             }
+        } else if pending == 0 {
+            // Cooldown active, stay at 30fps
+            pendingFramesResetCount = 0
         }
     }
 
