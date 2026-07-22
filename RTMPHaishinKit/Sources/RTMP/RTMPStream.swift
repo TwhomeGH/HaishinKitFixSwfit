@@ -915,10 +915,7 @@ extension RTMPStream: _Stream {
                     }
                     videoSentBytes += message.payload.count
                     doOutput(.one, chunkStreamId: .video, message: message)
-                } catch {
-                    logger.warn(error)
-                }
-            } else {
+                } else {
                 videoInputFrames += 1
                 outgoing.append(sampleBuffer)
                 if sampleBuffer.formatDescription?.isCompressed == false {
@@ -955,7 +952,6 @@ extension RTMPStream: _Stream {
             audioSentFrames += 1
             audioSentBytes += message.payload.count
             doOutput(.one, chunkStreamId: .audio, message: message)
-            }
         default:
             outgoing.append(audioBuffer, when: when)
             if audioBuffer is AVAudioPCMBuffer {
