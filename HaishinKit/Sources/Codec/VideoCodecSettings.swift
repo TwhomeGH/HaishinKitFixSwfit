@@ -162,6 +162,11 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// (e.g., during GPU-intensive games). Resets when pending clears.
     public var adaptiveFrameThrottle = false
 
+    /// When false, prevents VT from dropping frames to maintain bitrate.
+    /// All input frames are encoded; bitrate may temporarily overshoot.
+    /// Recommended: false when adaptiveFrameThrottle is true.
+    public var allowTemporalCompression = true
+
     package var format: Format = .h264
 
     /// HEVC profile tiers ordered from most to least hardware-demanding.
@@ -298,6 +303,10 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .maxFrameDelayCount, value: NSNumber(value: maxFrameDelayCount))
             _ = codec.session?.setOption(option)
         }
+        if allowTemporalCompression != rhs.allowTemporalCompression {
+            let option = VTSessionOption(key: .allowTemporalCompression, value: allowTemporalCompression as NSObject)
+            _ = codec.session?.setOption(option)
+        }
     }
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
@@ -308,6 +317,7 @@ public struct VideoCodecSettings: Codable, Sendable {
             .init(key: .profileLevel, value: profileLevel as NSObject),
             .init(key: bitRateMode == .variable ? .averageBitRate : bitRateMode.key, value: NSNumber(value: bitRate)),
             .init(key: .allowFrameReordering, value: (allowFrameReordering ?? false) as NSObject),
+            .init(key: .allowTemporalCompression, value: allowTemporalCompression as NSObject),
             .init(key: .pixelTransferProperties, value: [
                 "ScalingMode": scalingMode.rawValue
             ] as NSObject)
