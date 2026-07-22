@@ -54,12 +54,15 @@ final class VideoCodec {
     private var encodeTimestamps: [Date] = []
 
     private func checkFrameRate() {
+        // Only trigger initial throttle (60→30) when running at full rate.
+        // If already throttled (frameInterval > 0), avoid self-reinforcing loop
+        // where limited encode rate (<25fps) keeps re-triggering.
+        guard frameInterval == VideoCodec.frameInterval else { return }
         let now = Date()
         encodeTimestamps.append(now)
         if encodeTimestamps.count > 10 {
             encodeTimestamps.removeFirst()
         }
-        // Check encode rate from last 10 frames
         if encodeTimestamps.count >= 10 {
             let interval = now.timeIntervalSince(encodeTimestamps.first!)
             let fps = 10.0 / interval
