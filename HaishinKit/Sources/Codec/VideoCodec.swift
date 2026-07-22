@@ -49,6 +49,28 @@ final class VideoCodec {
     /// When temporal compression is off and throttle activated, 10s cooldown
     /// prevents rapid 60↔30fps oscillation.
     private var throttleCooldownUntil: Date?
+    /// Fallback throttle signal: timestamps from last 10 encode attempts.
+    /// Used when `numberOfPendingFrames` is not supported by the device.
+    private var encodeTimestamps: [Date] = []
+
+    private func checkFrameRate() {
+        let now = Date()
+        encodeTimestamps.append(now)
+        if encodeTimestamps.count > 10 {
+            encodeTimestamps.removeFirst()
+        }
+        // Check encode rate from last 10 frames
+        if encodeTimestamps.count >= 10 {
+            let interval = now.timeIntervalSince(encodeTimestamps.first!)
+            let fps = 10.0 / interval
+            if fps < 25 && settings.adaptiveFrameThrottle {
+                frameInterval = 1.0 / 30.0
+                if !settings.allowTemporalCompression {
+                    throttleCooldownUntil = now.addingTimeInterval(10)
+                }
+            }
+        }
+    }
 
     private func updateAdaptiveFrameInterval() {
         guard settings.adaptiveFrameThrottle else {
@@ -60,20 +82,28 @@ final class VideoCodec {
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
         let threshold = settings.maxFrameDelayCount ?? 5
         if pending > threshold {
-            // Under load: throttle to 30fps
             frameInterval = 1.0 / 30.0
             pendingFramesResetCount = 0
             if !settings.allowTemporalCompression {
                 throttleCooldownUntil = Date().addingTimeInterval(10)
             }
-        } else if pending == 0, throttleCooldownUntil == nil || Date() >= throttleCooldownUntil! {
-            pendingFramesResetCount += 1
-            if pendingFramesResetCount >= 30 {
-                throttleCooldownUntil = nil
-                frameInterval = VideoCodec.frameInterval
-            }
         } else if pending == 0 {
-            // Cooldown active, stay at 30fps
+            // numberOfPendingFrames returned 0 or is unsupported.
+            // Use encode rate as fallback signal.
+            checkFrameRate()
+            if frameInterval > VideoCodec.frameInterval {
+                // Throttle is active, check for recovery
+                if throttleCooldownUntil == nil || Date() >= throttleCooldownUntil! {
+                    pendingFramesResetCount += 1
+                    if pendingFramesResetCount >= 30 {
+                        throttleCooldownUntil = nil
+                        frameInterval = VideoCodec.frameInterval
+                    }
+                } else {
+                    pendingFramesResetCount = 0
+                }
+            }
+        } else {
             pendingFramesResetCount = 0
         }
     }
@@ -114,7 +144,8 @@ final class VideoCodec {
                 }
             }
         } catch {
-            logger.warn(error)
+            logger.warn("VideoCodec.encode error: \(error)")
+            invalidateSession = true
         }
     }
 
