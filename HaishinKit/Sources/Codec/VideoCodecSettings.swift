@@ -167,6 +167,11 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// Recommended: false when adaptiveFrameThrottle is true.
     public var allowTemporalCompression = true
 
+    /// H.264 entropy coding mode: "cabac" (better compression, more GPU) or "cavlc" (lighter).
+    /// Default nil lets VT choose (usually CABAC). Set to "cavlc" to reduce GPU load
+    /// during GPU-intensive games. Only applies to H.264.
+    public var h264EntropyMode: String?
+
     package var format: Format = .h264
 
     /// HEVC profile tiers ordered from most to least hardware-demanding.
@@ -232,7 +237,8 @@ public struct VideoCodecSettings: Codable, Sendable {
                     profileLevel == rhs.profileLevel &&
                     dataRateLimits == rhs.dataRateLimits &&
                     isLowLatencyRateControlEnabled == rhs.isLowLatencyRateControlEnabled &&
-                    isHardwareAcceleratedEnabled == rhs.isHardwareAcceleratedEnabled
+                    isHardwareAcceleratedEnabled == rhs.isHardwareAcceleratedEnabled &&
+                    h264EntropyMode == rhs.h264EntropyMode
         )
     }
 
@@ -309,6 +315,10 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .allowTemporalCompression, value: allowTemporalCompression as NSObject)
             _ = codec.session?.setOption(option)
         }
+        if h264EntropyMode != rhs.h264EntropyMode {
+            let option = VTSessionOption(key: .H264EntropyMode, value: (h264EntropyMode ?? "cabac") as NSObject)
+            _ = codec.session?.setOption(option)
+        }
     }
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
@@ -320,6 +330,7 @@ public struct VideoCodecSettings: Codable, Sendable {
             .init(key: bitRateMode == .variable ? .averageBitRate : bitRateMode.key, value: NSNumber(value: bitRate)),
             .init(key: .allowFrameReordering, value: (allowFrameReordering ?? false) as NSObject),
             .init(key: .allowTemporalCompression, value: allowTemporalCompression as NSObject),
+            .init(key: .H264EntropyMode, value: (h264EntropyMode ?? "cabac") as NSObject),
             .init(key: .pixelTransferProperties, value: [
                 "ScalingMode": scalingMode.rawValue
             ] as NSObject)

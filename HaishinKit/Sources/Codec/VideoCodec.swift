@@ -65,11 +65,19 @@ final class VideoCodec {
             let fps = 10.0 / interval
             if fps < 25 && settings.adaptiveFrameThrottle {
                 frameInterval = 1.0 / 30.0
+                applyCavlcIfNeeded()
                 if !settings.allowTemporalCompression {
                     throttleCooldownUntil = now.addingTimeInterval(10)
                 }
             }
         }
+    }
+
+    private func applyCavlcIfNeeded() {
+        guard settings.h264EntropyMode != "cavlc" else { return }
+        var s = settings
+        s.h264EntropyMode = "cavlc"
+        settings = s
     }
 
     private func updateAdaptiveFrameInterval() {
@@ -84,6 +92,7 @@ final class VideoCodec {
         if pending > threshold {
             frameInterval = 1.0 / 30.0
             pendingFramesResetCount = 0
+            applyCavlcIfNeeded()
             if !settings.allowTemporalCompression {
                 throttleCooldownUntil = Date().addingTimeInterval(10)
             }
@@ -146,6 +155,17 @@ final class VideoCodec {
         } catch {
             logger.warn("VideoCodec.encode error: \(error)")
             invalidateSession = true
+            // Progressive backoff: after VT failure, reduce load immediately.
+            // If already throttled, go lower; otherwise start at 15fps.
+            // This prevents rapid session-recreate loops when GPU is saturated.
+            if settings.adaptiveFrameThrottle {
+                let currentMinFps = frameInterval > 0 ? (1.0 / frameInterval) : 60.0
+                let newFps = max(8.0, currentMinFps / 2.0)
+                frameInterval = 1.0 / newFps
+                if !settings.allowTemporalCompression {
+                    throttleCooldownUntil = Date().addingTimeInterval(15)
+                }
+            }
         }
     }
 

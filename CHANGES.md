@@ -1113,7 +1113,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `dataRateLimits` VBR 模式自動啟用（不再依賴使用者設定），防止 bitrate 暴衝
 - A/V sync on restart — pipeline 重啟後同步 audio/video 時間戳，防止音畫不同步
 - `RTMPTimestamp.invalidSequence` 不再 throw → resync 取代 silent drop，消除 DTS 空洞
-- `VideoCodec` 錯誤自動 session recovery — VT 異常時 `invalidateSession = true`，下次 frame 重建 VT session
+- `VideoCodec` 錯誤自動 session recovery + progressive backoff（VT 失敗後逐步降 fps：60→30→15→8，防止 GPU 飽和時 session 重建迴圈）
 
 ### 相關檔案
 
@@ -1124,4 +1124,5 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
 - `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
 - `HaishinKit/Sources/Codec/VideoCodec.swift`
+- `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
 
