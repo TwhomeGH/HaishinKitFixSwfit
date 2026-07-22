@@ -14,7 +14,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     }
 
     private var startedAt = kRTMPTimestamp_defaultTimeInterval
-    private var updatedAt = kRTMPTimestamp_defaultTimeInterval
+    private(set) var updatedAt = kRTMPTimestamp_defaultTimeInterval
     private var timedeltaFraction: TimeInterval = kRTMPTimestamp_defaultTimeInterval
     private var lastRawTimestamp: UInt32 = 0
     private var rolloverCount: UInt64 = 0
@@ -82,6 +82,18 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     mutating func clear() {
         startedAt = kRTMPTimestamp_defaultTimeInterval
         updatedAt = kRTMPTimestamp_defaultTimeInterval
+        timedeltaFraction = kRTMPTimestamp_defaultTimeInterval
+        lastRawTimestamp = 0
+        rolloverCount = 0
+        lastDelta = 0
+    }
+
+    /// Sync this timestamp to a specific wall clock position.
+    /// Used to keep A/V in sync after a pipeline restart.
+    /// Pass the `updatedAt` value from another RTMPTimestamp.
+    mutating func syncToUpdatedAt(_ time: TimeInterval) {
+        startedAt = kRTMPTimestamp_defaultTimeInterval
+        updatedAt = time
         timedeltaFraction = kRTMPTimestamp_defaultTimeInterval
         lastRawTimestamp = 0
         rolloverCount = 0
