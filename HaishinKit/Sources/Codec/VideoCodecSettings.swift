@@ -152,6 +152,11 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// The desired compression quality (0.0 to 1.0). Used when bitRateMode is .quality.
     public var quality: Float?
 
+    /// Limits how many frames VideoToolbox can buffer internally.
+    /// Lower values reduce encode latency for live streaming (recommended: 2).
+    /// Default (nil) lets the encoder decide.
+    public var maxFrameDelayCount: Int?
+
     package var format: Format = .h264
 
     /// HEVC profile tiers ordered from most to least hardware-demanding.
@@ -284,6 +289,10 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .quality, value: NSNumber(value: quality))
             _ = codec.session?.setOption(option)
         }
+        if maxFrameDelayCount != rhs.maxFrameDelayCount, let maxFrameDelayCount {
+            let option = VTSessionOption(key: .maxFrameDelayCount, value: NSNumber(value: maxFrameDelayCount))
+            _ = codec.session?.setOption(option)
+        }
     }
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
@@ -336,6 +345,9 @@ public struct VideoCodecSettings: Codable, Sendable {
             if let estimatedAverageBytesPerFrame {
                 options.insert(.init(key: .estimatedAverageBytesPerFrame, value: NSNumber(value: estimatedAverageBytesPerFrame)))
             }
+        }
+        if let maxFrameDelayCount {
+            options.insert(.init(key: .maxFrameDelayCount, value: NSNumber(value: maxFrameDelayCount)))
         }
         #if os(macOS)
         if isHardwareAcceleratedEnabled {
