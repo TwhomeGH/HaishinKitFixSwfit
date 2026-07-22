@@ -157,6 +157,11 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// Default (nil) lets the encoder decide.
     public var maxFrameDelayCount: Int?
 
+    /// When true, monitors VT's `numberOfPendingFrames` and automatically increases
+    /// `frameInterval` to throttle encoding when the encoder falls behind
+    /// (e.g., during GPU-intensive games). Resets when pending clears.
+    public var adaptiveFrameThrottle = false
+
     package var format: Format = .h264
 
     /// HEVC profile tiers ordered from most to least hardware-demanding.

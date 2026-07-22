@@ -1108,6 +1108,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - Audio stall 檢測 — `restartAudioPipeline()` 對稱 video
 - `setVideoInputBufferCounts(-1)` 支援自動模式
 - `maxFrameDelayCount` — 限制 VT 內部 buffer，減少 live latency
+- `adaptiveFrameThrottle` — 自動偵測 VT pending frames，暫緩編碼避免 GPU 競爭
 
 ### 相關檔案
 

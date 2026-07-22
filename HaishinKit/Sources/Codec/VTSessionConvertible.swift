@@ -19,6 +19,8 @@ protocol VTSessionConvertible {
         continuation: AsyncStream<CMSampleBuffer>.Continuation?
     ) throws -> Bool
     func invalidate()
+    /// Read a property from the VT session (e.g., numberOfPendingFrames).
+    func copyProperty(_ key: CFString) -> Any?
 }
 
 extension VTSessionConvertible where Self: VTSession {
@@ -32,5 +34,12 @@ extension VTSessionConvertible where Self: VTSession {
             properties[option.key.CFString] = option.value
         }
         return VTSessionSetProperties(self, propertyDictionary: properties as CFDictionary)
+    }
+
+    func copyProperty(_ key: CFString) -> Any? {
+        var value: CFTypeRef?
+        let status = VTSessionCopyProperty(self, key: key, allocator: kCFAllocatorDefault, valueOut: &value)
+        guard status == noErr else { return nil }
+        return value
     }
 }
