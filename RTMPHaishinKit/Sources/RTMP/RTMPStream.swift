@@ -224,6 +224,7 @@ public actor RTMPStream {
     private var audioSentFrames: Int = 0
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
+    private var lastStatusTime = ContinuousClock.now
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
@@ -970,10 +971,20 @@ extension RTMPStream: _Stream {
             videoStallCount = 0
             audioInputFrames = 0
             audioStallCount = 0
-        case .status:
+        case .status(let report):
+            let now = ContinuousClock.now
+            let interval = now - lastStatusTime
+            lastStatusTime = now
+            if interval > .seconds(1.5) {
+                await connection?.log(.warn, "publish status gap", detail: "interval=\(interval) videoInputFrames=\(videoInputFrames) frameCount=\(frameCount)")
+            }
             if audioSentFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
                 await connection?.log(.debug, "publish throughput",
                     detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
+            }
+            if videoInputFrames > frameCount * 2, videoInputFrames > 10 {
+                await connection?.log(.warn, "publish frame loss",
+                    detail: "videoInputFrames=\(videoInputFrames) >> videoFrames=\(frameCount) queueBytes=\(report.currentQueueBytesOut)")
             }
             if readyState == .publishing && 0 < videoInputFrames && frameCount == 0 {
                 videoStallCount += 1
