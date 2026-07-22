@@ -16,7 +16,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     private var rolloverCount: UInt64 = 0
     private var lastDelta: TimeInterval = 0
 
-    mutating func update(_ value: T, source: String = "") throws -> UInt32 {
+    mutating func update(_ value: T, source: String = "") -> UInt32 {
         if startedAt == 0 {
             startedAt = value.seconds
             updatedAt = value.seconds
