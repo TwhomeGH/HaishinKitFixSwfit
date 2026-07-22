@@ -594,9 +594,29 @@ VideoCodec.outputStream 原本想改 `.bufferingNewest(60)` 但造成撕裂（po
 | 檔案 | 變更 |
 |------|------|
 | `MediaMixerOutputBridge.swift` | **新增**：bridge 層，DispatchQueue pacing |
-| `RTMPConnection.swift` | 改 unbounded drop policy |
-| `RTMPStream.swift` | 改用 bridge、audio stall 檢測 |
+| `RTMPConnection.swift` | 改 `.bufferingNewest(256)`（原本 unbounded 造成 latency 無限累積） |
+| `RTMPStream.swift` | 改用 bridge、audio stall 檢測、status gap warn log |
 | `OutgoingStream.swift` | byte-based buffer 控制、restartAudioCodec |
 | `VideoCodec.swift` | 恢復 unbounded output stream |
+| `VideoCodecSettings.swift` | 新增 `maxFrameDelayCount` 參數 |
 | `StreamConvertible.swift` | 新增 maxVideoBufferBytes 屬性 |
 | `RTMPSocket.swift` | 加入 weak self 避免 retain cycle |
+
+### 9.8 修正：B-frame CTO（Composition Time Offset）計算
+
+**檔案**: `RTMPMessage.swift`, `RTMPStream.swift`
+
+VideoToolbox 啟用 B-frame（`allowFrameReordering = true`）時會以 decode order（DTS 順序）輸出 frame，但 `CMSampleBuffer.decodeTimeStamp` 不一定有效。原有的 `getCompositionTime` 在 DTS invalid 時回傳 0，導致 RTMP player 無法正確 reorder frames → 撕裂。
+
+**修正**: 在 `RTMPStream` 新增 `videoDecodeOrder` 計數器，每收到一個 VT 輸出 frame 就 +1，以此作為 DTS 計算 CTO：
+
+```swift
+// CTO = PTS - DTS（手動追蹤 decode order，允許負值）
+compositionTime = (pts.seconds - decodeOrder.seconds) * 1000
+```
+
+RTMP CTO（composition time offset）是 24-bit signed integer，負數表示 B-frame（PTS < DTS），player 依此 reorder frames。
+
+`RTMPVideoMessage` 新增接受外部 `compositionTime` 的 initializer，讓 `RTMPStream` 傳入正確的 CTO。
+
+**效果**: `allowFrameReordering = true` 時 B-frame 也能正確計算 CTO，player 可正確 reorder frames → 無撕裂。

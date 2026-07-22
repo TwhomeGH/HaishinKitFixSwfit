@@ -1101,12 +1101,13 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 詳細設計與架構說明請見 [Docs/OUTGOING_PIPELINE_REDESIGN.md#9-管線傳遞設計修正2026-07-月](Docs/OUTGOING_PIPELINE_REDESIGN.md#9-管線傳遞設計修正2026-07-月)。
 
-- 移除 `RTMPConnection.outputContinuation` bound（`.unbounded`）
+- 移除 `RTMPConnection.outputContinuation` bound → `.bufferingNewest(256)`（有限 latency）
 - 新增 `MediaMixerOutputBridge` — 消除 `nonisolated(unsafe)` + 每幀 `Task{}`
 - `DispatchQueue` pacing — 消除 frame burst 造成撕裂
 - Byte-based buffer 控制 — `maxVideoBufferBytes` + 自動計算幀數
 - Audio stall 檢測 — `restartAudioPipeline()` 對稱 video
 - `setVideoInputBufferCounts(-1)` 支援自動模式
+- `maxFrameDelayCount` — 限制 VT 內部 buffer，減少 live latency
 
 ### 相關檔案
 

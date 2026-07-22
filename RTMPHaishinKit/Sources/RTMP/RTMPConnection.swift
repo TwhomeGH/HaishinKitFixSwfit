@@ -622,7 +622,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
+        let (stream, continuation) = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .bufferingNewest(256))
         outputContinuation = continuation
         Task {
             for await data in stream {

@@ -225,6 +225,10 @@ public actor RTMPStream {
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
     private var lastStatusTime = Date.distantPast
+    /// Tracks decode order for CTO calculation when B-frames are enabled.
+    /// VT outputs frames in decode order but doesn't set decodeTimeStamp;
+    /// this counter assigns sequential DTS values to compute compositionTimeOffset.
+    private var videoDecodeOrder: Int64 = 0
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
@@ -899,7 +903,14 @@ extension RTMPStream: _Stream {
                     let timedelta = try videoTimestamp.update(decodeTimeStamp)
                     frameCount += 1
                     videoFormat = sampleBuffer.formatDescription
-                    guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, sampleBuffer: sampleBuffer) else {
+                    let compositionTime: Int32
+                    if sampleBuffer.decodeTimeStamp.isValid {
+                        compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
+                    } else {
+                        compositionTime = Int32((sampleBuffer.presentationTimeStamp.seconds - CMTime(value: videoDecodeOrder, timescale: sampleBuffer.presentationTimeStamp.timescale).seconds) * 1000)
+                    }
+                    videoDecodeOrder += 1
+                    guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, compositionTime: compositionTime, sampleBuffer: sampleBuffer) else {
                         Task { await connection?.log(.debug, "append(video): RTMPVideoMessage creation failed") }
                         return
                     }
@@ -971,6 +982,7 @@ extension RTMPStream: _Stream {
             videoStallCount = 0
             audioInputFrames = 0
             audioStallCount = 0
+            videoDecodeOrder = 0
         case .status(let report):
             let now = Date()
             let interval = now.timeIntervalSince(lastStatusTime)
@@ -1048,6 +1060,7 @@ extension RTMPStream: _Stream {
         stopPublishTasks()
         outgoing.restartVideoCodec()
         videoFormat = nil
+        videoDecodeOrder = 0
         startPublishTasks()
         videoStallCount = 0
     }
