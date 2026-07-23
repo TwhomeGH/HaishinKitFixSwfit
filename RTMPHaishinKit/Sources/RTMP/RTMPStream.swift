@@ -1068,7 +1068,6 @@ extension RTMPStream: _Stream {
         stopPublishTasks()
         outgoing.restartVideoCodec()
         videoFormat = nil
-        videoTimestamp.syncToUpdatedAt(audioTimestamp.updatedAt)
         startPublishTasks()
         videoStallCount = 0
         videoSourceStallCount = 0
@@ -1085,7 +1084,6 @@ extension RTMPStream: _Stream {
         stopPublishTasks()
         outgoing.restartAudioCodec()
         audioFormat = nil
-        audioTimestamp.syncToUpdatedAt(videoTimestamp.updatedAt)
         startPublishTasks()
         audioStallCount = 0
     }

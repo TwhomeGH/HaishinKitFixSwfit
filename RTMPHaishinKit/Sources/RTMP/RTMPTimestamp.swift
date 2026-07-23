@@ -86,18 +86,6 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         rolloverCount = 0
         lastDelta = 0
     }
-
-    /// Sync this timestamp to a specific wall clock position.
-    /// Used to keep A/V in sync after a pipeline restart.
-    /// Pass the `updatedAt` value from another RTMPTimestamp.
-    mutating func syncToUpdatedAt(_ time: TimeInterval) {
-        startedAt = kRTMPTimestamp_defaultTimeInterval
-        updatedAt = time
-        timedeltaFraction = kRTMPTimestamp_defaultTimeInterval
-        lastRawTimestamp = 0
-        rolloverCount = 0
-        lastDelta = 0
-    }
 }
 
 extension AVAudioTime: RTMPTimeConvertible {

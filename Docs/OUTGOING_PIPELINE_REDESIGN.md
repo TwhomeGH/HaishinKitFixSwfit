@@ -634,3 +634,18 @@ compositionTime = (pts.seconds - videoTimestamp.updatedAt) * 1000
 - `VideoCodec.append` 在 VT 丟幀時輸出 `"VideoCodec frame dropped by VT"` debug log
 
 **效果**: 可從 onLog 確認撕裂或 frame 丟失是否來自 VT 內部（因 encoder 塞車主動丟幀）。
+
+
+
+### 9.10 RTMPTimestamp.syncToUpdatedAt 移除
+
+移除 `syncToUpdatedAt` 方法。原本在 pipeline restart 時用於將 video timestamp 對齊 audio，但實際因下一幀 resync 立即覆寫而無效。副作用是 sync 將 `updatedAt` 跳到未來 → 接下來多幀 `delta=0` → ffmpeg 報 `Non-monotonous DTS`。A/V 各自 PTS 來自同一個系統時鐘，restart 後自然對齊。
+
+**檔案**: `MediaMixerOutputBridge.swift`
+
+橋接器改為 `DispatchQueue.async` 序列化 yield：
+
+```
+// 直接 yield（前版）：MediaMixer 暴衝 30 幀 → buffer(5) 丟 25 幀 → 撕裂
+// DispatchQueue（現在）：序列化 yield → 自然 pace → buffer 不溢滿
+```

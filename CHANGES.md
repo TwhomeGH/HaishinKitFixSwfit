@@ -1131,4 +1131,5 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
 - `HaishinKit/Sources/Codec/VideoCodec.swift`
 - `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift` — 移除 `syncToUpdatedAt`
 
