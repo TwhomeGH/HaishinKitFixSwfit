@@ -39,7 +39,12 @@ package final class OutgoingStream: @unchecked Sendable {
             videoCodec.settings
         }
         set {
+            let oldSize = videoCodec.settings.videoSize
             videoCodec.settings = newValue
+            // videoSize 變更時自動重新計算 buffer count（auto mode 下）
+            if !videoInputBufferCountsOverridden, videoCodec.settings.videoSize != oldSize {
+                videoInputBufferCounts = computeVideoInputBufferCounts(for: videoCodec.settings.videoSize)
+            }
         }
     }
 
@@ -61,6 +66,8 @@ package final class OutgoingStream: @unchecked Sendable {
             videoInputBufferCountsOverridden = true
         } else {
             videoInputBufferCountsOverridden = false
+            // 立即以當前 videoSize 重新計算
+            videoInputBufferCounts = computeVideoInputBufferCounts(for: videoCodec.settings.videoSize)
         }
     }
 

@@ -84,7 +84,7 @@ extension _Stream {
     }
 
     public func setVideoInputBufferCounts(_ videoInputBufferCounts: Int) {
-        outgoing.setVideoInputBufferCounts(videoInputBufferCounts >= 0 ? videoInputBufferCounts : nil)
+        outgoing.setVideoInputBufferCounts(videoInputBufferCounts > 0 ? videoInputBufferCounts : nil)
     }
 
     public var maxVideoBufferBytes: Int {
