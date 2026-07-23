@@ -423,12 +423,10 @@ public struct VideoCodecSettings: Codable, Sendable {
         let frameRate: Double
         if 0 < frameInterval {
             frameRate = 1.0 / frameInterval
-        } else if let expectedFrameRate, expectedFrameRate <= 30 {
+        } else if let expectedFrameRate {
             frameRate = expectedFrameRate
-        } else if expectedFrameRate == nil {
-            frameRate = 30.0
         } else {
-            return nil
+            frameRate = 30.0
         }
         guard frameRate.isFinite, 0 < frameRate else {
             return nil
