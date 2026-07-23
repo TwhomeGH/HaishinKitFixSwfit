@@ -219,6 +219,8 @@ public actor RTMPStream {
     private var frameCount: UInt16 = 0
     private var videoInputFrames: Int = 0
     private var videoStallCount: Int = 0
+    private var videoSourceStallCount: Int = 0
+    private var videoSourceWasStalled = false
     private var audioInputFrames: Int = 0
     private var audioStallCount: Int = 0
     private var audioSentFrames: Int = 0
@@ -967,6 +969,8 @@ extension RTMPStream: _Stream {
             readyState = .idle
             videoInputFrames = 0
             videoStallCount = 0
+            videoSourceStallCount = 0
+            videoSourceWasStalled = false
             audioInputFrames = 0
             audioStallCount = 0
         case .status(let report):
@@ -980,11 +984,29 @@ extension RTMPStream: _Stream {
                 await connection?.log(.debug, "publish throughput",
                     detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
             }
-            if videoInputFrames > frameCount * 2, videoInputFrames > 10 {
+            if videoInputFrames > Int(frameCount) * 2, videoInputFrames > 10 {
                 await connection?.log(.warn, "publish frame loss",
                     detail: "videoInputFrames=\(videoInputFrames) >> videoFrames=\(frameCount) queueBytes=\(report.currentQueueBytesOut)")
             }
-            if readyState == .publishing && 0 < videoInputFrames && frameCount == 0 {
+            var restartedVideoPipeline = false
+            if readyState == .publishing && videoInputFrames == 0 && audioInputFrames > 0 {
+                videoSourceStallCount += 1
+                if videoSourceStallCount == 3 {
+                    videoSourceWasStalled = true
+                    await connection?.log(.warn, "video source stalled", detail: "audioInputFrames=\(audioInputFrames)")
+                }
+            } else if readyState == .publishing && videoInputFrames > 0 {
+                if videoSourceWasStalled {
+                    await restartVideoPipeline(reason: "video source resumed after \(videoSourceStallCount) empty status intervals")
+                    restartedVideoPipeline = true
+                }
+                videoSourceStallCount = 0
+                videoSourceWasStalled = false
+            } else if readyState != .publishing {
+                videoSourceStallCount = 0
+                videoSourceWasStalled = false
+            }
+            if !restartedVideoPipeline && readyState == .publishing && 0 < videoInputFrames && frameCount == 0 {
                 videoStallCount += 1
                 if 2 == videoStallCount {
                     await connection?.log(.warn, "video stall detected, will restart pipeline", detail: "stallCount=\(videoStallCount)")
@@ -1049,6 +1071,8 @@ extension RTMPStream: _Stream {
         videoTimestamp.syncToUpdatedAt(audioTimestamp.updatedAt)
         startPublishTasks()
         videoStallCount = 0
+        videoSourceStallCount = 0
+        videoSourceWasStalled = false
     }
 
     private func restartAudioPipeline(reason: String) async {

@@ -55,6 +55,21 @@ final class VideoCodec {
     /// Input frame timestamps for computing proportional throttle.
     private var inputTimestamps: [Date] = []
 
+    private func resetSessionState(reason: @autoclosure () -> String, clearInputFormat: Bool) {
+        logger.info("VideoCodec reset session:", reason())
+        session = nil
+        invalidateSession = true
+        if clearInputFormat {
+            inputFormat = nil
+        }
+        outputFormat = nil
+        lastKeyFramePresentationTimeStamp = nil
+        presentationTimeStamp = .zero
+        pendingFramesResetCount = 0
+        encodeTimestamps.removeAll(keepingCapacity: true)
+        inputTimestamps.removeAll(keepingCapacity: true)
+    }
+
     /// Sets frameInterval to skip proportionally: encode at `fraction` of input rate.
     /// fraction=0.5 means encode half the input frames (30fps at 60fps input).
     /// Only throttles when input rate is above `minInputFps` to avoid double-reduction
@@ -183,7 +198,7 @@ final class VideoCodec {
             }
         } catch {
             logger.warn("VideoCodec.encode error: \(error)")
-            invalidateSession = true
+            resetSessionState(reason: "encode error \(error)", clearInputFormat: true)
             // Progressive backoff: after VT failure, reduce load immediately.
             // If already throttled, go lower; otherwise start at 15fps.
             // This prevents rapid session-recreate loops when GPU is saturated.
@@ -204,7 +219,10 @@ final class VideoCodec {
             var attributes: [NSString: AnyObject] = [:]
             if let inputFormat {
                 // Specify the pixel format of the uncompressed video.
-                attributes[kCVPixelBufferPixelFormatTypeKey] = inputFormat.mediaType.rawValue as CFNumber
+                let pixelFormat = CMFormatDescriptionGetMediaSubType(inputFormat)
+                if !inputFormat.isCompressed {
+                    attributes[kCVPixelBufferPixelFormatTypeKey] = NSNumber(value: pixelFormat)
+                }
             }
             return attributes.isEmpty ? nil : attributes
         case .decompression:
@@ -242,7 +260,7 @@ final class VideoCodec {
     #if os(iOS) || os(tvOS) || os(visionOS)
     @objc
     private func applicationWillEnterForeground(_ notification: Notification) {
-        invalidateSession = true
+        resetSessionState(reason: "application will enter foreground", clearInputFormat: true)
     }
 
     @objc
@@ -255,7 +273,7 @@ final class VideoCodec {
         }
         switch type {
         case .ended:
-            invalidateSession = true
+            resetSessionState(reason: "audio session interruption ended", clearInputFormat: true)
         default:
             break
         }
