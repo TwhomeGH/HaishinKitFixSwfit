@@ -134,13 +134,15 @@ final class VideoCodec {
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
         let threshold = settings.maxFrameDelayCount ?? 5
         if pending > threshold {
+            guard frameInterval == VideoCodec.frameInterval else {
+                // 已降速中，不再累加，避免 60→30→15 鏈式衰退
+                return
+            }
             setProportionalThrottle(fraction: 0.5)
             pendingFramesResetCount = 0
             applyCavlcIfNeeded()
-            if !settings.allowTemporalCompression {
-                throttleCooldownUntil = Date().addingTimeInterval(10)
-            }
-        } else if pending == 0 {
+            throttleCooldownUntil = Date().addingTimeInterval(10)
+        } else if pending <= threshold && frameInterval > VideoCodec.frameInterval {
             // numberOfPendingFrames returned 0 or is unsupported.
             // Use encode rate as fallback signal.
             checkFrameRate()
