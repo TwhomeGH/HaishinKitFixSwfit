@@ -52,6 +52,32 @@ final class VideoCodec {
     /// Fallback throttle signal: timestamps from last 10 encode attempts.
     /// Used when `numberOfPendingFrames` is not supported by the device.
     private var encodeTimestamps: [Date] = []
+    /// Input frame timestamps for computing proportional throttle.
+    private var inputTimestamps: [Date] = []
+
+    /// Sets frameInterval to skip proportionally: encode at `fraction` of input rate.
+    /// fraction=0.5 means encode half the input frames (30fps at 60fps input).
+    /// Only throttles when input rate is above `minInputFps` to avoid double-reduction
+    /// when the system has already lowered the capture rate.
+    private func setProportionalThrottle(fraction: Double = 0.5, minInputFps: Double = 45.0) {
+        let now = Date()
+        inputTimestamps.append(now)
+        if inputTimestamps.count > 10 {
+            inputTimestamps.removeFirst()
+        }
+        guard inputTimestamps.count >= 10 else {
+            frameInterval = 1.0 / minInputFps
+            return
+        }
+        let interval = now.timeIntervalSince(inputTimestamps.first!)
+        let inputFps = Double(inputTimestamps.count) / interval
+        guard inputFps > minInputFps else {
+            // Input already reduced by system; don't compound the throttle.
+            return
+        }
+        let targetFps = inputFps * fraction
+        frameInterval = 1.0 / max(15.0, targetFps)
+    }
 
     private func checkFrameRate() {
         // Only trigger initial throttle (60→30) when running at full rate.
@@ -67,7 +93,7 @@ final class VideoCodec {
             let interval = now.timeIntervalSince(encodeTimestamps.first!)
             let fps = 10.0 / interval
             if fps < 25 && settings.adaptiveFrameThrottle {
-                frameInterval = 1.0 / 30.0
+                setProportionalThrottle(fraction: 0.5)
                 applyCavlcIfNeeded()
                 if !settings.allowTemporalCompression {
                     throttleCooldownUntil = now.addingTimeInterval(10)
@@ -93,7 +119,7 @@ final class VideoCodec {
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
         let threshold = settings.maxFrameDelayCount ?? 5
         if pending > threshold {
-            frameInterval = 1.0 / 30.0
+            setProportionalThrottle(fraction: 0.5)
             pendingFramesResetCount = 0
             applyCavlcIfNeeded()
             if !settings.allowTemporalCompression {
