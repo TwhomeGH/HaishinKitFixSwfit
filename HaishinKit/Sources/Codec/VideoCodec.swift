@@ -19,7 +19,7 @@ final class VideoCodec {
         }
     }
     var passthrough = true
-    var outputStream: AsyncStream<CMSampleBuffer>
+    var outputStream = AsyncStream<CMSampleBuffer> { _ in }
     var frameInterval = VideoCodec.frameInterval
     private var outputContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private var startedAt: CMTime = .zero

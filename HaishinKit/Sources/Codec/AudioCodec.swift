@@ -20,7 +20,7 @@ final class AudioCodec {
         return audioConverter?.outputFormat
     }
 
-    var outputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)>
+    var outputStream = AsyncStream<(AVAudioBuffer, AVAudioTime)> { _ in }
     private var outputContinuation: AsyncStream<(AVAudioBuffer, AVAudioTime)>.Continuation?
 
     /// This instance is running to process(true) or not(false).
