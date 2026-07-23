@@ -612,14 +612,14 @@ VideoCodec.outputStream 原本想改 `.bufferingNewest(60)` 但造成撕裂（po
 
 VideoToolbox 啟用 B-frame（`allowFrameReordering = true`）時會以 decode order（DTS 順序）輸出 frame，但 `CMSampleBuffer.decodeTimeStamp` 不一定有效。原有的 `getCompositionTime` 在 DTS invalid 時回傳 0，導致 RTMP player 無法正確 reorder frames → 撕裂。
 
-**修正**: 在 `RTMPStream` 新增 `videoDecodeOrder` 計數器，每收到一個 VT 輸出 frame 就 +1，以此作為 DTS 計算 CTO：
+**修正**: 移除 `videoDecodeOrder` 計數器。CTO 直接由 `videoTimestamp.updatedAt`（DTS）計算：
 
 ```swift
-// CTO = PTS - DTS（手動追蹤 decode order，允許負值）
-compositionTime = (pts.seconds - decodeOrder.seconds) * 1000
+// CTO = PTS - DTS（DTS 來自 RTMPTimestamp.updatedAt，保證一致）
+compositionTime = (pts.seconds - videoTimestamp.updatedAt) * 1000
 ```
 
-RTMP CTO（composition time offset）是 24-bit signed integer，負數表示 B-frame（PTS < DTS），player 依此 reorder frames。
+原有 `videoDecodeOrder` 在 timestamp resync（PTS 非遞增）後會繼續累積，導致 CTO 偏差 → DTS drift → 伺服端 ffmpeg 報 `Invalid DTS: DTS > PTS`。直接使用 `updatedAt` 確保 DTS 永遠與 RTMP 訊息時間戳一致。
 
 `RTMPVideoMessage` 新增接受外部 `compositionTime` 的 initializer，讓 `RTMPStream` 傳入正確的 CTO。
 
