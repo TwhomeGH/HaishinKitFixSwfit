@@ -20,8 +20,8 @@ final class AudioCodec {
         return audioConverter?.outputFormat
     }
 
-    @AsyncStreamedFlow
     var outputStream: AsyncStream<(AVAudioBuffer, AVAudioTime)>
+    private var outputContinuation: AsyncStream<(AVAudioBuffer, AVAudioTime)>.Continuation?
 
     /// This instance is running to process(true) or not(false).
     private(set) var isRunning = false
@@ -122,9 +122,9 @@ final class AudioCodec {
             case .haveData:
                 if audioTime.hasAnchor {
                     audioTime.advanced(AVAudioFramePosition(audioConverter.outputFormat.streamDescription.pointee.mFramesPerPacket))
-                    _outputStream.yield((outputBuffer, audioTime.at))
+                    outputContinuation?.yield((outputBuffer, audioTime.at))
                 } else {
-                    _outputStream.yield((outputBuffer, audioTime.at))
+                    outputContinuation?.yield((outputBuffer, audioTime.at))
                 }
                 inputBuffersCursor += 1
                 if inputBuffersCursor == inputBuffers.count {
@@ -202,6 +202,9 @@ extension AudioCodec: Runner {
         guard !isRunning else {
             return
         }
+        let (stream, continuation) = AsyncStream.makeStream(of: (AVAudioBuffer, AVAudioTime).self)
+        outputStream = stream
+        outputContinuation = continuation
         audioTime.reset()
         ringBuffer?.reset()
         audioConverter?.reset()
@@ -213,6 +216,7 @@ extension AudioCodec: Runner {
             return
         }
         isRunning = false
-        _outputStream.finish()
+        outputContinuation?.finish()
+        outputContinuation = nil
     }
 }

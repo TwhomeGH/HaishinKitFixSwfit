@@ -19,9 +19,9 @@ final class VideoCodec {
         }
     }
     var passthrough = true
-    @AsyncStreamedFlow
     var outputStream: AsyncStream<CMSampleBuffer>
     var frameInterval = VideoCodec.frameInterval
+    private var outputContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private var startedAt: CMTime = .zero
     private var invalidateSession = true
     private var lastKeyFramePresentationTimeStamp: CMTime?
@@ -177,7 +177,7 @@ final class VideoCodec {
                     session = try VTSessionMode.compression.makeSession(self)
                 }
             }
-            let continuation = _outputStream.continuation
+            let continuation = outputContinuation
             guard let session, let continuation else {
                 logger.debug("VideoCodec.append dropped: session=\(session != nil) continuation=\(continuation != nil)")
                 return
@@ -303,6 +303,9 @@ extension VideoCodec: Runner {
             object: nil
         )
         #endif
+        let (stream, continuation) = AsyncStream.makeStream(of: CMSampleBuffer.self)
+        outputStream = stream
+        outputContinuation = continuation
         startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
         isRunning = true
     }
@@ -318,7 +321,8 @@ extension VideoCodec: Runner {
         outputFormat = nil
         lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
-        _outputStream.finish()
+        outputContinuation?.finish()
+        outputContinuation = nil
         startedAt = .zero
         #if os(iOS) || os(tvOS) || os(visionOS)
         NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
