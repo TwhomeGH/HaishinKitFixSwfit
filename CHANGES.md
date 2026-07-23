@@ -1117,6 +1117,8 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `h264EntropyMode` — 可設 `"cavlc"` 降低 VT GPU 負載，throttle 觸發時自動切換
 - 移除 `videoDecodeOrder` — CTO 改用 `videoTimestamp.updatedAt`（DTS），消除 DTS/PTS 反轉
 - `checkFrameRate()` 自鎖修復 — throttled 時不再觸發降頻
+- `MediaMixerOutputBridge.finish()` 同步化 — 避免 pipeline restart 時 DispatchQueue 非同步造成 continuation race → 12 秒卡死
+- `setProportionalThrottle(fraction:minInputFps:)` — 根據實際輸入 fps 動態降載，輸入 < 45fps 時不疊加 throttle
 
 ### 相關檔案
 
