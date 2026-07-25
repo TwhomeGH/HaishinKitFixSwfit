@@ -64,7 +64,7 @@ final actor RTMPSocket {
     }
 
 
-    var RTMPURL:String = "rtmp://example.com/live/stream"
+    var RTMPURL:String = "example.com"
     var RTMPPort:Int = 1935
 
     func connect(_ name: String, port: Int) async throws {
@@ -111,7 +111,7 @@ final actor RTMPSocket {
             return
         }
         guard connected else {
-            onLog?(.init(level: .warn, message: "Send dropped: not connected", detail: "size=\(data.count)"))
+            onLog?(.init(level: .warn, message: "Send dropped: not connected \(RTMPURL):\(RTMPPort)", detail: "size=\(data.count)"))
             return
         }
         guard queueBytesOut + data.count <= Self.maxQueueBytesOut else {
@@ -212,13 +212,13 @@ final actor RTMPSocket {
         switch state {
         case .ready:
             logger.info("Connection is ready.")
-            onLog?(.init(level: .info, message: "Socket ready", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) queueBytesOut=\(queueBytesOut)"))
+            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) queueBytesOut=\(queueBytesOut)"))
             connected = true
             self.continuation?.resume()
             self.continuation = nil
         case .waiting(let error):
             logger.warn("Connection waiting:", error)
-            onLog?(.init(level: .warn, message: "Socket waiting", detail: "\(error)"))
+            onLog?(.init(level: .warn, message: "Socket waiting \(RTMPURL):\(RTMPPort)", detail: "\(error)"))
         case .setup:
             logger.debug("Connection is setting up.")
         case .preparing:
@@ -232,7 +232,7 @@ final actor RTMPSocket {
         case .cancelled:
             logger.info("Connection cancelled.")
             onLog?(.init(level: .info, message: "Socket cancelled"))
-            close(NWError.posix(.ECONNABORTED))
+            close()
 
             scheduleReconnect(after: 2.0) // 嘗試重新連線
 
