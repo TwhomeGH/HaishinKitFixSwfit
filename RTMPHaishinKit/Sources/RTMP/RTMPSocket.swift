@@ -55,7 +55,7 @@ final actor RTMPSocket {
             do {
                 
                 try await connect(RTMPURL, port: RTMPPort)
-                
+
             } catch {
                 onLog?(.init(level: .error, message: "Reconnect failed", detail: "\(error)"))
                 scheduleReconnect(after: min(delay * 2, 30)) // 指數退避
@@ -232,6 +232,7 @@ final actor RTMPSocket {
         case .cancelled:
             logger.info("Connection cancelled.")
             onLog?(.init(level: .info, message: "Socket cancelled"))
+            close(NWError.posix(.ECONNABORTED))
 
             scheduleReconnect(after: 2.0) // 嘗試重新連線
 
