@@ -53,7 +53,9 @@ final actor RTMPSocket {
         Task {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             do {
-                try await connect("example.com", port: 1935)
+                
+                try await connect(RTMPURL, port: RTMPPort)
+                
             } catch {
                 onLog?(.init(level: .error, message: "Reconnect failed", detail: "\(error)"))
                 scheduleReconnect(after: min(delay * 2, 30)) // 指數退避
@@ -62,6 +64,8 @@ final actor RTMPSocket {
     }
 
 
+    var RTMPURL:String = "rtmp://example.com/live/stream"
+    var RTMPPort:Int = 1935
 
     func connect(_ name: String, port: Int) async throws {
         guard !connected else {
@@ -75,6 +79,9 @@ final actor RTMPSocket {
         do {
             let connection = NWConnection(to: NWEndpoint.hostPort(host: .init(name), port: .init(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))), using: parameters)
             self.connection = connection
+            self.RTMPURL = name
+            self.RTMPPort = port
+
             try await withCheckedThrowingContinuation { (checkedContinuation: CheckedContinuation<Void, Swift.Error>) in
                 self.continuation = checkedContinuation
                 Task {
