@@ -227,10 +227,7 @@ final actor RTMPSocket {
             onLog?(.init(level: .info, message: "Socket cancelled"))
 
             scheduleReconnect(after: 2.0) // 嘗試重新連線
-            
-        case .waitingForNetwork:
-            logger.info("Connection waiting for network.")
-            onLog?(.init(level: .info, message: "Socket waiting for network"))
+
 
         @unknown default:
             logger.error("Unknown connection state.")
@@ -239,6 +236,7 @@ final actor RTMPSocket {
 
     private func viabilityDidChange(to viability: Bool) {
         logger.info("Connection viability changed to ", viability)
+        onLog?(.init(level: .info, message: "Socket viability changed", detail: "viability=\(viability)"))
     }
 
     private func flushSendBuffer() {
