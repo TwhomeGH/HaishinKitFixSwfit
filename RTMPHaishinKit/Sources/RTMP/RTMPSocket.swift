@@ -4,8 +4,8 @@ import Network
 
 final actor RTMPSocket {
     static let defaultWindowSizeC = Int(UInt16.max)
-    /// Maximum bytes queued for send before backpressure kicks in.
-    static let maxQueueBytesOut = 15 * 1024 * 1024 // 15 MB
+    static let maxQueueBytesOut = 15 * 1024 * 1024
+    private static let sendChunkSize = 64 * 1024
 
     enum Error: Swift.Error {
         case invalidState
@@ -20,7 +20,6 @@ final actor RTMPSocket {
     private var windowSizeC = RTMPSocket.defaultWindowSizeC
     private var securityLevel: StreamSocketSecurityLevel = .none
     private var totalBytesIn = 0
-    private(set) var queueBytesOut = 0
     private var totalBytesOut = 0
     private var parameters: NWParameters = .tcp
     private var connection: NWConnection? {
@@ -75,7 +74,6 @@ final actor RTMPSocket {
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
-        queueBytesOut = 0
         do {
             let connection = NWConnection(to: NWEndpoint.hostPort(host: .init(name), port: .init(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))), using: parameters)
             self.connection = connection
@@ -115,23 +113,16 @@ final actor RTMPSocket {
             return
         }
 
-        guard queueBytesOut + data.count <= Self.maxQueueBytesOut else {
-            // 丟掉最舊的 buffer，避免最新資料斷裂
-            let dropSize = min(sendBuffer.count, data.count)
+        if sendBuffer.count + data.count > Self.maxQueueBytesOut {
+            let excess = (sendBuffer.count + data.count) - Self.maxQueueBytesOut
+            let dropSize = min(sendBuffer.count, excess)
             sendBuffer.removeFirst(dropSize)
-            queueBytesOut = max(0, queueBytesOut - dropSize)
-            onLog?(.init(level: .warn, message: "Backpressure: dropped oldest frame", detail: "dropSize=\(dropSize)"))
-            return
+            onLog?(.init(level: .warn, message: "Backpressure: dropped oldest", detail: "dropSize=\(dropSize)"))
         }
 
-
-
-
         sendBuffer.append(data)
-        queueBytesOut += data.count
-        onLog?(.init(level: .trace, message: "Socket enqueue", detail: "size=\(data.count) buffer=\(sendBuffer.count) queueBytesOut=\(queueBytesOut)"))
         if !isSending {
-            flushSendBuffer()
+            sendNextChunk()
         }
     }
 
@@ -177,36 +168,13 @@ final actor RTMPSocket {
         }
     }
 
-    // func recvOld() -> AsyncStream<Data> {
-    //     AsyncStream<Data> { continuation in
-    //         Task {
-    //             defer { continuation.finish() }
-    //             do {
-    //                 while connected {
-    //                     let data = try await recv()
-    //                     onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(data.count) totalIn=\(totalBytesIn + data.count)"))
-    //                     continuation.yield(data)
-    //                     totalBytesIn += data.count
-    //                 }
-    //             } catch {
-    //                 logger.error("recv error:", error)
-    //                 onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
-    //             }
-    //         }
-    //     }
-    // }
-
     func close(_ error: NWError? = nil) {
         guard connection != nil else {
             return
         }
         if let continuation {
-            if self.continuation != nil { // 確保只 resume 一次
-                continuation.resume(throwing: Error.connectionNotEstablished(error))
-                self.continuation = nil
-
-            }
-
+            continuation.resume(throwing: Error.connectionNotEstablished(error))
+            self.continuation = nil
         }
         
         onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
@@ -225,7 +193,7 @@ final actor RTMPSocket {
         switch state {
         case .ready:
             logger.info("Connection is ready.")
-            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) queueBytesOut=\(queueBytesOut)"))
+            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) buffer=\(sendBuffer.count)"))
             connected = true
             self.continuation?.resume()
             self.continuation = nil
@@ -245,9 +213,9 @@ final actor RTMPSocket {
         case .cancelled:
             logger.info("Connection cancelled.")
             onLog?(.init(level: .info, message: "Socket cancelled"))
-            close()
+            close(NWError.posix(.ECONNABORTED))
 
-            scheduleReconnect(after: 2.0) // 嘗試重新連線
+            scheduleReconnect(after: 2.0)
 
 
         @unknown default:
@@ -260,55 +228,35 @@ final actor RTMPSocket {
         onLog?(.init(level: .info, message: "Socket viability changed", detail: "viability=\(viability)"))
     }
 
-    private func flushSendBuffer() {
-        let data = sendBuffer
-        guard !data.isEmpty else { return }
-        sendBuffer.removeAll(keepingCapacity: true)
-        isSending = true
+    private func sendNextChunk() {
         guard let connection else {
             isSending = false
-            queueBytesOut = max(0, queueBytesOut - data.count)
+            sendBuffer.removeAll()
             return
         }
-        connection.send(content: data, completion: .contentProcessed { [weak self] error in
+        let chunkSize = min(Self.sendChunkSize, sendBuffer.count)
+        let chunk = sendBuffer.prefix(chunkSize)
+        sendBuffer.removeFirst(chunkSize)
+        isSending = true
+        connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            Task { await self.didSend(data, error: error) }
+            Task { await self.didSendChunk(chunk, error: error) }
         })
     }
 
-    private func didSend(_ data: Data, error: NWError?) {
+    private func didSendChunk(_ data: Data, error: NWError?) {
         totalBytesOut += data.count
-        queueBytesOut = max(0, queueBytesOut - data.count)
-        onLog?(.init(level: .trace, message: "Socket sent", detail: "size=\(data.count) totalOut=\(totalBytesOut)"))
+        onLog?(.init(level: .trace, message: "Socket sent chunk", detail: "size=\(data.count) totalOut=\(totalBytesOut)"))
         isSending = false
         if !sendBuffer.isEmpty {
-            flushSendBuffer()
+            sendNextChunk()
         }
         if let error {
             logger.error("Failed to send data:", error)
-            close(error as? NWError)
+            close(error)
         }
     }
 
-    private func recv() async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            guard let connection else {
-                continuation.resume(throwing: Error.invalidState)
-                return
-            }
-            connection.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { content, _, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                if let content {
-                    continuation.resume(returning: content)
-                } else {
-                    continuation.resume(throwing: Error.endOfStream)
-                }
-            }
-        }
-    }
 }
 
 extension RTMPSocket: NetworkTransportReporter {
@@ -318,6 +266,6 @@ extension RTMPSocket: NetworkTransportReporter {
     }
 
     func makeNetworkTransportReport() -> NetworkTransportReport {
-        return .init(queueBytesOut: queueBytesOut, totalBytesIn: totalBytesIn, totalBytesOut: totalBytesOut)
+        return .init(queueBytesOut: sendBuffer.count, totalBytesIn: totalBytesIn, totalBytesOut: totalBytesOut)
     }
 }

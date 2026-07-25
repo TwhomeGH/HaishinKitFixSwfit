@@ -262,6 +262,16 @@ case .handshakeDone, .connected:
 | 🟡 Medium | C1 timestamp=0 / C2 epoch time | 協定違規、2038 overflow |
 | 🟡 Medium | hasS0S1Packet off-by-one | S0S1 單獨到時判斷不準 |
 
+### 本次 Session 修正（2026-07）
+
+| 優先級 | 缺陷 | 影響 |
+|--------|------|------|
+| 🔴 High | Backpressure 汰舊不換新 (guard + return → if) | 超過上限時新舊資料全丟，等同無作用 |
+| 🟡 Medium | `close()` continuation guard 重複 | `if let continuaton { if self.continuation != nil }` 判斷同一個 optional |
+| 🟡 Medium | `recv() throws -> Data` dead code | 與 `recvOnce()` 完全重複，無 caller |
+| 🟡 Medium | `.cancelled` close() 未傳 error | continuation resume 拿不到 error |
+| 🟢 Enhanced | Send pipeline 重構：chunked send + 消除 `queueBytesOut` | 帳務 zero-copy 無漂移、NWConnection 每次只 pending 64KB |
+
 ## 相關檔案
 
 - [Changes.md](../Changes.md) - 變更記錄

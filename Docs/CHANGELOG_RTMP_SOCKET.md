@@ -1,5 +1,22 @@
 # RTMP Socket 修正記錄
 
+## 最新
+
+### 16. Send Pipeline 重設計：Chunked Send + 消除手動帳務
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+- **問題：** `queueBytesOut` 手動追蹤 buffer bytes，與 `sendBuffer` 雙重記帳，可能漂移或不同步。每次 `send()` 一次送出整個 buffer 可能讓 NWConnection 積壓數 MB。
+- **修改：**
+  - **消除 `queueBytesOut`** — 移除手動帳務，backpressure 直接讀 `sendBuffer.count` 作為單一事實源
+  - **Chunked send** — 新增 64KB `sendChunkSize`，`sendNextChunk()` 每次只送一個 chunk 給 NWConnection，`didSendChunk()` callback 驅動下一段
+  - `send()` 邏輯簡化：backpressure 用 `sendBuffer.count + data.count` 判斷 → drop 最舊資料 → append → 喚起 `sendNextChunk()`（如果 idle）
+  - `connect()` 不再需要重置 `queueBytesOut`
+  - `makeNetworkTransportReport()` 用 `sendBuffer.count` 回傳 `queueBytesOut` 值（維持 protocol 介面）
+- **效應：**
+  - 永遠不會有帳務漂移問題
+  - NWConnection 每次最多 pending 64KB，降低 kernel buffer 壓力
+  - 自然 pacing：一個 chunk 送完 callback 才送下一段
+
 ## 修正內容
 
 ### 1. 接收緩衝區過小
