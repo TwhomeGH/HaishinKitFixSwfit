@@ -5,7 +5,7 @@ import Network
 final actor RTMPSocket {
     static let defaultWindowSizeC = Int(UInt16.max)
     /// Maximum bytes queued for send before backpressure kicks in.
-    static let maxQueueBytesOut = 5 * 1024 * 1024 // 5 MB
+    static let maxQueueBytesOut = 15 * 1024 * 1024 // 15 MB
 
     enum Error: Swift.Error {
         case invalidState
@@ -114,11 +114,19 @@ final actor RTMPSocket {
             onLog?(.init(level: .warn, message: "Send dropped: not connected \(RTMPURL):\(RTMPPort)", detail: "size=\(data.count)"))
             return
         }
+
         guard queueBytesOut + data.count <= Self.maxQueueBytesOut else {
-            logger.warn("Backpressure: dropping send, queue full (\(queueBytesOut) bytes)")
-            onLog?(.init(level: .warn, message: "Backpressure: send dropped", detail: "size=\(data.count) queueBytesOut=\(queueBytesOut) max=\(Self.maxQueueBytesOut)"))
+            // 丟掉最舊的 buffer，避免最新資料斷裂
+            let dropSize = min(sendBuffer.count, data.count)
+            sendBuffer.removeFirst(dropSize)
+            queueBytesOut = max(0, queueBytesOut - dropSize)
+            onLog?(.init(level: .warn, message: "Backpressure: dropped oldest frame", detail: "dropSize=\(dropSize)"))
             return
         }
+
+
+
+
         sendBuffer.append(data)
         queueBytesOut += data.count
         onLog?(.init(level: .trace, message: "Socket enqueue", detail: "size=\(data.count) buffer=\(sendBuffer.count) queueBytesOut=\(queueBytesOut)"))
@@ -193,9 +201,14 @@ final actor RTMPSocket {
             return
         }
         if let continuation {
-            continuation.resume(throwing: Error.connectionNotEstablished(error))
-            self.continuation = nil
+            if self.continuation != nil { // 確保只 resume 一次
+                continuation.resume(throwing: Error.connectionNotEstablished(error))
+                self.continuation = nil
+
+            }
+
         }
+        
         onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
         connected = false
         isSending = false
