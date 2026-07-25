@@ -49,6 +49,20 @@ final actor RTMPSocket {
         }
     }
 
+    private func scheduleReconnect(after delay: TimeInterval = 2.0) {
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            do {
+                try await connect("example.com", port: 1935)
+            } catch {
+                onLog?(.init(level: .error, message: "Reconnect failed", detail: "\(error)"))
+                scheduleReconnect(after: min(delay * 2, 30)) // 指數退避
+            }
+        }
+    }
+
+
+
     func connect(_ name: String, port: Int) async throws {
         guard !connected else {
             throw Error.invalidState
@@ -106,24 +120,66 @@ final actor RTMPSocket {
         }
     }
 
-    func recv() -> AsyncStream<Data> {
-        AsyncStream<Data> { continuation in
-            Task {
-                defer { continuation.finish() }
-                do {
-                    while connected {
-                        let data = try await recv()
-                        onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(data.count) totalIn=\(totalBytesIn + data.count)"))
-                        continuation.yield(data)
-                        totalBytesIn += data.count
-                    }
-                } catch {
-                    logger.error("recv error:", error)
-                    onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
+
+    private func recvOnce() async throws -> Data {
+        return try await withCheckedThrowingContinuation { continuation in
+            connection?.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { content, _, _, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let content {
+                    continuation.resume(returning: content)
+                } else {
+                    continuation.resume(throwing: Error.endOfStream)
                 }
             }
         }
     }
+
+    func recv() -> AsyncStream<Data> {
+        AsyncStream { continuation in
+            Task {
+                while connected {
+                    do {
+                        let data = try await recvOnce()
+                        totalBytesIn += data.count   // ← 補回統計
+                        onLog?(.init(level: .trace,
+                                    message: "Socket recv",
+                                    detail: "size=\(data.count) totalIn=\(totalBytesIn)"))
+                                    
+                        continuation.yield(data)
+                    } catch {
+                        // 這裡就是所有 recv error 的集中點
+                        logger.error("recv error:", error)
+                        onLog?(.init(level: .error,
+                                    message: "recv error",
+                                    detail: "\(error)"))
+
+                        continuation.finish()
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    // func recvOld() -> AsyncStream<Data> {
+    //     AsyncStream<Data> { continuation in
+    //         Task {
+    //             defer { continuation.finish() }
+    //             do {
+    //                 while connected {
+    //                     let data = try await recv()
+    //                     onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(data.count) totalIn=\(totalBytesIn + data.count)"))
+    //                     continuation.yield(data)
+    //                     totalBytesIn += data.count
+    //                 }
+    //             } catch {
+    //                 logger.error("recv error:", error)
+    //                 onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
+    //             }
+    //         }
+    //     }
+    // }
 
     func close(_ error: NWError? = nil) {
         guard connection != nil else {
@@ -164,9 +220,18 @@ final actor RTMPSocket {
             logger.warn("Connection failed:", error)
             onLog?(.init(level: .error, message: "Socket failed", detail: "\(error)"))
             close(error)
+
+            scheduleReconnect(after: 2.0) // 嘗試重新連線
         case .cancelled:
             logger.info("Connection cancelled.")
             onLog?(.init(level: .info, message: "Socket cancelled"))
+
+            scheduleReconnect(after: 2.0) // 嘗試重新連線
+            
+        case .waitingForNetwork:
+            logger.info("Connection waiting for network.")
+            onLog?(.init(level: .info, message: "Socket waiting for network"))
+
         @unknown default:
             logger.error("Unknown connection state.")
         }
