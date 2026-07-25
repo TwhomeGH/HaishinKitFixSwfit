@@ -30,6 +30,7 @@ final actor RTMPSocket {
         }
     }
     private var sendBuffer = Data()
+    private var sendOffset = 0
     private var isSending = false
     private var qualityOfService: DispatchQoS = .userInitiated
     private var continuation: CheckedContinuation<Void, any Swift.Error>?
@@ -71,6 +72,7 @@ final actor RTMPSocket {
             throw Error.invalidState
         }
         sendBuffer.removeAll()
+        sendOffset = 0
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
@@ -181,6 +183,7 @@ final actor RTMPSocket {
         connected = false
         isSending = false
         sendBuffer.removeAll()
+        sendOffset = 0
         connection = nil
         continuation = nil
     }
@@ -232,23 +235,28 @@ final actor RTMPSocket {
         guard let connection else {
             isSending = false
             sendBuffer.removeAll()
+            sendOffset = 0
             return
         }
-        let chunkSize = min(Self.sendChunkSize, sendBuffer.count)
-        let chunk = sendBuffer.prefix(chunkSize)
-        sendBuffer.removeFirst(chunkSize)
+        let available = sendBuffer.count - sendOffset
+        let chunkSize = min(Self.sendChunkSize, available)
+        let chunk = sendBuffer.subdata(in: sendOffset..<sendOffset + chunkSize)
+        sendOffset += chunkSize
         isSending = true
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            Task { await self.didSendChunk(chunk, error: error) }
+            Task { await self.didSendChunk(chunkSize, error: error) }
         })
     }
 
-    private func didSendChunk(_ data: Data, error: NWError?) {
-        totalBytesOut += data.count
-        onLog?(.init(level: .trace, message: "Socket sent chunk", detail: "size=\(data.count) totalOut=\(totalBytesOut)"))
+    private func didSendChunk(_ size: Int, error: NWError?) {
+        totalBytesOut += size
+        if sendOffset >= sendBuffer.count / 2 {
+            sendBuffer.removeSubrange(0..<sendOffset)
+            sendOffset = 0
+        }
         isSending = false
-        if !sendBuffer.isEmpty {
+        if sendOffset < sendBuffer.count {
             sendNextChunk()
         }
         if let error {

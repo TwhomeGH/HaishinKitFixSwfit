@@ -12,10 +12,12 @@
   - `send()` 邏輯簡化：backpressure 用 `sendBuffer.count + data.count` 判斷 → drop 最舊資料 → append → 喚起 `sendNextChunk()`（如果 idle）
   - `connect()` 不再需要重置 `queueBytesOut`
   - `makeNetworkTransportReport()` 用 `sendBuffer.count` 回傳 `queueBytesOut` 值（維持 protocol 介面）
+  - **Offset 游標取代 `removeFirst`** — `sendOffset` 追蹤已送位置，buffer 只在 offset 超過一半時才 compact，攤銷 O(1)，消除每個 chunk 的 memmove
 - **效應：**
   - 永遠不會有帳務漂移問題
   - NWConnection 每次最多 pending 64KB，降低 kernel buffer 壓力
   - 自然 pacing：一個 chunk 送完 callback 才送下一段
+  - 無 per-chunk buffer 位移開銷
 
 ## 修正內容
 
