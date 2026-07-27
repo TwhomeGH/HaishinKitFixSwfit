@@ -242,10 +242,15 @@ final class VideoCodec {
         guard self.presentationTimeStamp < presentationTimeStamp else {
             return false
         }
-        guard Self.frameInterval < frameInterval else {
+        let interval: Double
+        if 0 < frameInterval {
+            interval = frameInterval
+        } else if let expected = settings.expectedFrameRate, 0 < expected {
+            interval = 1.0 / expected
+        } else {
             return true
         }
-        return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
+        return interval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
     }
 
     private func shouldForceKeyFrame(_ presentationTimeStamp: CMTime) -> Bool {

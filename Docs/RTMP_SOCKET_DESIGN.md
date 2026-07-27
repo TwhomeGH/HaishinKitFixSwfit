@@ -270,7 +270,10 @@ case .handshakeDone, .connected:
 | 🟡 Medium | `close()` continuation guard 重複 | `if let continuaton { if self.continuation != nil }` 判斷同一個 optional |
 | 🟡 Medium | `recv() throws -> Data` dead code | 與 `recvOnce()` 完全重複，無 caller |
 | 🟡 Medium | `.cancelled` close() 未傳 error | continuation resume 拿不到 error |
+| 🔴 High | 停止直播 sendBuffer 直接丟棄 | closeStream/FCUnpublish 指令可能到不了伺服器 |
 | 🟢 Enhanced | Send pipeline 重構：chunked send + 消除 `queueBytesOut` + offset 游標 | 帳務 zero-copy 無漂移、NWConnection 每次只 pending 64KB、無 per-chunk memmove |
+| 🟢 Enhanced | `drain()` 等候 buffer 送完才 close | 確保所有 RTMP 指令送達伺服器後才斷連 |
+| 🟢 Enhanced | `useFrame()` 以 `expectedFrameRate` 做隱式 cap | frameInterval=0 時仍能限流，80fps 相機輸入自動降至 60fps |
 
 ## 相關檔案
 

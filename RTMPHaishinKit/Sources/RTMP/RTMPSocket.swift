@@ -34,6 +34,7 @@ final actor RTMPSocket {
     private var isSending = false
     private var qualityOfService: DispatchQoS = .userInitiated
     private var continuation: CheckedContinuation<Void, any Swift.Error>?
+    private var drainContinuation: CheckedContinuation<Void, Never>?
     private lazy var networkQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.RTMPSocket.network", qos: qualityOfService)
 
     init() {
@@ -170,6 +171,14 @@ final actor RTMPSocket {
         }
     }
 
+    func drain() async {
+        guard connected else { return }
+        guard sendOffset < sendBuffer.count || isSending else { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            drainContinuation = c
+        }
+    }
+
     func close(_ error: NWError? = nil) {
         guard connection != nil else {
             return
@@ -177,6 +186,10 @@ final actor RTMPSocket {
         if let continuation {
             continuation.resume(throwing: Error.connectionNotEstablished(error))
             self.continuation = nil
+        }
+        if let drainContinuation {
+            drainContinuation.resume()
+            self.drainContinuation = nil
         }
         
         onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
@@ -258,6 +271,9 @@ final actor RTMPSocket {
         isSending = false
         if sendOffset < sendBuffer.count {
             sendNextChunk()
+        } else if let drainContinuation {
+            drainContinuation.resume()
+            self.drainContinuation = nil
         }
         if let error {
             logger.error("Failed to send data:", error)

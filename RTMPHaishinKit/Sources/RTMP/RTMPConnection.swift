@@ -580,6 +580,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
         outputContinuation?.finish()
         outputContinuation = nil
+        try? await socket?.drain()
         await socket?.close()
         await networkMonitor?.stopRunning()
 

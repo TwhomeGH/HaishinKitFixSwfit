@@ -2,6 +2,24 @@
 
 ## 最新
 
+### 17. 停止直播時 drain 避免 buffer 丟棄 + Frame Rate 自動上限
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`, `RTMPConnection.swift`, `HaishinKit/Sources/Codec/VideoCodec.swift`
+- **問題 A（stop drain）：** `RTMPConnection.close()` → `outputContinuation.finish()` → `socket.close()` 直接 `sendBuffer.removeAll()` + `forceCancel()`，未送出的 RTMP 指令（closeStream、FCUnpublish）可能永遠到不了伺服器。
+- **修正 A：**
+  - `RTMPSocket` 新增 `drain()` async 方法，用 continuation 等待 `sendBuffer` 清空且無 pending send 後才返回
+  - `didSendChunk()` 在 buffer 完全送出後 resume drain continuation
+  - `close()` 時也 resume drain continuation（避免 dangling）
+  - `RTMPConnection.close()` 改為 `socket?.drain()` → `socket?.close()` 順序
+- **問題 B（80fps）：** 預設 `frameInterval = 0` 且 `adaptiveFrameThrottle = false`，相機/DisplayLink 送 80fps 時 encoder 全收，軟體無 frame 過濾。
+- **修正 B：**
+  - `VideoCodec.useFrame()` 當 `frameInterval == 0` 但 `expectedFrameRate` 有設值時，自動用 `1.0 / expectedFrameRate` 作為隱式 frame cap
+  - 不修改 `frameInterval` 本身，不影響 VT session 設定或現有 throttle 邏輯
+- **效應：**
+  - 停止直播時所有 RTMP 指令（closeStream、FCUnpublish、deleteStream）能確實送達伺服器
+  - 設了 `expectedFrameRate = 60` 時，即使相機送 80fps 也會被軟體限在 60fps
+  - 未設 `expectedFrameRate` 的行為完全不變（passthrough）
+
 ### 16. Send Pipeline 重設計：Chunked Send + 消除手動帳務
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
