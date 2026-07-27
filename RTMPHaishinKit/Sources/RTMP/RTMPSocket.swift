@@ -50,23 +50,8 @@ final actor RTMPSocket {
         }
     }
 
-    private func scheduleReconnect(after delay: TimeInterval = 2.0) {
-        Task {
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            do {
-                
-                try await connect(RTMPURL, port: RTMPPort)
-
-            } catch {
-                onLog?(.init(level: .error, message: "Reconnect failed", detail: "\(error)"))
-                scheduleReconnect(after: min(delay * 2, 30)) // 指數退避
-            }
-        }
-    }
-
-
-    var RTMPURL:String = "example.com"
-    var RTMPPort:Int = 1935
+    var RTMPURL: String = "example.com"
+    var RTMPPort: Int = 1935
 
     func connect(_ name: String, port: Int) async throws {
         guard !connected else {
@@ -224,14 +209,10 @@ final actor RTMPSocket {
             logger.warn("Connection failed:", error)
             onLog?(.init(level: .error, message: "Socket failed", detail: "\(error)"))
             close(error)
-
-            scheduleReconnect(after: 2.0) // 嘗試重新連線
         case .cancelled:
             logger.info("Connection cancelled.")
             onLog?(.init(level: .info, message: "Socket cancelled"))
             close(NWError.posix(.ECONNABORTED))
-
-            scheduleReconnect(after: 2.0)
 
 
         @unknown default:

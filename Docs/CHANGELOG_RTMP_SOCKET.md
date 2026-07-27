@@ -2,6 +2,19 @@
 
 ## 最新
 
+### 18. 移除 Socket 層自動重連 — 全權交由 RTMPConnection 處理
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+- **問題：** `RTMPSocket.scheduleReconnect()` 只重建 TCP，不重新 RTMP 握手（C0/C1→S0/S1→C2/S2），且 `recv()` AsyncStream 是 single-use，新連線無人讀取，形成孤兒連線。同時與 `RTMPConnection.startReconnection()` 競爭，當 `isReconnectEnabled = true` 時兩個機制同時跑。
+- **修改：**
+  - 移除 `scheduleReconnect()` 方法
+  - 移除 `stateDidChange()` 中對 `scheduleReconnect()` 的呼叫
+  - Socket 層 `.failed`/`.cancelled` 後只 clean up，由 `RTMPConnection` 的 `for await` loop exit 偵測中斷，透過 `startReconnection()` 重新建立新 socket + 完整握手 + stream 重建
+- **效應：**
+  - 不再有孤兒 TCP 連線
+  - 重連必定走完整 RTMP 握手（C0C1→S0S1→C2→S2）
+  - 無競態：socket 層不再插手重連邏輯
+
 ### 17. 停止直播時 drain 避免 buffer 丟棄 + Frame Rate 自動上限
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`, `RTMPConnection.swift`, `HaishinKit/Sources/Codec/VideoCodec.swift`

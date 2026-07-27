@@ -274,6 +274,7 @@ case .handshakeDone, .connected:
 | 🟢 Enhanced | Send pipeline 重構：chunked send + 消除 `queueBytesOut` + offset 游標 | 帳務 zero-copy 無漂移、NWConnection 每次只 pending 64KB、無 per-chunk memmove |
 | 🟢 Enhanced | `drain()` 等候 buffer 送完才 close | 確保所有 RTMP 指令送達伺服器後才斷連 |
 | 🟢 Enhanced | `useFrame()` 以 `expectedFrameRate` 做隱式 cap | frameInterval=0 時仍能限流，80fps 相機輸入自動降至 60fps |
+| 🔴 High | 移除 Socket 層 `scheduleReconnect()` | 孤兒連線 + RTMP 握手遺失，與上層重連機制競態 |
 
 ## 相關檔案
 
