@@ -979,16 +979,20 @@ extension RTMPStream: _Stream {
             lastStatusTime = now
             if interval > 1.5 {
                 await connection?.log(.warn, "publish status gap", detail: "interval=\(interval) videoInputFrames=\(videoInputFrames) frameCount=\(frameCount)")
+                if interval > 3.0, readyState == .publishing, videoInputFrames == 0 || frameCount == 0 {
+                    await restartVideoPipeline(reason: "suspended gap of \(String(format: "%.1f", interval))s, no encoder progress")
+                    restartedVideoPipeline = true
+                }
             }
             if audioSentFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
                 await connection?.log(.debug, "publish throughput",
                     detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
             }
+            var restartedVideoPipeline = false
             if videoInputFrames > Int(frameCount) * 2, videoInputFrames > 10 {
                 await connection?.log(.warn, "publish frame loss",
                     detail: "videoInputFrames=\(videoInputFrames) >> videoFrames=\(frameCount) queueBytes=\(report.currentQueueBytesOut)")
             }
-            var restartedVideoPipeline = false
             if readyState == .publishing && videoInputFrames == 0 && audioInputFrames > 0 {
                 videoSourceStallCount += 1
                 if videoSourceStallCount == 3 {
