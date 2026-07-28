@@ -1118,6 +1118,42 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - 移除 `videoDecodeOrder` — CTO 改用 `videoTimestamp.updatedAt`（DTS），消除 DTS/PTS 反轉
 - `checkFrameRate()` 自鎖修復 — throttled 時不再觸發降頻
 - `MediaMixerOutputBridge.finish()` 同步化 — 避免 pipeline restart 時 DispatchQueue 非同步造成 continuation race → 12 秒卡死
+
+## 31. adaptiveFrameThrottle 重新設計（漸進式 throttle）
+
+**檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`
+
+**問題：** 舊設計觸發時直接 60→30 腰斬，僅有兩種狀態；仰賴 `inputTimestamps`/`encodeTimestamps` 等 4 個追蹤變數；`applyCavlcIfNeeded()` 切換 CAVLC 後永不恢復，品質永久降級；`checkFrameRate()` 捆綁 encode 速率回退路徑過於間接。
+
+**修改：**
+- **移除** `setProportionalThrottle()`、`checkFrameRate()`、`applyCavlcIfNeeded()` 與相關 4 個狀態變數
+- **新 `updateAdaptiveFrameInterval()`**：
+  - 降速：`numberOfPendingFrames > threshold` 時每次 drop 15%（60→51→43→...），間隔至少 500ms，下限 15fps
+  - 恢復：連續 30 次 clear check 後升 10%，接近 60fps 時完全歸零
+  - 僅 `clearStreak` + `lastThrottleTime` 兩個狀態變數
+- CAVLC 不再自動切換，留給用戶自行設定 `h264EntropyMode`
+- Encoder error backoff 簡化（`clearStreak` 歸零 + fps 對半降）
+
+**預設保持 `false`** — 實驗性功能，用戶可透過 `setReconnectEnabled` 或建構子啟用。
+
+### `maxFrameDelayCount` 自動計算支援
+
+**用途：** 控制 VT 編碼器內部佇列可暫存多少幀再開始丟幀。設越小則 live latency 越低（encoder 不會囤積太多未編碼幀），但 encoder 來不及處理時會直接丟幀。適合直播場景建議設 `2`，預設 `nil` 由 VT 自行決定。
+
+**`nil` / `≤0` 自動計算：** 當 `maxFrameDelayCount` 未設定或設為 ≤0（含 `-1`）時，VT 端不設此屬性（使用 VT 預設），throttle threshold 改為自動推導：
+
+```
+threshold = ceil(expectedFrameRate / 12)
+```
+
+| expectedFrameRate | threshold | 等於多少 ms 緩衝 |
+|---|---|---|
+| 60 | 5 | ~83ms |
+| 30 | 3 | ~100ms |
+| 24 | 2 | ~83ms |
+| nil（預設） | 5 | 同 60fps |
+
+手動設正數（如 `2`）則 VT 和 throttle 都使用該值。
 - `setProportionalThrottle(fraction:minInputFps:)` — 根據實際輸入 fps 動態降載，輸入 < 45fps 時不疊加 throttle
 - 移除 `@AsyncStreamedFlow` — VideoCodec/AudioCodec 改用顯式 `makeStream` + `outputContinuation`，stream 在 `startRunning()` 建立，`stopRunning()` 清理，避免 property wrapper 重複建立導致 continuation 遺失
 

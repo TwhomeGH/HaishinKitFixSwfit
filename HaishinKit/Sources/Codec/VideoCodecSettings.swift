@@ -307,7 +307,7 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .quality, value: NSNumber(value: quality))
             _ = codec.session?.setOption(option)
         }
-        if maxFrameDelayCount != rhs.maxFrameDelayCount, let maxFrameDelayCount {
+        if maxFrameDelayCount != rhs.maxFrameDelayCount, let maxFrameDelayCount, 0 < maxFrameDelayCount {
             let option = VTSessionOption(key: .maxFrameDelayCount, value: NSNumber(value: maxFrameDelayCount))
             _ = codec.session?.setOption(option)
         }
@@ -374,7 +374,7 @@ public struct VideoCodecSettings: Codable, Sendable {
                 options.insert(.init(key: .estimatedAverageBytesPerFrame, value: NSNumber(value: estimatedAverageBytesPerFrame)))
             }
         }
-        if let maxFrameDelayCount {
+        if let maxFrameDelayCount, 0 < maxFrameDelayCount {
             options.insert(.init(key: .maxFrameDelayCount, value: NSNumber(value: maxFrameDelayCount)))
         }
         if let expectedFrameRate {

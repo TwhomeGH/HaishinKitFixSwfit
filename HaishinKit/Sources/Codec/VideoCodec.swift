@@ -44,16 +44,10 @@ final class VideoCodec {
         }
     }
     private(set) var outputFormat: CMFormatDescription?
-    /// Tracks consecutive clears before restoring 60fps (need ~30 for ~1s stability).
-    private var pendingFramesResetCount: Int = 0
-    /// When temporal compression is off and throttle activated, 10s cooldown
-    /// prevents rapid 60↔30fps oscillation.
-    private var throttleCooldownUntil: Date?
-    /// Fallback throttle signal: timestamps from last 10 encode attempts.
-    /// Used when `numberOfPendingFrames` is not supported by the device.
-    private var encodeTimestamps: [Date] = []
-    /// Input frame timestamps for computing proportional throttle.
-    private var inputTimestamps: [Date] = []
+    /// Consecutive clear checks before recovering frame rate.
+    private var clearStreak: Int = 0
+    /// Last throttle-down time, minimum 500ms between steps.
+    private var lastThrottleTime: Date = .distantPast
 
     private func resetSessionState(reason: @autoclosure () -> String, clearInputFormat: Bool) {
         logger.info("VideoCodec reset session:", reason())
@@ -65,101 +59,48 @@ final class VideoCodec {
         outputFormat = nil
         lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
-        pendingFramesResetCount = 0
-        encodeTimestamps.removeAll(keepingCapacity: true)
-        inputTimestamps.removeAll(keepingCapacity: true)
+        clearStreak = 0
+        lastThrottleTime = .distantPast
     }
 
-    /// Sets frameInterval to skip proportionally: encode at `fraction` of input rate.
-    /// fraction=0.5 means encode half the input frames (30fps at 60fps input).
-    /// Only throttles when input rate is above `minInputFps` to avoid double-reduction
-    /// when the system has already lowered the capture rate.
-    private func setProportionalThrottle(fraction: Double = 0.5, minInputFps: Double = 45.0) {
-        let now = Date()
-        inputTimestamps.append(now)
-        if inputTimestamps.count > 10 {
-            inputTimestamps.removeFirst()
-        }
-        guard inputTimestamps.count >= 10 else {
-            frameInterval = 1.0 / minInputFps
-            return
-        }
-        let interval = now.timeIntervalSince(inputTimestamps.first!)
-        let inputFps = Double(inputTimestamps.count) / interval
-        guard inputFps > minInputFps else {
-            // Input already reduced by system; don't compound the throttle.
-            return
-        }
-        let targetFps = inputFps * fraction
-        frameInterval = 1.0 / max(15.0, targetFps)
-    }
-
-    private func checkFrameRate() {
-        // Only trigger initial throttle (60→30) when running at full rate.
-        // If already throttled (frameInterval > 0), avoid self-reinforcing loop
-        // where limited encode rate (<25fps) keeps re-triggering.
-        guard frameInterval == VideoCodec.frameInterval else { return }
-        let now = Date()
-        encodeTimestamps.append(now)
-        if encodeTimestamps.count > 10 {
-            encodeTimestamps.removeFirst()
-        }
-        if encodeTimestamps.count >= 10 {
-            let interval = now.timeIntervalSince(encodeTimestamps.first!)
-            let fps = 10.0 / interval
-            if fps < 25 && settings.adaptiveFrameThrottle {
-                setProportionalThrottle(fraction: 0.5)
-                applyCavlcIfNeeded()
-                if !settings.allowTemporalCompression {
-                    throttleCooldownUntil = now.addingTimeInterval(10)
-                }
-            }
-        }
-    }
-
-    private func applyCavlcIfNeeded() {
-        guard settings.h264EntropyMode != "cavlc" else { return }
-        var s = settings
-        s.h264EntropyMode = "cavlc"
-        settings = s
-    }
-
+    /// Gradual frame-interval throttle: when `numberOfPendingFrames` exceeds
+    /// threshold, drops current fps by 15% (min 15fps), at most once per 500ms.
+    /// Recovers by 10% every 30 consecutive clear checks (~1s at output rate).
     private func updateAdaptiveFrameInterval() {
         guard settings.adaptiveFrameThrottle else {
             frameInterval = VideoCodec.frameInterval
-            pendingFramesResetCount = 0
-            throttleCooldownUntil = nil
+            clearStreak = 0
+            lastThrottleTime = .distantPast
             return
         }
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
-        let threshold = settings.maxFrameDelayCount ?? 5
+        let threshold: Int
+        if let maxDelay = settings.maxFrameDelayCount, 0 < maxDelay {
+            threshold = maxDelay
+        } else {
+            threshold = max(2, Int(ceil((settings.expectedFrameRate ?? 60.0) / 12.0)))
+        }
         if pending > threshold {
-            guard frameInterval == VideoCodec.frameInterval else {
-                // 已降速中，不再累加，避免 60→30→15 鏈式衰退
-                return
-            }
-            setProportionalThrottle(fraction: 0.5)
-            pendingFramesResetCount = 0
-            applyCavlcIfNeeded()
-            throttleCooldownUntil = Date().addingTimeInterval(10)
-        } else if pending <= threshold && frameInterval > VideoCodec.frameInterval {
-            // numberOfPendingFrames returned 0 or is unsupported.
-            // Use encode rate as fallback signal.
-            checkFrameRate()
-            if frameInterval > VideoCodec.frameInterval {
-                // Throttle is active, check for recovery
-                if throttleCooldownUntil == nil || Date() >= throttleCooldownUntil! {
-                    pendingFramesResetCount += 1
-                    if pendingFramesResetCount >= 30 {
-                        throttleCooldownUntil = nil
-                        frameInterval = VideoCodec.frameInterval
-                    }
+            clearStreak = 0
+            guard 0.5 < Date().timeIntervalSince(lastThrottleTime) else { return }
+            lastThrottleTime = Date()
+            let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 60.0
+            let targetFps = currentFps * 0.85
+            frameInterval = 1.0 / max(15.0, targetFps)
+        } else if frameInterval > VideoCodec.frameInterval {
+            clearStreak += 1
+            if 30 <= clearStreak {
+                clearStreak = 0
+                let currentFps = 1.0 / frameInterval
+                let targetFps = currentFps * 1.10
+                if 59.0 <= targetFps {
+                    frameInterval = VideoCodec.frameInterval
                 } else {
-                    pendingFramesResetCount = 0
+                    frameInterval = 1.0 / targetFps
                 }
             }
         } else {
-            pendingFramesResetCount = 0
+            clearStreak = 0
         }
     }
 
@@ -209,12 +150,10 @@ final class VideoCodec {
             // If already throttled, go lower; otherwise start at 15fps.
             // This prevents rapid session-recreate loops when GPU is saturated.
             if settings.adaptiveFrameThrottle {
-                let currentMinFps = frameInterval > 0 ? (1.0 / frameInterval) : 60.0
-                let newFps = max(8.0, currentMinFps / 2.0)
+                clearStreak = 0
+                let currentFps = frameInterval > 0 ? (1.0 / frameInterval) : 60.0
+                let newFps = max(8.0, currentFps / 2.0)
                 frameInterval = 1.0 / newFps
-                if !settings.allowTemporalCompression {
-                    throttleCooldownUntil = Date().addingTimeInterval(15)
-                }
             }
         }
     }
