@@ -47,6 +47,8 @@ struct VTSessionOptionKey: Codable, RawRepresentable {
     static let maxFrameDelayCount = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_MaxFrameDelayCount as String)
     static let encoderID = VTSessionOptionKey(rawValue: kVTVideoEncoderSpecification_EncoderID as String)
     static let prioritizeEncodingSpeedOverQuality = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality as String)
+
+    @available(iOS 16.0, tvOS 16.0, macOS 13.0, *)
     static let referenceBufferCount = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_ReferenceBufferCount as String)
 
     @available(iOS 16.0, tvOS 16.0, macOS 13.0, *)

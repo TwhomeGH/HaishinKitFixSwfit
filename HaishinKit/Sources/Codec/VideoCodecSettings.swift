@@ -335,8 +335,10 @@ public struct VideoCodecSettings: Codable, Sendable {
         }
         if referenceBufferCount != rhs.referenceBufferCount {
             if let referenceBufferCount {
-                let option = VTSessionOption(key: .referenceBufferCount, value: NSNumber(value: referenceBufferCount))
-                _ = codec.session?.setOption(option)
+                if #available(iOS 16.0, tvOS 16.0, macOS 13.0, *) {
+                    let option = VTSessionOption(key: .referenceBufferCount, value: NSNumber(value: referenceBufferCount))
+                    _ = codec.session?.setOption(option)
+                }
             }
         }
     }
@@ -411,7 +413,9 @@ public struct VideoCodecSettings: Codable, Sendable {
             options.insert(.init(key: .prioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue))
         }
         if let referenceBufferCount, 0 < referenceBufferCount {
-            options.insert(.init(key: .referenceBufferCount, value: NSNumber(value: referenceBufferCount)))
+            if #available(iOS 16.0, tvOS 16.0, macOS 13.0, *) {
+                options.insert(.init(key: .referenceBufferCount, value: NSNumber(value: referenceBufferCount)))
+            }
         }
         return options
     }
