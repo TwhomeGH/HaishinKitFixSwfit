@@ -759,6 +759,7 @@ public actor RTMPStream {
         )
         mixerOutputBridge.setAudioContinuation(audioContinuation)
         mixerOutputBridge.setVideoContinuation(videoContinuation)
+        Task { await connection?.log(.info, "startPublishTasks: bridge continuations set") }
 
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
@@ -766,8 +767,8 @@ public actor RTMPStream {
 
         publishTask = Task { [weak self] in
             guard let self else { return }
+            await connection?.log(.info, "startPublishTasks: task started")
             await withTaskGroup(of: Void.self) { group in
-                // --- mixer input (uncompressed) → encoder ---
                 group.addTask {
                     for await (buffer, when) in audioStream {
                         await self.append(buffer, when: when)
@@ -778,28 +779,23 @@ public actor RTMPStream {
                         await self.append(sampleBuffer)
                     }
                 }
-
-                // --- compressed audio → RTMP ---
                 group.addTask {
                     for await (buffer, when) in audioOutput {
                         await self.append(buffer, when: when)
                     }
                 }
-
-                // --- compressed video → RTMP ---
                 group.addTask {
                     for await sampleBuffer in videoOutput {
                         await self.append(sampleBuffer)
                     }
                 }
-
-                // --- video encoder input feeder ---
                 group.addTask {
                     for await video in videoInput {
                         await self.outgoing.append(video: video)
                     }
                 }
             }
+            await connection?.log(.info, "startPublishTasks: task ended")
         }
     }
 
@@ -1016,6 +1012,11 @@ extension RTMPStream: _Stream {
                 }
                 if 3 <= videoStallCount {
                     await restartVideoPipeline(reason: "encoded video stalled while input is active")
+                }
+            } else if !restartedVideoPipeline, readyState == .publishing, videoInputFrames == 0, audioInputFrames == 0, frameCount == 0 {
+                videoStallCount += 1
+                if 3 <= videoStallCount {
+                    await restartVideoPipeline(reason: "both audio/video silent, bridge likely disconnected")
                 }
             } else {
                 videoStallCount = 0
