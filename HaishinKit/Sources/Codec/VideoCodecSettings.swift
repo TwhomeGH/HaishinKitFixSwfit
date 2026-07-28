@@ -172,6 +172,16 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// during GPU-intensive games. Only applies to H.264.
     public var h264EntropyMode: String?
 
+    /// When true, hints VT to prefer encoding speed over compression quality.
+    /// Useful during GPU-intensive scenarios (game streaming, screen capture).
+    /// May increase bitrate for the same visual quality.
+    public var prioritizeEncodingSpeedOverQuality = false
+
+    /// Controls how many past frames VT keeps as motion-compensation references.
+    /// Lower values (2-3) reduce GPU/memory bandwidth at the cost of compression efficiency.
+    /// Default nil lets VT choose (typically 4-5).
+    public var referenceBufferCount: Int?
+
     package var format: Format = .h264
 
     /// HEVC profile tiers ordered from most to least hardware-demanding.
@@ -319,6 +329,16 @@ public struct VideoCodecSettings: Codable, Sendable {
             let option = VTSessionOption(key: .H264EntropyMode, value: (h264EntropyMode ?? "cabac") as NSObject)
             _ = codec.session?.setOption(option)
         }
+        if prioritizeEncodingSpeedOverQuality != rhs.prioritizeEncodingSpeedOverQuality {
+            let option = VTSessionOption(key: .prioritizeEncodingSpeedOverQuality, value: prioritizeEncodingSpeedOverQuality as NSObject)
+            _ = codec.session?.setOption(option)
+        }
+        if referenceBufferCount != rhs.referenceBufferCount {
+            if let referenceBufferCount {
+                let option = VTSessionOption(key: .referenceBufferCount, value: NSNumber(value: referenceBufferCount))
+                _ = codec.session?.setOption(option)
+            }
+        }
     }
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
@@ -387,8 +407,11 @@ public struct VideoCodecSettings: Codable, Sendable {
             options.insert(.init(key: .requireHardwareAcceleratedVideoEncoder, value: kCFBooleanTrue))
         }
         #endif
-        if !isBaseline && profileLevel.contains("H264") {
-            options.insert(.init(key: .H264EntropyMode, value: kVTH264EntropyMode_CABAC))
+        if prioritizeEncodingSpeedOverQuality {
+            options.insert(.init(key: .prioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue))
+        }
+        if let referenceBufferCount, 0 < referenceBufferCount {
+            options.insert(.init(key: .referenceBufferCount, value: NSNumber(value: referenceBufferCount)))
         }
         return options
     }

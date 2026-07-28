@@ -1154,10 +1154,26 @@ threshold = ceil(expectedFrameRate / 12)
 | nil（預設） | 5 | 同 60fps |
 
 手動設正數（如 `2`）則 VT 和 throttle 都使用該值。
-- `setProportionalThrottle(fraction:minInputFps:)` — 根據實際輸入 fps 動態降載，輸入 < 45fps 時不疊加 throttle
-- 移除 `@AsyncStreamedFlow` — VideoCodec/AudioCodec 改用顯式 `makeStream` + `outputContinuation`，stream 在 `startRunning()` 建立，`stopRunning()` 清理，避免 property wrapper 重複建立導致 continuation 遺失
 
-### 相關檔案
+### 新增 VT 效能調節參數：`PrioritizeEncodingSpeedOverQuality` + `ReferenceBufferCount`
+
+**檔案：** `HaishinKit/Sources/Codec/VTSessionOptionKey.swift`, `VideoCodecSettings.swift`
+
+**用途：** 提供更細粒度的 GPU/CPU 與壓縮效率取捨控制，搭配 `h264EntropyMode` (CABAC/CAVLC) 使用。
+
+**修改：**
+- 新增 `prioritizeEncodingSpeedOverQuality: Bool`（預設 `false`）
+  - 設 `true` 時 VT 採用更快編碼路徑（簡化 motion search），適合遊戲串流等 GPU 吃重場景
+  - 代價：同視覺品質下 bitrate 略升
+- 新增 `referenceBufferCount: Int?`（預設 `nil`）
+  - 控制 VT 保留多少幀作為 motion compensation 參考
+  - `nil` = VT 預設（約 4-5），設 `2`-`3` 可降 GPU/memory 頻寬
+  - 代價：壓縮率略降
+
+**兩項均在 `makeOptions()` 和 `apply()` 中生效，可在 runtime 動態切換不須重建 session。**
+
+---
+
 
 - `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`（新增）
 - `HaishinKit/Sources/Stream/OutgoingStream.swift`
