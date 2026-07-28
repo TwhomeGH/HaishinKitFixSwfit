@@ -156,6 +156,10 @@ final class VideoCodec {
                 frameInterval = 1.0 / newFps
             }
         }
+        let pendingFrames = session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber
+        if let pending = pendingFrames {
+            logger.info("VideoCodec pending frames = \(pending)")
+        }
     }
 
     func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
