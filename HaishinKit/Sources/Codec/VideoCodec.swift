@@ -171,11 +171,13 @@ final class VideoCodec {
         do {
             inputFormat = sampleBuffer.formatDescription
             if invalidateSession {
+                logger.info("VideoCodec creating new session")
                 if sampleBuffer.formatDescription?.isCompressed == true {
                     session = try VTSessionMode.decompression.makeSession(self)
                 } else {
                     session = try VTSessionMode.compression.makeSession(self)
                 }
+                logger.info("VideoCodec session created: \(self.session != nil)")
             }
             let continuation = outputContinuation
             guard let session, let continuation else {
@@ -196,6 +198,8 @@ final class VideoCodec {
                         lastKeyFramePresentationTimeStamp = sampleBuffer.presentationTimeStamp
                     }
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
+                } else {
+                    logger.debug("VideoCodec frame filtered by useFrame", sampleBuffer.presentationTimeStamp)
                 }
             }
         } catch {

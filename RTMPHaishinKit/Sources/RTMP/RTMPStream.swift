@@ -1065,10 +1065,15 @@ extension RTMPStream: _Stream {
             return
         }
         await connection?.log(.warn, "Restarting video pipeline", detail: reason)
+        await connection?.log(.info, "restartVideoPipeline: stopping publish tasks")
         stopPublishTasks()
+        await connection?.log(.info, "restartVideoPipeline: restart codec")
         outgoing.restartVideoCodec()
+        await connection?.log(.info, "restartVideoPipeline: clear videoFormat")
         videoFormat = nil
+        await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
+        await connection?.log(.info, "restartVideoPipeline: done")
         videoStallCount = 0
         videoSourceStallCount = 0
         videoSourceWasStalled = false

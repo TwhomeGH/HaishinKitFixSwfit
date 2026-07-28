@@ -29,7 +29,7 @@ extension VTCompressionSession: VTSessionConvertible {
             duration: sampleBuffer.duration,
             frameProperties: frameProperties,
             infoFlagsOut: &flags,
-            outputHandler: { _, _, sampleBuffer in
+            outputHandler: { status, flags, sampleBuffer in
                 if let sampleBuffer {
                     continuation?.yield(sampleBuffer)
                 }
