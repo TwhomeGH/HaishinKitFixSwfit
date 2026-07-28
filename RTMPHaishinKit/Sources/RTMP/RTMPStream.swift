@@ -1079,6 +1079,7 @@ extension RTMPStream: _Stream {
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
         videoStallCount = 0
+        audioStallCount = 0
         videoSourceStallCount = 0
         videoSourceWasStalled = false
     }
