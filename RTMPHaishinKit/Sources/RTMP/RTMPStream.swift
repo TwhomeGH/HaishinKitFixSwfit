@@ -759,6 +759,9 @@ public actor RTMPStream {
         )
         mixerOutputBridge.setAudioContinuation(audioContinuation)
         mixerOutputBridge.setVideoContinuation(videoContinuation)
+        outgoing.setVideoCodecLogHandler { [weak self] message in
+            Task { await self?.connection?.log(.info, "VideoCodec: \(message)") }
+        }
         Task { await connection?.log(.info, "startPublishTasks: bridge continuations set") }
 
         let videoOutput = outgoing.videoOutputStream
@@ -1012,6 +1015,7 @@ extension RTMPStream: _Stream {
                 }
                 if 3 <= videoStallCount {
                     await restartVideoPipeline(reason: "encoded video stalled while input is active")
+                    // resets both audioStallCount and videoStallCount
                 }
             } else if !restartedVideoPipeline, readyState == .publishing, videoInputFrames == 0, audioInputFrames == 0, frameCount == 0 {
                 videoStallCount += 1
@@ -1020,13 +1024,6 @@ extension RTMPStream: _Stream {
                 }
             } else {
                 videoStallCount = 0
-            }
-            if readyState == .publishing && 0 < audioInputFrames && audioSentFrames == 0 {
-                audioStallCount += 1
-                if 3 <= audioStallCount {
-                    await restartAudioPipeline(reason: "encoded audio stalled while input is active")
-                }
-            } else {
                 audioStallCount = 0
             }
             audioSentFrames = 0
@@ -1096,6 +1093,7 @@ extension RTMPStream: _Stream {
         audioFormat = nil
         startPublishTasks()
         audioStallCount = 0
+        videoStallCount = 0
     }
 }
 

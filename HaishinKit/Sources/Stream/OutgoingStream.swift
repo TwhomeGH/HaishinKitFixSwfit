@@ -105,6 +105,10 @@ package final class OutgoingStream: @unchecked Sendable {
     private var audioCodec = AudioCodec()
     private var videoCodec = VideoCodec()
     private var _videoInputStream: AsyncStream<CMSampleBuffer>?
+
+    package func setVideoCodecLogHandler(_ handler: @Sendable @escaping (String) -> Void) {
+        videoCodec.onLog = handler
+    }
     private var videoInputContinuation: AsyncStream<CMSampleBuffer>.Continuation? {
         didSet {
             oldValue?.finish()

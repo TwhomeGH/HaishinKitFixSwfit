@@ -8,6 +8,7 @@ import UIKit
 final class VideoCodec {
     static let frameInterval: Double = 0.0
 
+    var onLog: (@Sendable (String) -> Void)?
     var settings: VideoCodecSettings = .default {
         didSet {
             let invalidateSession = settings.invalidateSession(oldValue)
@@ -118,11 +119,11 @@ final class VideoCodec {
                 } else {
                     session = try VTSessionMode.compression.makeSession(self)
                 }
-                logger.info("VideoCodec session created: \(self.session != nil)")
+                onLog?("session created: \(session != nil)")
             }
             let continuation = outputContinuation
             guard let session, let continuation else {
-                logger.debug("VideoCodec.append dropped: session=\(session != nil) continuation=\(continuation != nil)")
+                onLog?("append dropped: session=\(session != nil) continuation=\(continuation != nil)")
                 return
             }
             if sampleBuffer.formatDescription?.isCompressed == true {
@@ -158,7 +159,7 @@ final class VideoCodec {
         }
         let pendingFrames = session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber
         if let pending = pendingFrames {
-            logger.info("VideoCodec pending frames = \(pending)")
+            onLog?("pending frames = \(pending)")
         }
     }
 
