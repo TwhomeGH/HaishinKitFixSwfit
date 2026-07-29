@@ -431,6 +431,24 @@ public final actor MediaMixer {
         default: ()
         }
     }
+
+    @available(tvOS 17.0, *)
+    private func didAudioSessionRouteChange(_ notification: Notification) {
+        guard
+            let userInfo = notification.userInfo,
+            let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
+            return
+        }
+        switch reason {
+        case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
+            audioIO.suspend()
+            audioIO.resume()
+            logger.info("Audio capture re-attached after route change: \(reason.rawValue)")
+        default:
+            break
+        }
+    }
     #endif
 
     @available(tvOS 17.0, *)
@@ -540,6 +558,14 @@ extension MediaMixer: AsyncRunner {
                     didAudioSessionInterruption(notification)
                 }
             })
+            subscriptions.append(Task {
+                for await notification in NotificationCenter.default.notifications(
+                    named: AVAudioSession.routeChangeNotification,
+                    object: AVAudioSession.sharedInstance()
+                ) {
+                    didAudioSessionRouteChange(notification)
+                }
+            })
         }
         #endif
     }
@@ -561,5 +587,9 @@ extension MediaMixer: AsyncRunner {
             screen.reset()
         }.value
         isRunning = false
+    }
+
+    deinit {
+        subscriptions.forEach { $0.cancel() }
     }
 }

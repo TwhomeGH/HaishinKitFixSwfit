@@ -71,6 +71,30 @@
    - `RTMPSession` 的 `_stream` 改為 eager init
    - 確保套用最新修復
 
+### 音訊無輸出（Audio pipeline 中斷）
+
+**問題**: App 層有收到音訊（音量變化），但 RTMP throughput 顯示 `audioFrames=0 audioBytes=0`。
+
+**常見原因**:
+
+1. **語音模式切換 / 音訊路由變更**
+   - 進入或離開 `.voiceChat` 模式、插拔耳機、藍牙連接時，iOS 音訊硬體重配置
+   - `AVAudioConverter` 可能進入無效狀態，`convert()` 靜默回傳 `.noDataNow`
+   - **自動恢復**：MediaMixer 監聽 `routeChangeNotification` 重新附接 capture；RTMPStream 的 audio stall 偵測 3 秒內重啟 codec
+   - **手動恢復**：等待 3~5 秒，stall 偵測會自動修復
+
+2. **AVAudioSession 中斷（電話、鬧鐘等）**
+   - 系統中斷結束時若無 `shouldResume` 旗標，音訊 capture 不會自動恢復
+   - 檢查 App 層是否有處理 `AVAudioSession.interruptionNotification`
+
+3. **AudioCodec 未啟動**
+   - 確認 `OutgoingStream` 已呼叫 `startRunning()`
+   - 檢查 `isRunning` 狀態
+
+**診斷方式**:
+- 檢查 `onLog` 是否有 `audio stall detected` 或 `Restarting audio pipeline` 日誌
+- 比對 `audioInputFrames`（PCM 輸入）與 `audioSentFrames`（壓縮輸出）是否一致
+
 ### 記憶體問題
 
 **問題**: 長時間串流後記憶體不斷增長。

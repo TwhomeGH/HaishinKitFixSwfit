@@ -1022,6 +1022,14 @@ extension RTMPStream: _Stream {
                 if 3 <= videoStallCount {
                     await restartVideoPipeline(reason: "both audio/video silent, bridge likely disconnected")
                 }
+            } else if !restartedVideoPipeline, readyState == .publishing, audioInputFrames > 0, audioSentFrames == 0 {
+                audioStallCount += 1
+                if audioStallCount == 2 {
+                    await connection?.log(.warn, "audio stall detected, will restart pipeline", detail: "stallCount=\(audioStallCount)")
+                }
+                if 3 <= audioStallCount {
+                    await restartAudioPipeline(reason: "audio input active (\(audioInputFrames) frames) but no compressed output")
+                }
             } else {
                 videoStallCount = 0
                 audioStallCount = 0

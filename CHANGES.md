@@ -1205,3 +1205,77 @@ threshold = ceil(expectedFrameRate / 12)
 - `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
 - `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift` — 移除 `syncToUpdatedAt`
 
+---
+
+## 30. 音訊管線恢復：AVAudioSession 路由變更監聽 + Audio Stall 偵測
+
+**檔案**: `HaishinKit/Sources/Mixer/MediaMixer.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+### 背景
+
+當 App 切換 `AVAudioSession.mode`（如 `.default` ↔ `.voiceChat`）或音訊路由變更（插拔耳機、藍牙連接），iOS 音訊硬體會重配置。這可能導致兩層問題：
+
+1. **Capture 層**：`AVCaptureSession` 的音訊連接中斷
+2. **Codec 層**：`AudioCodec` 內部的 `AVAudioConverter` 進入無效狀態，`convert()` 靜默回傳 `.noDataNow` 或 `.error`
+
+原本 `restartAudioPipeline()` 是**死代碼**——從未被呼叫。`audioStallCount` 只在 `else` 分支中被重置，沒有遞增邏輯。
+
+### 雙層防護
+
+#### 第一層：即時路由變更處理（MediaMixer）
+
+`MediaMixer.swift:435` — 新增 `didAudioSessionRouteChange(_:)`，監聽 `AVAudioSession.routeChangeNotification`：
+
+```swift
+@available(tvOS 17.0, *)
+private func didAudioSessionRouteChange(_ notification: Notification) {
+    switch reason {
+    case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
+        audioIO.suspend()
+        audioIO.resume()
+        logger.info("Audio capture re-attached after route change: \(reason.rawValue)")
+    default:
+        break
+    }
+}
+```
+
+- 在 `startRunning()` 中一併註冊 subscription，與 `interruptionNotification` 共用 `subscriptions` 陣列
+- `deinit` 加入 `subscriptions.forEach { $0.cancel() }`，確保釋放時清理所有 notification task
+
+#### 第二層：Audio Stall 偵測（RTMPStream）
+
+`RTMPStream.swift:1025` — 在 `dispatch(_:)` 中新增音訊 stall 分支：
+
+```swift
+} else if !restartedVideoPipeline, readyState == .publishing, audioInputFrames > 0, audioSentFrames == 0 {
+    audioStallCount += 1
+    if 3 <= audioStallCount {
+        await restartAudioPipeline(reason: "audio input active (\(audioInputFrames) frames) but no compressed output")
+    }
+} else {
+    videoStallCount = 0
+    audioStallCount = 0
+}
+```
+
+- 條件：`audioInputFrames > 0`（PCM 有到達 RTMPStream）但 `audioSentFrames == 0`（壓縮端無產出）
+- 連續 3 個 interval（~3 秒）觸發 `restartAudioPipeline()`
+- 重啟流程：`stopPublishTasks()` → `outgoing.restartAudioCodec()` → `audioFormat = nil` → `startPublishTasks()`
+
+### 兩層的關係
+
+| 情況 | 第一層（routeChange） | 第二層（stall） |
+|------|:-:|:-:|
+| 語音模式切換 → capture 中斷 | ✅ 即時重接 | 備援 |
+| 語音模式切換 → AVAudioConverter 損毀 | ❌ 無效 | ✅ ~3s 重啟 codec |
+| `routeChangeNotification` 未觸發 | ❌ 無效 | ✅ 備援恢復 |
+| 耳機插拔 / 藍牙連接 | ✅ 即時重接 | 備援 |
+
+### 改動檔案總覽
+
+| 檔案 | 修改類型 |
+|------|---------|
+| `HaishinKit/Sources/Mixer/MediaMixer.swift` | 新增 `didAudioSessionRouteChange()`、route 通知註冊、`deinit` 清理 |
+| `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift` | 新增 audio stall 檢測分支，啟用 `restartAudioPipeline()` |
+

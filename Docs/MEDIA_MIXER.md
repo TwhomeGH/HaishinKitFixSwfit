@@ -10,6 +10,35 @@ MediaMixer 是 HaishinKit.swift 的核心元件，負責管理來自多個來源
 - 螢幕擷取功能
 - 串流路由到不同輸出目標
 
+## Audio Session 事件處理
+
+MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
+
+### 中斷事件（Interruption）
+
+監聽 `AVAudioSession.interruptionNotification`：
+- **Began**：`audioIO.suspend()` 卸除所有 AVCaptureDevice 音訊輸入，`session.startRunningIfNeeded()` 保持視訊運作
+- **Ended + shouldResume**：`audioIO.resume()` 重新附接音訊輸入
+
+### 路由變更（Route Change）
+
+監聽 `AVAudioSession.routeChangeNotification`：
+
+| 原因 | 動作 |
+|------|------|
+| `.oldDeviceUnavailable` | `audioIO.suspend()` + `audioIO.resume()` |
+| `.newDeviceAvailable` | `audioIO.suspend()` + `audioIO.resume()` |
+| `.routeConfigurationChange` | `audioIO.suspend()` + `audioIO.resume()` |
+| 其他 | 忽略 |
+
+路由變更發生時重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後音訊管線持續運作。
+
+### 清理
+
+`deinit` 自動取消所有 notification subscription tasks，防止 `MediaMixer` 釋放後遺留 dangling observer。
+
+---
+
 ## 架構
 
 ```
