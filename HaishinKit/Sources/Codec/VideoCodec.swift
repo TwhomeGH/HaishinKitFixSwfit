@@ -163,7 +163,7 @@ final class VideoCodec {
             pendingFramesLogCounter += 1
             if pendingFramesLogCounter >= 60 {
                 pendingFramesLogCounter = 0
-                onLog?("pending frames = \(pending)")
+                onLog?("[60FPS Debug] pending frames = \(pending)")
             }
         }
     }
