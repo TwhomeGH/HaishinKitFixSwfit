@@ -212,29 +212,8 @@ final class VideoCodec {
         return Double(duration) <= (presentationTimeStamp - lastKeyFramePresentationTimeStamp).seconds
     }
 
-    #if os(iOS) || os(tvOS) || os(visionOS)
-    @objc
-    private func applicationWillEnterForeground(_ notification: Notification) {
-        resetSessionState(reason: "application will enter foreground", clearInputFormat: true)
-    }
-
-    @objc
-    private func didAudioSessionInterruption(_ notification: Notification) {
-        guard
-            let userInfo: [AnyHashable: Any] = notification.userInfo,
-            let value: NSNumber = userInfo[AVAudioSessionInterruptionTypeKey] as? NSNumber,
-            let type = AVAudioSession.InterruptionType(rawValue: value.uintValue) else {
-            return
-        }
-        switch type {
-        case .ended:
-            resetSessionState(reason: "audio session interruption ended", clearInputFormat: true)
-        default:
-            break
-        }
-    }
-    #endif
 }
+
 
 extension VideoCodec: Runner {
     // MARK: Running
@@ -242,20 +221,6 @@ extension VideoCodec: Runner {
         guard !isRunning else {
             return
         }
-        #if os(iOS) || os(tvOS) || os(visionOS)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(self.didAudioSessionInterruption),
-            name: AVAudioSession.interruptionNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(self.applicationWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
-            object: nil
-        )
-        #endif
         let (stream, continuation) = AsyncStream.makeStream(of: CMSampleBuffer.self)
         outputStream = stream
         outputContinuation = continuation
@@ -277,9 +242,5 @@ extension VideoCodec: Runner {
         outputContinuation?.finish()
         outputContinuation = nil
         startedAt = .zero
-        #if os(iOS) || os(tvOS) || os(visionOS)
-        NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: nil)
-        NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
-        #endif
     }
 }

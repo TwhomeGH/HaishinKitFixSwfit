@@ -1172,6 +1172,26 @@ threshold = ceil(expectedFrameRate / 12)
 
 **兩項均在 `makeOptions()` 和 `apply()` 中生效，可在 runtime 動態切換不須重建 session。**
 
+### 移除 VideoCodec 的 NotificationCenter observers + 簡化 stall detection
+
+**檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**問題：**
+- `VideoCodec` 註冊了 `AVAudioSession.interruptionNotification` 和 `UIApplication.willEnterForegroundNotification`，但這兩個事件不會讓 VT session 失效，handler 無故砍掉 session 造成自我干擾
+- Audio/video stall detection 各自獨立計數，同時觸發時彼此 cancel 對方的 task，造成無窮 restart 循環（task 活不過一輪 status check）
+- `VideoCodec` 沒有 `deinit`，observer 可能 crash dangling pointer
+
+**修改：**
+- **移除所有 `NotificationCenter` observer** — `VideoCodec` 不再自行監聽 foreground/interruption 事件
+  - camera restart 後 `inputFormat.didSet` 已自動重建 session，無須手動介入
+  - 移除 `didAudioSessionInterruption`、`applicationWillEnterForeground` handler 及對應的 add/remove
+- **合併 audio/video stall detection** — 移除獨立的 `audioStallCount` 檢查，只保留 `videoStallCount` 統一判斷 pipeline 是否卡住
+  - `restartVideoPipeline()` 重置 `audioStallCount` 和 `videoStallCount`
+  - 避免同一 dispatch 中 video restart 後 audio restart 立刻 cancel 新 task
+- **VideoCodec 診斷 log 改走 `onLog` callback** — 透過 `connection?.log()` 路徑輸出，會出現在 user 的 log 檔案中
+  - `VideoCodec creating new session`、`pending frames = N` 等改由 `onLog` 傳遞
+  - 新增 `setVideoCodecLogHandler()` 在 OutgoingStream 層級
+
 ---
 
 
