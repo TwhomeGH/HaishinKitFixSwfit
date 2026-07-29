@@ -47,6 +47,8 @@ final class VideoCodec {
     private(set) var outputFormat: CMFormatDescription?
     /// Consecutive clear checks before recovering frame rate.
     private var clearStreak: Int = 0
+    /// Accumulates pending-frame log entries; fires on every 60th frame (~1Hz at 60fps).
+    private var pendingFramesLogCounter: Int = 0
     /// Last throttle-down time, minimum 500ms between steps.
     private var lastThrottleTime: Date = .distantPast
 
@@ -157,9 +159,12 @@ final class VideoCodec {
                 frameInterval = 1.0 / newFps
             }
         }
-        let pendingFrames = session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber
-        if let pending = pendingFrames {
-            onLog?("pending frames = \(pending)")
+        if let pending = session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber {
+            pendingFramesLogCounter += 1
+            if pendingFramesLogCounter >= 60 {
+                pendingFramesLogCounter = 0
+                onLog?("pending frames = \(pending)")
+            }
         }
     }
 
