@@ -589,7 +589,4 @@ extension MediaMixer: AsyncRunner {
         isRunning = false
     }
 
-    deinit {
-        subscriptions.forEach { $0.cancel() }
-    }
 }

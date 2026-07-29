@@ -1241,7 +1241,7 @@ private func didAudioSessionRouteChange(_ notification: Notification) {
 ```
 
 - 在 `startRunning()` 中一併註冊 subscription，與 `interruptionNotification` 共用 `subscriptions` 陣列
-- `deinit` 加入 `subscriptions.forEach { $0.cancel() }`，確保釋放時清理所有 notification task
+- `stopRunning()` 已包含 `subscriptions.forEach { $0.cancel() }` 清理所有 notification task
 
 #### 第二層：Audio Stall 偵測（RTMPStream）
 
