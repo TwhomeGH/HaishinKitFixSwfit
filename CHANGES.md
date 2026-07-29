@@ -1231,14 +1231,19 @@ threshold = ceil(expectedFrameRate / 12)
 private func didAudioSessionRouteChange(_ notification: Notification) {
     switch reason {
     case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
-        audioIO.suspend()
-        audioIO.resume()
-        logger.info("Audio capture re-attached after route change: \(reason.rawValue)")
+        audioIO.reset()
+        session.startRunningIfNeeded()
+        logger.info("Audio pipeline reset after route change: \(reason.rawValue)")
     default:
         break
     }
 }
 ```
+
+`AudioCaptureUnit.reset()` 做完整清理：
+1. 卸除所有 capture devices，保存 device 與 track 對應
+2. 重新建立 `AudioMixer`（含新的 `AVAudioConverter`，解決 resampling converter 卡死）
+3. 以新 mixer 的 `AudioDeviceUnitDataOutput` 重新建立 `AudioDeviceUnit` 並附接回 session
 
 - 在 `startRunning()` 中一併註冊 subscription，與 `interruptionNotification` 共用 `subscriptions` 陣列
 - `stopRunning()` 已包含 `subscriptions.forEach { $0.cancel() }` 清理所有 notification task

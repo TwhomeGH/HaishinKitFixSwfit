@@ -982,9 +982,9 @@ extension RTMPStream: _Stream {
                     await restartVideoPipeline(reason: "suspended gap of \(String(format: "%.1f", interval))s, no encoder progress")
                 }
             }
-            if audioSentFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
+            if audioSentFrames > 0 || audioInputFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
                 await connection?.log(.debug, "publish throughput",
-                    detail: "audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
+                    detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
             }
             if videoInputFrames > Int(frameCount) * 2, videoInputFrames > 10 {
                 await connection?.log(.warn, "publish frame loss",
@@ -1025,7 +1025,7 @@ extension RTMPStream: _Stream {
             } else if !restartedVideoPipeline, readyState == .publishing, audioInputFrames > 0, audioSentFrames == 0 {
                 audioStallCount += 1
                 if audioStallCount == 2 {
-                    await connection?.log(.warn, "audio stall detected, will restart pipeline", detail: "stallCount=\(audioStallCount)")
+                    await connection?.log(.warn, "audio stall detected, will restart pipeline", detail: "stallCount=\(audioStallCount) audioInputFrames=\(audioInputFrames)")
                 }
                 if 3 <= audioStallCount {
                     await restartAudioPipeline(reason: "audio input active (\(audioInputFrames) frames) but no compressed output")

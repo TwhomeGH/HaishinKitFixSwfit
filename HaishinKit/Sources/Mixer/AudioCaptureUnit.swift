@@ -122,6 +122,40 @@ final class AudioCaptureUnit: CaptureUnit {
         isSuspended = false
     }
 
+    @available(tvOS 17.0, *)
+    func reset() {
+        let savedDevices = devices.map { ($0.key, $0.value.device) }
+        for capture in devices.values {
+            session.detachCapture(capture)
+        }
+        devices.removeAll()
+        isSuspended = false
+
+        let savedSettings = audioMixer.settings
+        if isMultiTrackAudioMixingEnabled {
+            var mixer = AudioMixerByMultiTrack()
+            mixer.delegate = self
+            mixer.settings = savedSettings
+            audioMixer = mixer
+        } else {
+            var mixer = AudioMixerBySingleTrack()
+            mixer.delegate = self
+            mixer.settings = savedSettings
+            audioMixer = mixer
+        }
+
+        for (track, device) in savedDevices {
+            guard let device else {
+                continue
+            }
+            if let capture = try? AudioDeviceUnit(track, device: device) {
+                capture.setSampleBufferDelegate(self)
+                session.attachCapture(capture)
+                devices[track] = capture
+            }
+        }
+    }
+
     func finish() {
         continutation?.finish()
     }

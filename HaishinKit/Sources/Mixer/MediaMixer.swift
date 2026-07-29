@@ -442,9 +442,9 @@ public final actor MediaMixer {
         }
         switch reason {
         case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
-            audioIO.suspend()
-            audioIO.resume()
-            logger.info("Audio capture re-attached after route change: \(reason.rawValue)")
+            audioIO.reset()
+            session.startRunningIfNeeded()
+            logger.info("Audio pipeline reset after route change: \(reason.rawValue)")
         default:
             break
         }
