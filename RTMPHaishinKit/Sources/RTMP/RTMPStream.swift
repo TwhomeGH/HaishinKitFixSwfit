@@ -258,7 +258,7 @@ public actor RTMPStream {
             }
             switch readyState {
             case .publishing:
-                guard let message = RTMPAudioMessage(streamId: id, timestamp: 0, formatDescription: audioFormat?.formatDescription) else {
+                guard let message = RTMPAudioMessage(streamId: id, timestamp: UInt32(audioTimestamp.updatedAt * 1000), formatDescription: audioFormat?.formatDescription) else {
                     return
                 }
                 doOutput(oldValue == nil ? .zero : .one, chunkStreamId: .audio, message: message)
@@ -281,7 +281,8 @@ public actor RTMPStream {
             }
             switch readyState {
             case .publishing:
-                guard let message = RTMPVideoMessage(streamId: id, timestamp: 0, formatDescription: videoFormat) else {
+                let streamTime = UInt32(videoTimestamp.updatedAt * 1000)
+                guard let message = RTMPVideoMessage(streamId: id, timestamp: streamTime, formatDescription: videoFormat) else {
                     Task { await connection?.log(.warn, "video: sequence header creation failed") }
                     return
                 }
@@ -1079,9 +1080,8 @@ extension RTMPStream: _Stream {
         await connection?.log(.info, "restartVideoPipeline: restart outgoing")
         outgoing.stopRunning()
         outgoing.startRunning()
-        await connection?.log(.info, "restartVideoPipeline: clear format descriptions")
-        videoFormat = nil
-        audioFormat = nil
+        // 不重置 videoFormat/audioFormat：新 encoder session 產出相同格式時
+        // didSet 不觸發 → 不送 seq header → timeline 不中斷。
         await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
@@ -1101,8 +1101,6 @@ extension RTMPStream: _Stream {
         stopPublishTasks()
         outgoing.stopRunning()
         outgoing.startRunning()
-        audioFormat = nil
-        videoFormat = nil
         startPublishTasks()
         audioStallCount = 0
         videoStallCount = 0
