@@ -677,8 +677,11 @@ private func restartVideoPipeline(reason: String) async {
     outgoing.startRunning()               // create fresh codec sessions + output streams
     videoFormat = nil
     audioFormat = nil
-    videoTimestamp.clear()                // reset RTMP timestamp trackers
-    audioTimestamp.clear()                // both A/V start from clean timeline
+    // 不主動清除 videoTimestamp/audioTimestamp：
+    // RTMPTimestamp.update() 內建 invalid sequence 檢測，
+    // 若相機 PTS 真的歸零會自動重設；主動 clear()
+    // 會造成 RTMP timestamp 無條件跳回 0，伺服器端視為
+    // timeline discontinuity → Twitch #2000。
     startPublishTasks()                   // new task, new bridge, fresh _videoInputStream
     ...
 }
@@ -719,7 +722,8 @@ mutating func clear() {
 |------|--------|--------|
 | Pipeline restart 後 encoder 無輸出 | videoFrames=0 持續，stallCount 累積 → 無限重啟 | 新 task 獨佔全新 stream，正常輸出 |
 | Audio 管線隨 video restart 一起停擺 | audioSentFrames=0 持續 | `startRunning()` 重新建立 audioCodec outputStream |
-| Camera PTS reset 後 A/V timeline 錯亂 | video RTMP timestamp 跳回 0，audio 在 120s | 雙方一起從 0 開始，自然對齊 |
+| Camera PTS reset 後 A/V timeline 錯亂 | video RTMP timestamp 跳回 0，audio 在 120s | `RTMPTimestamp` 內建 `new ≤ updatedAt` 檢測自動重設 |
+| **主動 clear() 造成 timeline discontinuity** | **(新問題)** RTMP timestamp 無條件歸零 → Twitch #2000 | **移除 clear()**，依賴相機 PTS 連續性 + update() 內建保護 |
 
 ### 9.12 Adaptive Frame Throttle — 真實 Input FPS 追蹤
 

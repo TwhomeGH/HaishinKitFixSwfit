@@ -1082,8 +1082,6 @@ extension RTMPStream: _Stream {
         await connection?.log(.info, "restartVideoPipeline: clear format descriptions")
         videoFormat = nil
         audioFormat = nil
-        videoTimestamp.clear()
-        audioTimestamp.clear()
         await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
@@ -1105,8 +1103,6 @@ extension RTMPStream: _Stream {
         outgoing.startRunning()
         audioFormat = nil
         videoFormat = nil
-        audioTimestamp.clear()
-        videoTimestamp.clear()
         startPublishTasks()
         audioStallCount = 0
         videoStallCount = 0
