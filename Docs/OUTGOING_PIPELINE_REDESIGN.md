@@ -788,9 +788,52 @@ videoSettings.prioritizeEncodingSpeedOverQuality = true
 - `adaptiveFrameThrottle` 從真實 30fps baseline 計算，降速有效
 - VT 負載穩定 → bitrate 波動大幅減少
 
-### 9.13 變更檔案總表
+### 9.14 Output Continuation — 移除 bounded buffer，消除資料靜默丟棄
+
+**檔案**: `RTMPStream.swift:813`, `RTMPConnection.swift:626`
+
+#### 9.14.1 問題
+
+`RTMPStream.outputContinuation` 與 `RTMPConnection.outputContinuation` 都使用 `.bufferingNewest(256)`。當網路塞車時 buffer 滿了會靜默丟棄最舊的 RTMP chunk：
+
+```
+doOutput → yield(RTMPOutputItem) → AsyncStream(bound=256) 滿了 → drop oldest
+                                                                    │
+                                                     Twitch 收到不完整串流 → #2000
+```
+
+日誌中可以看到大量連續 drop（每秒數百次），且 audio 遠多於 video，反映 audio PCM 產出速率超過網路傳送能力。
+
+下游 `RTMPSocket` 已有 `maxQueueBytesOut = 5MB` 作為實體背壓，AsyncStream 層的 bound 是多餘且有害的。
+
+#### 9.14.2 修復
+
+```swift
+// ❌ 舊：bounded → 滿了靜默丟棄
+let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self, bufferingPolicy: .bufferingNewest(256))
+let (stream, continuation) = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .bufferingNewest(256))
+
+// ✅ 新：unbounded → 背壓交由 socket 層處理
+let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self)
+let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
+```
+
+#### 9.14.3 背壓鏈
+
+```
+Encoder → RTMPStream.outputContinuation (unbounded)
+           → Connection.doOutput → RTMPChunkBuffer.putMessage
+           → Connection.outputContinuation (unbounded)
+           → socket.send (NWConnection)
+           → maxQueueBytesOut = 5MB ← 真正的背壓點
+           → sendBuffer.count ← NetworkMonitor 檢測此值觸發 bitrate 降速
+```
+
+資料不再在 AsyncStream 層被丟棄，而是自然回堵到 encoder → throttling → bitrate 降速。
+
+### 9.15 變更檔案總表（更新）
 
 | 檔案 | 變更 |
 |------|------|
-| `RTMPStream.swift` | `restartVideoPipeline`/`restartAudioPipeline` 改為 `outgoing.stopRunning()`+`startRunning()`；`videoFormat`/`audioFormat` didSet 的 seq header 改用 `updatedAt * 1000` 取代寫死 0；不再重置 videoFormat/audioFormat（避免 mid-stream seq header） |
-| `VideoCodec.swift` | `updateAdaptiveFrameInterval` 加入 `lastFrameTime`/`smoothedFrameInterval` EMA 追蹤，`currentFps` 使用真實 input rate 而非硬編碼 60；`stopRunning()`/`resetSessionState()` 重置 tracking |
+| `RTMPStream.swift` | `startOutputConsumer()` 移除 `bufferingPolicy: .bufferingNewest(256)` → unbounded |
+| `RTMPConnection.swift` | `startOutputConsumer()` 移除 `bufferingPolicy: .bufferingNewest(256)` → unbounded |

@@ -810,7 +810,7 @@ public actor RTMPStream {
     }
 
     private func startOutputConsumer() {
-        let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self, bufferingPolicy: .bufferingNewest(256))
+        let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self)
         outputContinuation = continuation
         Task { [weak self] in
             for await item in stream {
