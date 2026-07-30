@@ -783,7 +783,7 @@ private func updateAdaptiveFrameInterval() {
 
 ```swift
 // 最穩定的 1080p60 配置
-videoSettings.expectedFrameRate = 30          // 安全上限，砍半 framerate
+videoSettings.expectedFrameRate = 60          // 安全上限，砍半 framerate
 videoSettings.adaptiveFrameThrottle = true    // 安全網：VT 塞車時再降 15%
 videoSettings.prioritizeEncodingSpeedOverQuality = true
 ```
