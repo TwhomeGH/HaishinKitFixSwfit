@@ -51,6 +51,9 @@ final class VideoCodec {
     private var pendingFramesLogCounter: Int = 0
     /// Last throttle-down time, minimum 500ms between steps.
     private var lastThrottleTime: Date = .distantPast
+    /// Tracks actual incoming frame interval for adaptive throttle baseline.
+    private var lastFrameTime: Date = .distantPast
+    private var smoothedFrameInterval: Double = 1.0 / 60.0
 
     private func resetSessionState(reason: @autoclosure () -> String, clearInputFormat: Bool) {
         logger.info("VideoCodec reset session:", reason())
@@ -64,16 +67,28 @@ final class VideoCodec {
         presentationTimeStamp = .zero
         clearStreak = 0
         lastThrottleTime = .distantPast
+        lastFrameTime = .distantPast
+        smoothedFrameInterval = 1.0 / 60.0
     }
 
     /// Gradual frame-interval throttle: when `numberOfPendingFrames` exceeds
     /// threshold, drops current fps by 15% (min 15fps), at most once per 500ms.
     /// Recovers by 10% every 30 consecutive clear checks (~1s at output rate).
     private func updateAdaptiveFrameInterval() {
+        let now = Date()
+        if lastFrameTime != .distantPast {
+            let actualInterval = now.timeIntervalSince(lastFrameTime)
+            // Exponential moving average with 0.3 alpha to smooth out jitter
+            smoothedFrameInterval = smoothedFrameInterval * 0.7 + actualInterval * 0.3
+        }
+        lastFrameTime = now
+
         guard settings.adaptiveFrameThrottle else {
             frameInterval = VideoCodec.frameInterval
             clearStreak = 0
             lastThrottleTime = .distantPast
+            lastFrameTime = .distantPast
+            smoothedFrameInterval = 1.0 / 60.0
             return
         }
         let pending = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue ?? 0
@@ -85,9 +100,9 @@ final class VideoCodec {
         }
         if pending > threshold {
             clearStreak = 0
-            guard 0.5 < Date().timeIntervalSince(lastThrottleTime) else { return }
-            lastThrottleTime = Date()
-            let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 60.0
+            guard 0.5 < now.timeIntervalSince(lastThrottleTime) else { return }
+            lastThrottleTime = now
+            let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 1.0 / smoothedFrameInterval
             let targetFps = currentFps * 0.85
             frameInterval = 1.0 / max(15.0, targetFps)
         } else if frameInterval > VideoCodec.frameInterval {
@@ -247,5 +262,7 @@ extension VideoCodec: Runner {
         outputContinuation?.finish()
         outputContinuation = nil
         startedAt = .zero
+        lastFrameTime = .distantPast
+        smoothedFrameInterval = 1.0 / 60.0
     }
 }

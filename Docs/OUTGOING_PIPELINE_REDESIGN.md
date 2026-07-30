@@ -649,3 +649,153 @@ compositionTime = (pts.seconds - videoTimestamp.updatedAt) * 1000
 // 直接 yield（前版）：MediaMixer 暴衝 30 幀 → buffer(5) 丟 25 幀 → 撕裂
 // DispatchQueue（現在）：序列化 yield → 自然 pace → buffer 不溢滿
 ```
+
+### 9.11 Pipeline Restart — 完整重置 OutgoingStream 與 Timestamps
+
+**檔案**: `RTMPStream.swift:1070-1113`, `VideoCodec.swift`, `AudioCodec.swift`
+
+#### 9.11.1 問題
+
+`restartVideoPipeline()` 原本只呼叫 `outgoing.restartVideoCodec()`，留下多項殘留狀態導致 pipeline 永遠無法恢復：
+
+| 殘留狀態 | 影響 |
+|----------|------|
+| `_videoInputStream` 快取 | 跨 task 世代共享，舊 task 的 for-await loop 可能繼續競爭消費 |
+| `videoInputContinuation` 未清除 | yield 到已 finish 或從屬於舊 task 的 stream |
+| `audioCodec.outputStream` 從未被取代 | 音訊 pipeline 重啟後完全無輸出（audioSentFrames = 0） |
+| `videoTimestamp`/`audioTimestamp` 未清除 | 若相機 PTS 因 capture session 重啟歸零，RTMP timestamp 跳回 0，audio 維持 ~120s，造成 A/V timeline 錯亂 → Twitch #1000 |
+
+#### 9.11.2 修復
+
+**`stopPublishTasks()` → `outgoing.stopRunning()` → `outgoing.startRunning()` 取代 `restartVideoCodec()` / `restartAudioCodec()`**：
+
+```swift
+private func restartVideoPipeline(reason: String) async {
+    ...
+    stopPublishTasks()                    // cancel old task, finish bridge
+    outgoing.stopRunning()                // finish both codecs, clear _videoInputStream, videoInputContinuation
+    outgoing.startRunning()               // create fresh codec sessions + output streams
+    videoFormat = nil
+    audioFormat = nil
+    videoTimestamp.clear()                // reset RTMP timestamp trackers
+    audioTimestamp.clear()                // both A/V start from clean timeline
+    startPublishTasks()                   // new task, new bridge, fresh _videoInputStream
+    ...
+}
+```
+
+`outgoing.stopRunning()` 的完整清除鏈：
+
+```
+OutgoingStream.stopRunning()
+  ├── videoCodec.stopRunning()
+  │     ├── session = nil / invalidateSession = true
+  │     ├── outputContinuation?.finish()
+  │     ├── presentationTimeStamp = .zero
+  │     └── startedAt = .zero
+  ├── audioCodec.stopRunning()
+  │     ├── outputContinuation?.finish()
+  │     └── isRunning = false
+  ├── videoInputContinuation = nil   // didSet 會 finish 舊值
+  └── _videoInputStream = nil        // 下次 access 建立全新 stream
+```
+
+`videoTimestamp.clear()` 等效於建構子狀態，確保重啟後第一個 frame 的 RTMP timestamp 從 0 開始：
+
+```swift
+mutating func clear() {
+    startedAt = kRTMPTimestamp_defaultTimeInterval  // 0
+    updatedAt = 0
+    timedeltaFraction = 0
+    lastRawTimestamp = 0
+    rolloverCount = 0
+    lastDelta = 0
+}
+```
+
+#### 9.11.3 效果
+
+| 場景 | 修復前 | 修復後 |
+|------|--------|--------|
+| Pipeline restart 後 encoder 無輸出 | videoFrames=0 持續，stallCount 累積 → 無限重啟 | 新 task 獨佔全新 stream，正常輸出 |
+| Audio 管線隨 video restart 一起停擺 | audioSentFrames=0 持續 | `startRunning()` 重新建立 audioCodec outputStream |
+| Camera PTS reset 後 A/V timeline 錯亂 | video RTMP timestamp 跳回 0，audio 在 120s | 雙方一起從 0 開始，自然對齊 |
+
+### 9.12 Adaptive Frame Throttle — 真實 Input FPS 追蹤
+
+**檔案**: `VideoCodec.swift:77-127`
+
+#### 9.12.1 問題
+
+原本 `currentFps` 寫死 60fps baseline：
+
+```swift
+// ❌ 舊
+let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 60.0
+```
+
+若相機實際只有 30fps：
+- baseline = 60 (錯誤)
+- 降 15% → target = 51fps
+- `frameInterval = 1/51 ≈ 0.0196`
+- 但 `useFrame` 最多讓 30fps 通過 → throttle 完全沒作用
+
+ProMotion 80fps 場景下：
+- `expectedFrameRate = nil` 時 `useFrame` 全放行
+- 80fps → VT 過載 → throttle 降 15% → 68fps → 仍然太高
+- framerate 在 22~66fps 之間劇烈振盪
+- bitrate 隨之暴漲暴跌（207~4078 Kbps）
+
+#### 9.12.2 修復
+
+加入真實 input frame interval 的 EMA（Exponential Moving Average）追蹤：
+
+```swift
+private var lastFrameTime: Date = .distantPast
+private var smoothedFrameInterval: Double = 1.0 / 60.0
+
+private func updateAdaptiveFrameInterval() {
+    let now = Date()
+    if lastFrameTime != .distantPast {
+        let actualInterval = now.timeIntervalSince(lastFrameTime)
+        smoothedFrameInterval = smoothedFrameInterval * 0.7 + actualInterval * 0.3
+    }
+    lastFrameTime = now
+
+    ...
+
+    // ✅ 新：用真實 smoothed interval 取代硬編碼 60
+    let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 1.0 / smoothedFrameInterval
+    let targetFps = currentFps * 0.85
+    frameInterval = 1.0 / max(15.0, targetFps)
+}
+```
+
+| 相機 FPS | 舊 baseline | 舊 target | 新 baseline | 新 target (85%) |
+|----------|------------|-----------|------------|----------------|
+| 30 | 60 (錯) | 51 (無效) | 30 | 25.5 ✅ |
+| 60 | 60 | 51 | 60 | 51 |
+| 80 (ProMotion) | 60 (錯) | 51 (太弱) | 80 | 68 |
+
+`stopRunning()` 與 `resetSessionState()` 中也重置 tracking 變數，防止 restart 後初始 interval 誤判。
+
+#### 9.12.3 建議配置
+
+```swift
+// 最穩定的 1080p60 配置
+videoSettings.expectedFrameRate = 30          // 安全上限，砍半 framerate
+videoSettings.adaptiveFrameThrottle = true    // 安全網：VT 塞車時再降 15%
+videoSettings.prioritizeEncodingSpeedOverQuality = true
+```
+
+`expectedFrameRate = 30` 的效果：
+- `useFrame` 確保最多 30fps 送入 encoder（無論相機是 60/80/120fps）
+- `adaptiveFrameThrottle` 從真實 30fps baseline 計算，降速有效
+- VT 負載穩定 → bitrate 波動大幅減少
+
+### 9.13 變更檔案總表
+
+| 檔案 | 變更 |
+|------|------|
+| `RTMPStream.swift` | `restartVideoPipeline`/`restartAudioPipeline` 改為 `outgoing.stopRunning()`+`startRunning()`，加入 `videoTimestamp.clear()`/`audioTimestamp.clear()` |
+| `VideoCodec.swift` | `updateAdaptiveFrameInterval` 加入 `lastFrameTime`/`smoothedFrameInterval` EMA 追蹤，`currentFps` 使用真實 input rate 而非硬編碼 60；`stopRunning()`/`resetSessionState()` 重置 tracking |
