@@ -1076,10 +1076,12 @@ extension RTMPStream: _Stream {
         await connection?.log(.warn, "Restarting video pipeline", detail: reason)
         await connection?.log(.info, "restartVideoPipeline: stopping publish tasks")
         stopPublishTasks()
-        await connection?.log(.info, "restartVideoPipeline: restart codec")
-        outgoing.restartVideoCodec()
-        await connection?.log(.info, "restartVideoPipeline: clear videoFormat")
+        await connection?.log(.info, "restartVideoPipeline: restart outgoing")
+        outgoing.stopRunning()
+        outgoing.startRunning()
+        await connection?.log(.info, "restartVideoPipeline: clear format descriptions")
         videoFormat = nil
+        audioFormat = nil
         await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
@@ -1097,8 +1099,10 @@ extension RTMPStream: _Stream {
         }
         await connection?.log(.warn, "Restarting audio pipeline", detail: reason)
         stopPublishTasks()
-        outgoing.restartAudioCodec()
+        outgoing.stopRunning()
+        outgoing.startRunning()
         audioFormat = nil
+        videoFormat = nil
         startPublishTasks()
         audioStallCount = 0
         videoStallCount = 0
