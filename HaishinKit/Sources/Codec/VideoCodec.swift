@@ -216,15 +216,13 @@ final class VideoCodec {
         guard self.presentationTimeStamp < presentationTimeStamp else {
             return false
         }
-        let interval: Double
-        if 0 < frameInterval {
-            interval = frameInterval
-        } else if let expected = settings.expectedFrameRate, 0 < expected {
-            interval = 1.0 / expected
-        } else {
+        // 以 sample buffer 實際 PTS 為準。只有 frameInterval > 0
+        // （用戶手動設定或 adaptiveFrameThrottle 介入）才過濾。
+        // expectedFrameRate 僅作為 VT 提示，不做幀率上限。
+        guard 0 < frameInterval else {
             return true
         }
-        return interval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
+        return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
     }
 
     private func shouldForceKeyFrame(_ presentationTimeStamp: CMTime) -> Bool {

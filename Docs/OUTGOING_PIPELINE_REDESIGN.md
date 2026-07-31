@@ -1081,3 +1081,56 @@ func computeVideoInputBufferCounts(for size: CGSize) -> Int {
 | 檔案 | 變更 |
 |------|------|
 | `OutgoingStream.swift` | 新增 `observedVideoBytesPerFrame` 觀察欄位；`append(_ sampleBuffer:)` 從 `CVPixelBufferGetDataSize` 取得實際大小；`computeVideoInputBufferCounts` 優先使用觀察值 |
+
+### 9.21 `useFrame` 重新設計 — expectedFrameRate 不再做幀率上限
+
+**檔案**: `VideoCodec.swift:212-222`
+
+#### 9.21.1 問題
+
+原本 `useFrame` 把 `expectedFrameRate` 當作硬性幀率上限：
+
+```swift
+// ❌ 舊
+let interval: Double
+if 0 < frameInterval {
+    interval = frameInterval
+} else if let expected = settings.expectedFrameRate, 0 < expected {
+    interval = 1.0 / expected   // ← 變成 frame filter
+} else {
+    return true
+}
+return interval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
+```
+
+**後果**：相機送 60fps，但 `expectedFrameRate = 30` 時 `interval = 33ms`，60fps 的 16.7ms 間隔全部被 filter → 精準鎖在 30fps。改 bitrate 無效（`useFrame` 不看 bitrate）。日誌表現：
+
+```
+videoInputFrames=60 videoFrames=30   ← 輸入 60fps，useFrame 砍到 30
+pending frames = 1                   ← VT 完全健康，是 source 端被過濾
+```
+
+`expectedFrameRate` 原本設計是「VT 功耗/rate control 提示」，卻在 `useFrame` 變成主動濾幀器，兩個用途互相衝突。
+
+#### 9.21.2 修復
+
+以 sample buffer 實際 PTS 為準，只有 `frameInterval > 0` 才過濾：
+
+```swift
+// ✅ 新
+private func useFrame(_ presentationTimeStamp: CMTime) -> Bool {
+    guard startedAt <= presentationTimeStamp else { return false }
+    guard self.presentationTimeStamp < presentationTimeStamp else { return false }
+    // 只有 frameInterval > 0（用戶手動設定 或 adaptiveFrameThrottle）才過濾
+    guard 0 < frameInterval else { return true }
+    return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
+}
+```
+
+| 條件 | 行為 |
+|------|------|
+| `frameInterval = 0`（預設） | 全放行，以相機實際幀率為準 |
+| `frameInterval > 0` | 用戶明確限幀（如 `frameInterval30`）或 throttle 介入 |
+| `expectedFrameRate` | 只當 VT hint（`makeOptions` 已設 `kVTCompressionPropertyKey_ExpectedFrameRate`），不再濾幀 |
+
+**效果**：相機送多少就編多少（60fps input → VT 收到 60fps）。若 bitrate 不夠，由 `allowTemporalCompression` 或 `adaptiveFrameThrottle` 處理，而不是 source 端莫名其妙被砍半。
