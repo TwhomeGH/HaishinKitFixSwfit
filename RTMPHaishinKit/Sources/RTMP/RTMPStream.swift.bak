@@ -1,4 +1,4 @@
-﻿@preconcurrency import AVFAudio
+@preconcurrency import AVFAudio
 import AVFoundation
 import Combine
 import HaishinKit
@@ -188,15 +188,9 @@ public actor RTMPStream {
     /// The object encoding (AMF). Framework supports AMF0 only.
     public private(set) var objectEncoding = RTMPConnection.defaultObjectEncoding
     /// The boolean value that indicates audio samples allow access or not.
-    public private(set) var audioSampleAccess: Bool {
-        get { inflowLock.withLock { _audioSampleAccess } }
-        set { inflowLock.withLock { _audioSampleAccess = newValue } }
-    }
+    public private(set) var audioSampleAccess = true
     /// The boolean value that indicates video samples allow access or not.
-    public private(set) var videoSampleAccess: Bool {
-        get { inflowLock.withLock { _videoSampleAccess } }
-        set { inflowLock.withLock { _videoSampleAccess = newValue } }
-    }
+    public private(set) var videoSampleAccess = true
     /// The number of video frames per seconds.
     @Published public private(set) var currentFPS: UInt16 = 0
     /// The ready state of stream.
@@ -232,15 +226,6 @@ public actor RTMPStream {
     private nonisolated(unsafe) var _audioInputFrames: Int = 0
     private nonisolated(unsafe) var _audioSampleAccess = true
     private nonisolated(unsafe) var _videoSampleAccess = true
-
-    private var videoInputFrames: Int {
-        get { inflowLock.withLock { _videoInputFrames } }
-        set { inflowLock.withLock { _videoInputFrames = newValue } }
-    }
-    private var audioInputFrames: Int {
-        get { inflowLock.withLock { _audioInputFrames } }
-        set { inflowLock.withLock { _audioInputFrames = newValue } }
-    }
     private var audioSentFrames: Int = 0
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
@@ -265,7 +250,7 @@ public actor RTMPStream {
     nonisolated private let mixerOutputBridge = MediaMixerOutputBridge()
     private(set) var id: UInt32 = RTMPStream.defaultID
     package lazy var incoming = IncomingStream(self)
-    nonisolated let outgoing = OutgoingStream()
+    package lazy var outgoing = OutgoingStream()
     private weak var connection: RTMPConnection?
 
     private var audioFormat: AVAudioFormat? {
@@ -771,7 +756,12 @@ public actor RTMPStream {
         publishTask?.cancel()
 
         let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
+        let (videoStream, videoContinuation) = AsyncStream.makeStream(
+            of: CMSampleBuffer.self,
+            bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
+        )
         mixerOutputBridge.setAudioContinuation(audioContinuation)
+        mixerOutputBridge.setVideoContinuation(videoContinuation)
         outgoing.setVideoCodecLogHandler { [weak self] message in
             Task { await self?.connection?.log(.info, "VideoCodec: \(message)") }
         }
@@ -788,6 +778,11 @@ public actor RTMPStream {
                 group.addTask {
                     for await (buffer, when) in audioStream {
                         await self.append(buffer, when: when)
+                    }
+                }
+                group.addTask {
+                    for await sampleBuffer in videoStream {
+                        await self.append(sampleBuffer)
                     }
                 }
                 group.addTask {
@@ -1087,7 +1082,9 @@ extension RTMPStream: _Stream {
         await connection?.log(.info, "restartVideoPipeline: restart outgoing")
         outgoing.stopRunning()
         outgoing.startRunning()
-        // 銝?蝵?videoFormat/audioFormat嚗 encoder session ?Ｗ?詨??澆???        // didSet 銝孛????銝?seq header ??timeline 銝葉?瑯?        await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
+        // 不重置 videoFormat/audioFormat：新 encoder session 產出相同格式時
+        // didSet 不觸發 → 不送 seq header → timeline 不中斷。
+        await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
         videoStallCount = 0
@@ -1126,19 +1123,7 @@ extension RTMPStream: MediaMixerOutput {
     }
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {
-        inflowLock.lock()
-        _videoInputFrames += 1
-        let outputs = self.outputs
-        let sampleAccess = _videoSampleAccess
-        inflowLock.unlock()
-        outgoing.append(sampleBuffer)
-        if sampleBuffer.formatDescription?.isCompressed == false {
-            for output in outputs {
-                if sampleAccess || output is View {
-                    output.stream(self, didOutput: sampleBuffer)
-                }
-            }
-        }
+        mixerOutputBridge.yieldVideo(sampleBuffer)
     }
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput buffer: AVAudioPCMBuffer, when: AVAudioTime) {

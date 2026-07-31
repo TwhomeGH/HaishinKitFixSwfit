@@ -901,3 +901,92 @@ bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
 | 檔案 | 變更 |
 |------|------|
 | `RTMPStream.swift` | bridge video continuation buffer 從 `videoInputBufferCounts` 改為 `videoInputBufferCounts * 2` |
+
+### 9.18 移除 Mixer Raw Video 的 Actor Hop
+
+**檔案**: `RTMPStream.swift`
+
+#### 9.18.1 問題
+
+原本 mixer video callback 經過完整的橋接路徑：
+```
+Mixer callback (nonisolated)
+  → MediaMixerOutputBridge.yieldVideo
+  → videoContinuation (bufferingNewest 4~8)
+  → for-await in TaskGroup
+  → await self.append(sampleBuffer)   ← actor hop
+  → videoInputFrames += 1
+  → outgoing.append(sampleBuffer)     → videoInputContinuation → encoder
+  → outputs.forEach { ... }
+```
+
+此路徑有一趟 actor hop（`await self.append`），60fps 下每幀 16.7ms 間隔，若 hop 延遲排程超過此值則 bridge buffer 溢位丟幀。
+
+抖動緩衝從 4→8 僅是治標，根本問題是 actor hop 本身。
+
+#### 9.18.2 修復
+
+將 video mixer callback 改為 nonisolated direct path，完全繞過 bridge + for-await + actor hop：
+
+```swift
+nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {
+    inflowLock.lock()
+    _videoInputFrames += 1
+    let outputs = self.outputs
+    let sampleAccess = _videoSampleAccess
+    inflowLock.unlock()
+    outgoing.append(sampleBuffer)
+    if sampleBuffer.formatDescription?.isCompressed == false {
+        for output in outputs {
+            if sampleAccess || output is View {
+                output.stream(self, didOutput: sampleBuffer)
+            }
+        }
+    }
+}
+```
+
+關鍵變更：
+
+| 項目 | 處理方式 |
+|------|---------|
+| `_videoInputFrames` counter | `NSLock` 保護，nonisolated 存取 |
+| `audioSampleAccess`/`videoSampleAccess` | 改為 computed property，`NSLock` 保護 backing store |
+| `outgoing.append(sampleBuffer)` | `OutgoingStream` 為 `@unchecked Sendable`，`outgoing` 改為 `nonisolated let` |
+| `outputs.forEach` | 直接呼叫，所有 `StreamOutput.stream()` 實作皆為 `nonisolated` |
+| Audio 路徑 | 維持 bridge 序列化（`AVAudioConverter.convert` 非 thread-safe） |
+
+`startPublishTasks` 中移除了 `videoStream`/`videoContinuation` 的建立與 for-await loop，TaskGroup 從 5 子任務減為 4：
+
+```
+  audioStream (actor hop, 音訊維持序列化)
+  audioOutput (零 actor hop, 壓縮音訊輸出)
+  videoOutput (零 actor hop, 壓縮視訊輸出)
+→ videoInput  (零 actor hop, raw frame 餵編碼器)
+```
+
+#### 9.18.3 效果
+
+| 指標 | 修復前 | 修復後 |
+|------|--------|--------|
+| mixer video → encoder actor hop | 1（await self.append） | **0** |
+| bridge buffer 溢出丟幀 | 60fps 下丟 ~50% | 完全消除（bridge 已移除） |
+| `videoInputFrames` | ~34fps（60fps 來源） | 預期接近 60fps |
+| per-frame 排程延遲 | ~2-4µs（actor hop） | < 1µs（lock + direct call） |
+
+`§8 建議後續優化` 中將第一項從「移除 RTMPStream actor」改為：
+
+| 優化方向 | 適用場景 | 複雜度 |
+|----------|---------|--------|
+| ~~移除 RTMPStream actor，改用 lock-based class~~ **已完成** mixer video 路徑已無 actor hop | 60fps+ 4K streaming | 低 |
+| 移除 audio mixer 路徑的 actor hop | 進一步降低延遲 | 中（需要序列化 AVAudioConverter） |
+| 將 RTMPConnection.doOutput 也移出 actor | 完全消除 actor hop | 中 |
+| MPSC ring buffer 取代 AsyncStream | 120fps+ 4K | 高 |
+
+### 9.19 變更檔案總表
+
+| 檔案 | 變更 |
+|------|------|
+| `RTMPStream.swift` | mixer video callback 改為 nonisolated direct path；`outgoing` 從 `lazy var` 改為 `nonisolated let`；加入 `inflowLock` + `_videoInputFrames`/`_audioInputFrames`/`_audioSampleAccess`/`_videoSampleAccess` lock-backed 存取；`videoInputFrames`/`audioInputFrames` 改為 computed property；`audioSampleAccess`/`videoSampleAccess` 改為 computed property；`startPublishTasks` 移除 videoStream/videoContinuation；TaskGroup 移除 videoStream for-await loop |
+| `OutgoingStream.swift` | 無變更（原本就是 `@unchecked Sendable`） |
+| `MediaMixerOutputBridge.swift` | 無變更（仍供 audio 路徑使用） |
