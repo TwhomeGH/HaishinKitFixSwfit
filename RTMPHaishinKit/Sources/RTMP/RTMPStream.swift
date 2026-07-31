@@ -756,7 +756,7 @@ public actor RTMPStream {
         let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
         let (videoStream, videoContinuation) = AsyncStream.makeStream(
             of: CMSampleBuffer.self,
-            bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts)
+            bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
         )
         mixerOutputBridge.setAudioContinuation(audioContinuation)
         mixerOutputBridge.setVideoContinuation(videoContinuation)

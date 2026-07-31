@@ -837,3 +837,67 @@ Encoder → RTMPStream.outputContinuation (unbounded)
 |------|------|
 | `RTMPStream.swift` | `startOutputConsumer()` 移除 `bufferingPolicy: .bufferingNewest(256)` → unbounded |
 | `RTMPConnection.swift` | `startOutputConsumer()` 移除 `bufferingPolicy: .bufferingNewest(256)` → unbounded |
+
+### 9.16 Bridge Buffer — Actor Hop 瓶頸導致 60fps 掉幀
+
+**檔案**: `RTMPStream.swift:759`
+
+#### 9.16.1 問題
+
+`startPublishTasks()` 中 bridge 的 video continuation 使用 `.bufferingNewest(outgoing.videoInputBufferCounts)`：
+
+```swift
+let (videoStream, videoContinuation) = AsyncStream.makeStream(
+    of: CMSampleBuffer.self,
+    bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts)  // 4 (for 1080p)
+)
+```
+
+`videoInputBufferCounts` 是根據記憶體預算計算的（~4 for 1080p），但這個 buffer 的 consumer 需要經過 actor hop：
+
+```
+Camera 60fps (16.7ms interval)
+  → bridge.yieldVideo (DispatchQueue, 低延遲)
+  → videoContinuation (bufferingNewest 4 slots = ~67ms 緩衝)
+  → for-await loop
+  → await self.append(sampleBuffer)  ← actor hop，延遲不確定
+```
+
+60fps 下每幀間隔 16.7ms。若 actor hop 排程延遲超過此值（在系統繁忙或低電量時常見），buffer 會在幾幀內溢位，靜默丟棄最舊的 raw frame。
+
+**日誌表現**：
+
+```
+videoInputFrames=33 videoFrames=23    ← 60fps 來源只剩 ~34fps 到達 encoder
+videoInputFrames=35 videoFrames=25    ← ~24fps 實際編碼輸出
+```
+
+Camera 明明是 60fps，但 `videoInputFrames`（送到 `append(sampleBuffer)` 的 raw frames/sec）只有 33-35，代表 bridge buffer 丟掉了將近一半的幀。
+
+#### 9.16.2 修復
+
+將 bridge buffer 擴大一倍，讓 actor hop 有更多時間排程：
+
+```swift
+// ❌ 舊：4 slots（1080p），60fps 下只能扛 ~67ms
+bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts)
+
+// ✅ 新：8 slots（1080p），60fps 下可扛 ~133ms
+bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
+```
+
+| 解析度 | 舊 slots | 舊緩衝時間 (60fps) | 新 slots | 新緩衝時間 (60fps) |
+|-------|---------|-------------------|---------|-------------------|
+| 1080p (1334×1920) | 4 | 67ms | 8 | 133ms |
+| 720p | 10 | 167ms | 20 | 333ms |
+| 540p | 18 | 300ms | 36 | 600ms |
+
+#### 9.16.3 注意
+
+這不是消除 actor hop，而是增加 buffer 容忍度。根本解是移除 mixer 路徑的 actor hop（見 §8 建議後續優化），但 buffer 翻倍可以提供立即的 60fps 改善。
+
+### 9.17 變更檔案總表（更新）
+
+| 檔案 | 變更 |
+|------|------|
+| `RTMPStream.swift` | bridge video continuation buffer 從 `videoInputBufferCounts` 改為 `videoInputBufferCounts * 2` |
