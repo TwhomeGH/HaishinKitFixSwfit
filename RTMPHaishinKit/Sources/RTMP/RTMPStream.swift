@@ -825,6 +825,8 @@ public actor RTMPStream {
                 guard let self else { return }
                 let conn = await self.connection
                 guard let conn else { continue }
+                // 斷線/重連期間跳過，避免無謂的 actor hop 與 log 刷屏。
+                guard await conn.connected else { continue }
                 let length = await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
                 await self.appendByteCount(length)
             }

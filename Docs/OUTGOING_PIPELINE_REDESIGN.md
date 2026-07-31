@@ -1253,3 +1253,38 @@ if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
 | chunk size | 64KB | 128KB |
 | 延遲上限 | 20s（15MB） | ~2.6s（2MB） |
 | backpressure drop | 刪除佇列中段資料 | 拒絕新進資料（安全） |
+
+### 9.24 斷線/重連期間輸出靜默丟棄
+
+**檔案**: `RTMPConnection.swift:601-611`, `RTMPStream.swift:823-832`
+
+#### 9.24.1 問題
+
+Socket 斷線後 `RTMPConnection.close()` 把 `outputContinuation = nil`，重連窗口期間（exponential backoff 1s/2s/4s...）stream 的輸出 consumer 仍把緩衝資料逐一送給已死的 connection：
+
+```
+doOutput dropped: no outputContinuation (audio)   ← 每秒數百次
+doOutput dropped: no outputContinuation (video)
+```
+
+若重連一直失敗，這個狀態持續，看起來像「管線崩了沒重建」。
+
+#### 9.24.2 修復
+
+雙層防護：
+
+```swift
+// RTMPConnection.doOutput：斷線期間直接回 0，不刷 log
+func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) -> Int {
+    guard connected else { return 0 }   // ← 斷線/重連期間靜默丟棄
+    ...
+}
+
+// RTMPStream.startOutputConsumer：connection 沒連上就跳過
+for await item in stream {
+    guard await conn.connected else { continue }   // ← 跳過，無 actor hop
+    let length = await conn.doOutput(...)
+}
+```
+
+重連成功後 `startReconnection` → `stream.dispatch(.reset)` + `createStream()` + `resumePublishing()` 會完整重建管線。緩衝中的舊資料在斷線窗口被靜默丟棄，不會在新連線上送出過期資料。

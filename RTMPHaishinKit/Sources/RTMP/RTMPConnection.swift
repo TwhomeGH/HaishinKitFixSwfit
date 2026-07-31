@@ -602,6 +602,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if logger.isEnabledFor(level: .trace) {
             logger.trace("<<", message)
         }
+        // 斷線/重連期間靜默丟棄，不刷 log。
+        guard connected else { return 0 }
         let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
         guard let outputContinuation else {
             log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
