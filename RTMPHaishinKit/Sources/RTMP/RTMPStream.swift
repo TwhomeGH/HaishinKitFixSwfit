@@ -265,7 +265,7 @@ public actor RTMPStream {
     nonisolated private let mixerOutputBridge = MediaMixerOutputBridge()
     private(set) var id: UInt32 = RTMPStream.defaultID
     package lazy var incoming = IncomingStream(self)
-    nonisolated let outgoing = OutgoingStream()
+    nonisolated package let outgoing = OutgoingStream()
     private weak var connection: RTMPConnection?
 
     private var audioFormat: AVAudioFormat? {
