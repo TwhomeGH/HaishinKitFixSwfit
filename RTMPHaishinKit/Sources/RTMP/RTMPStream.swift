@@ -221,7 +221,7 @@ public actor RTMPStream {
     }
     private var lastPublishName: String?
     private var lastPublishType: HowToPublish = .live
-    package var outputs: [any StreamOutput] = []
+    nonisolated(unsafe) package var outputs: [any StreamOutput] = []
     private var frameCount: UInt16 = 0
     private var videoStallCount: Int = 0
     private var videoSourceStallCount: Int = 0
@@ -244,6 +244,7 @@ public actor RTMPStream {
     private var audioSentFrames: Int = 0
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
+    private var lastStatusTime = Date.distantPast
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
