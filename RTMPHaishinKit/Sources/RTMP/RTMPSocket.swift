@@ -103,9 +103,14 @@ final actor RTMPSocket {
 
         if sendBuffer.count + data.count > Self.maxQueueBytesOut {
             let excess = (sendBuffer.count + data.count) - Self.maxQueueBytesOut
-            let dropSize = min(sendBuffer.count, excess)
-            sendBuffer.removeFirst(dropSize)
-            onLog?(.init(level: .warn, message: "Backpressure: dropped oldest", detail: "dropSize=\(dropSize)"))
+            // 只丟尚未送出的資料（sendOffset 之後）。
+            // 不能 removeFirst：會刪掉已交給 NWConnection 的部分，導致 sendOffset > count。
+            let unsentCount = sendBuffer.count - sendOffset
+            let dropSize = min(unsentCount, excess)
+            if 0 < dropSize {
+                sendBuffer.removeSubrange(sendOffset..<sendOffset + dropSize)
+                onLog?(.init(level: .warn, message: "Backpressure: dropped unsent", detail: "dropSize=\(dropSize)"))
+            }
         }
 
         sendBuffer.append(data)
@@ -246,8 +251,12 @@ final actor RTMPSocket {
     private func didSendChunk(_ size: Int, error: NWError?) {
         totalBytesOut += size
         if sendOffset >= sendBuffer.count / 2 {
-            sendBuffer.removeSubrange(0..<sendOffset)
-            sendOffset = 0
+            // 防禦：sendOffset 永不超過 count（backpressure drop 或 append 可能變動）
+            let safeOffset = min(sendOffset, sendBuffer.count)
+            if 0 < safeOffset {
+                sendBuffer.removeSubrange(0..<safeOffset)
+            }
+            sendOffset = max(0, sendOffset - safeOffset)
         }
         isSending = false
         if sendOffset < sendBuffer.count {

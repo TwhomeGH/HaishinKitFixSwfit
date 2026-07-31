@@ -1134,3 +1134,64 @@ private func useFrame(_ presentationTimeStamp: CMTime) -> Bool {
 | `expectedFrameRate` | 只當 VT hint（`makeOptions` 已設 `kVTCompressionPropertyKey_ExpectedFrameRate`），不再濾幀 |
 
 **效果**：相機送多少就編多少（60fps input → VT 收到 60fps）。若 bitrate 不夠，由 `allowTemporalCompression` 或 `adaptiveFrameThrottle` 處理，而不是 source 端莫名其妙被砍半。
+
+### 9.22 RTMPSocket Backpressure Drop — sendOffset 不變量破壞導致崩潰
+
+**檔案**: `RTMPSocket.swift:104-114`
+
+#### 9.22.1 問題
+
+崩潰 stack：
+
+```
+Data.InlineSlice.replaceSubrange
+RTMPSocket.didSendChunk   ← sendBuffer.removeSubrange(0..<sendOffset)
+```
+
+`send()` 的 backpressure drop 用 `removeFirst(dropSize)` 從**前端**刪除，但沒有調整 `sendOffset`：
+
+```swift
+// ❌ 舊
+if sendBuffer.count + data.count > Self.maxQueueBytesOut {
+    let dropSize = min(sendBuffer.count, excess)
+    sendBuffer.removeFirst(dropSize)   // 前端刪除，sendOffset 不動
+}
+```
+
+**時序**：
+1. `sendNextChunk()` → `sendOffset = 64KB`（chunk 在 flight）
+2. `send(newData)` 觸發 backpressure → `removeFirst(dropSize)` → `sendBuffer.count` 縮小
+3. `didSendChunk` 執行 `sendBuffer.removeSubrange(0..<sendOffset)` → `sendOffset > sendBuffer.count` → **out of bounds trap（EXC_BREAKPOINT）**
+
+`sendBuffer` 內部的資料：`[0..<sendOffset)` 是已交給 NWConnection 的部分，`[sendOffset..<count)` 是尚未送出。`removeFirst` 刪掉了已送出的 prefix，讓 `sendOffset` 指向超出 buffer 的位置。
+
+#### 9.22.2 修復
+
+只丟尚未送出的資料（`sendOffset` 之後），並在 `didSendChunk` 加防禦：
+
+```swift
+// ✅ send()：只丟 unsent region
+if sendBuffer.count + data.count > Self.maxQueueBytesOut {
+    let excess = (sendBuffer.count + data.count) - Self.maxQueueBytesOut
+    let unsentCount = sendBuffer.count - sendOffset
+    let dropSize = min(unsentCount, excess)
+    if 0 < dropSize {
+        sendBuffer.removeSubrange(sendOffset..<sendOffset + dropSize)
+    }
+}
+
+// ✅ didSendChunk()：防禦 clamp
+if sendOffset >= sendBuffer.count / 2 {
+    let safeOffset = min(sendOffset, sendBuffer.count)
+    if 0 < safeOffset {
+        sendBuffer.removeSubrange(0..<safeOffset)
+    }
+    sendOffset = max(0, sendOffset - safeOffset)
+}
+```
+
+#### 9.22.3 效果
+
+- backpressure drop 不再破壞 `sendOffset` 不變量 → 不會崩潰
+- 只丟「還沒送出的」新資料，已送出的 chunk 不受影響
+- 極端情況（`sendOffset > count`）由 `didSendChunk` 的 clamp 安全恢復
