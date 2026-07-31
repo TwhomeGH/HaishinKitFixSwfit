@@ -94,10 +94,19 @@ package final class OutgoingStream: @unchecked Sendable {
 
     /// The video input format.
     package private(set) var videoInputFormat: CMFormatDescription?
+    /// Actual bytes per frame observed from the latest sample buffer's pixel buffer.
+    /// More accurate than assuming NV12 (1.5 bytes/pixel) from `videoSize` alone.
+    private var observedVideoBytesPerFrame: Int = 0
 
     /// Returns the optimal frame count for the given video size.
+    /// Prefers the actual observed bytes-per-frame; falls back to NV12 estimate.
     package func computeVideoInputBufferCounts(for size: CGSize) -> Int {
-        let bytesPerFrame = Int(size.width * size.height * 1.5)
+        let bytesPerFrame: Int
+        if 0 < observedVideoBytesPerFrame {
+            bytesPerFrame = observedVideoBytesPerFrame
+        } else {
+            bytesPerFrame = Int(size.width * size.height * 1.5)
+        }
         guard bytesPerFrame > 0 else { return 5 }
         return max(1, min(30, maxVideoBufferBytes / bytesPerFrame))
     }
@@ -127,6 +136,9 @@ package final class OutgoingStream: @unchecked Sendable {
             audioCodec.append(sampleBuffer)
         case .video:
             videoInputFormat = sampleBuffer.formatDescription
+            if let imageBuffer = sampleBuffer.imageBuffer {
+                observedVideoBytesPerFrame = CVPixelBufferGetDataSize(imageBuffer)
+            }
             videoInputContinuation?.yield(sampleBuffer)
         default:
             break

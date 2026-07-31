@@ -1034,3 +1034,50 @@ nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSam
 | `RTMPStream.swift` | mixer video callback 改為 nonisolated direct path；`outgoing` 從 `lazy var` 改為 `nonisolated let`；加入 `inflowLock` + `_videoInputFrames`/`_audioInputFrames`/`_audioSampleAccess`/`_videoSampleAccess` lock-backed 存取；`videoInputFrames`/`audioInputFrames` 改為 computed property；`audioSampleAccess`/`videoSampleAccess` 改為 computed property；`startPublishTasks` 移除 videoStream/videoContinuation；TaskGroup 移除 videoStream for-await loop |
 | `OutgoingStream.swift` | 無變更（原本就是 `@unchecked Sendable`） |
 | `MediaMixerOutputBridge.swift` | 無變更（仍供 audio 路徑使用） |
+
+### 9.20 `videoInputBufferCounts` — 以實際 Sample Buffer 計算
+
+**檔案**: `OutgoingStream.swift:97-112`
+
+#### 9.20.1 問題
+
+原本 `computeVideoInputBufferCounts` 假設 NV12（1.5 bytes/pixel）：
+
+```swift
+// ❌ 舊：只用 videoSize 假設 NV12
+let bytesPerFrame = Int(size.width * size.height * 1.5)
+```
+
+不準確的情況：
+| 格式 | bytes/pixel | 後果 |
+|------|------------|------|
+| NV12 | 1.5 | 正確 |
+| BGRA | 4.0 | 低估 → buffer 過多 → 超過 `maxVideoBufferBytes` 記憶體預算 |
+| P010 (10-bit) | 3.0 | 低估 |
+
+且 camera 實際輸出尺寸（如 1334×1920 直向）可能與 `videoSize` 設定不同，直接用設定計算會更不準。
+
+#### 9.20.2 修復
+
+從實際 sample buffer 的 pixel buffer 觀察真實大小：
+
+```swift
+// append() 時觀察
+if let imageBuffer = sampleBuffer.imageBuffer {
+    observedVideoBytesPerFrame = CVPixelBufferGetDataSize(imageBuffer)
+}
+
+// 計算優先使用觀察值，fallback 才是 NV12 假設
+func computeVideoInputBufferCounts(for size: CGSize) -> Int {
+    let bytesPerFrame = 0 < observedVideoBytesPerFrame ? observedVideoBytesPerFrame : Int(size.width * size.height * 1.5)
+    return max(1, min(30, maxVideoBufferBytes / bytesPerFrame))
+}
+```
+
+`CVPixelBufferGetDataSize` 回傳實際分配大小（含 plane 對齊），比假設值準確。記憶體預算 `maxVideoBufferBytes`（15MB）現在真正被遵守。
+
+注意：初次 publish 時第一個 frame 尚未到達，用 fallback（NV12 假設）；後續 restart 重建 stream 時會用實際觀察值。
+
+| 檔案 | 變更 |
+|------|------|
+| `OutgoingStream.swift` | 新增 `observedVideoBytesPerFrame` 觀察欄位；`append(_ sampleBuffer:)` 從 `CVPixelBufferGetDataSize` 取得實際大小；`computeVideoInputBufferCounts` 優先使用觀察值 |
