@@ -709,13 +709,14 @@ public actor RTMPStream {
     }
 
     func deleteStream() async {
-        guard let fcPublishName, readyState == .publishing else {
-            return
-        }
+        // 不要求 fcPublishName：重連 teardown 時也要停止管線，
+        // 且不能清除 lastPublishName（resumePublishing 需要它）。
         stopPublishTasks()
         outgoing.stopRunning()
-        async let _ = try? connection?.call("FCUnpublish", arguments: fcPublishName)
-        async let _ = try? connection?.call("deleteStream", arguments: id)
+        if let fcPublishName, readyState == .publishing {
+            async let _ = try? connection?.call("FCUnpublish", arguments: fcPublishName)
+            async let _ = try? connection?.call("deleteStream", arguments: id)
+        }
     }
 
     private func append(_ message: RTMPAudioMessage, type: RTMPChunkType) {

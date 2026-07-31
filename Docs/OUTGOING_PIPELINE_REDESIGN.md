@@ -1330,3 +1330,71 @@ for await item in stream {
 若在 `doOutput` 加 `guard connected else { return 0 }`，connect command 會被靜默丟棄 → 伺服器等不到 connect 回應（SRS 報 `expect connect app response ... timeout 30000ms`）→ 30 秒後斷線。修復：改為只在 `connected && outputContinuation == nil` 時 log。
 
 重連成功後 `startReconnection` → `stream.dispatch(.reset)` + `createStream()` + `resumePublishing()` 會完整重建管線。緩衝中的舊資料在斷線窗口被靜默丟棄，不會在新連線上送出過期資料。
+
+### 9.25 重連後不會 republish — `lastPublishName` 被清掉
+
+**檔案**: `RTMPStream.swift:711-719`, `RTMPConnection.swift:574-580`
+
+#### 9.25.1 問題
+
+斷線後 `RTMPConnection.close()` 對 publishing stream 的處理：
+
+```swift
+// ❌ 舊：fcPublishName == nil 時呼叫 stream.close()
+for stream in streams {
+    if await stream.fcPublishName == nil {
+        _ = try? await stream.close()   // ← 清掉 lastPublishName！
+    } else {
+        await stream.deleteStream()
+    }
+}
+```
+
+沒有 `fcPublishName` 的 stream（常見：`RTMPStream(connection:)` 不帶 FMLE name）會走 `stream.close()`，它執行 `lastPublishName = nil`。接著 `startReconnection` → `resumePublishing()`：
+
+```swift
+func resumePublishing() async {
+    guard let name = lastPublishName else {
+        return    // ← 靜默 return，不 republish！
+    }
+    ...
+}
+```
+
+`lastPublishName` 為 nil → 靜默 return → **publish tasks 永不啟動**。日誌表現：
+
+```
+Connect success
+createStream: stream id 1
+🎉 RTMP 重連成功          ← resumePublishing 瞬間 return，重連看起來成功
+publish status gap ... videoInputFrames=60 frameCount=0   ← 之後永遠 0 輸出
+audioInputFrames=0 audioFrames=0                          ← publish tasks 沒跑
+```
+
+#### 9.25.2 修復
+
+`deleteStream()` 不再要求 `fcPublishName`，`RTMPConnection.close()` 對 publishing stream 一律用 `deleteStream()`：
+
+```swift
+// ✅ RTMPStream.deleteStream()：停止管線但保留 lastPublishName
+func deleteStream() async {
+    stopPublishTasks()
+    outgoing.stopRunning()
+    if let fcPublishName, readyState == .publishing {
+        async let _ = try? connection?.call("FCUnpublish", arguments: fcPublishName)
+        async let _ = try? connection?.call("deleteStream", arguments: id)
+    }
+}
+
+// ✅ RTMPConnection.close()：publishing 一律 deleteStream（保留名字）
+for stream in streams {
+    switch await stream.readyState {
+    case .publishing:
+        await stream.deleteStream()
+    default:
+        _ = try? await stream.close()
+    }
+}
+```
+
+`stream.close()`（使用者主動關閉）仍會清 `lastPublishName`，這是有意的：使用者關閉的 stream 不該被自動 republish。

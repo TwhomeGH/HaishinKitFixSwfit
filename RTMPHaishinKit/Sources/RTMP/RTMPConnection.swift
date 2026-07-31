@@ -572,10 +572,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         reconnectionTask = nil
         uri = nil
         for stream in streams {
-            if await stream.fcPublishName == nil {
-                _ = try? await stream.close()
-            } else {
+            // publishing 一律用 deleteStream（保留 lastPublishName 供重連 resumePublishing）。
+            // stream.close() 會清掉 lastPublishName，導致重連後無法自動 republish。
+            switch await stream.readyState {
+            case .publishing:
                 await stream.deleteStream()
+            default:
+                _ = try? await stream.close()
             }
         }
         outputContinuation?.finish()
