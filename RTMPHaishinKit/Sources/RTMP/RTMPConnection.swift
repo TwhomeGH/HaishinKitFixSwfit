@@ -602,11 +602,14 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if logger.isEnabledFor(level: .trace) {
             logger.trace("<<", message)
         }
-        // 斷線/重連期間靜默丟棄，不刷 log。
-        guard connected else { return 0 }
+        // 斷線/重連期間 outputContinuation 為 nil 是正常狀態，靜默丟棄。
+        // 不能 guard connected：handshake 期間 connected 是 false，
+        // 但 connect command 必須透過 doOutput 送出。
         let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
         guard let outputContinuation else {
-            log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
+            if connected {
+                log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
+            }
             return 0
         }
         let result = outputContinuation.yield(data)

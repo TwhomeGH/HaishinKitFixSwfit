@@ -1271,12 +1271,20 @@ doOutput dropped: no outputContinuation (video)
 
 #### 9.24.2 修復
 
-雙層防護：
+雙層防護（**注意：第一版用 `guard connected` 是錯的，會擋掉 handshake 階段的 connect command**）：
 
 ```swift
-// RTMPConnection.doOutput：斷線期間直接回 0，不刷 log
+// RTMPConnection.doOutput：outputContinuation 為 nil 時，
+// 只在「已連線但沒有 consumer」這個真 bug 情況才 log。
+// handshake 期間 connected 是 false，但 connect command 必須送出去。
 func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) -> Int {
-    guard connected else { return 0 }   // ← 斷線/重連期間靜默丟棄
+    let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
+    guard let outputContinuation else {
+        if connected {   // ← 只有連線正常卻沒 consumer 才是異常
+            log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
+        }
+        return 0
+    }
     ...
 }
 
@@ -1286,5 +1294,16 @@ for await item in stream {
     let length = await conn.doOutput(...)
 }
 ```
+
+#### 9.24.3 陷阱：`guard connected` 會擋掉 connect command
+
+`RTMPConnection.connected` 只有在 `state == .connected` 才為 true（connect command 回覆後）。handshake 完成後發送 connect command 時，`connected` 仍是 false：
+
+```
+.ackSent 收到 S2 → state = .handshakeDone
+  → makeConnectionMessage() → doOutput(.command, connect command)  ← connected=false
+```
+
+若在 `doOutput` 加 `guard connected else { return 0 }`，connect command 會被靜默丟棄 → 伺服器等不到 connect 回應（SRS 報 `expect connect app response ... timeout 30000ms`）→ 30 秒後斷線。修復：改為只在 `connected && outputContinuation == nil` 時 log。
 
 重連成功後 `startReconnection` → `stream.dispatch(.reset)` + `createStream()` + `resumePublishing()` 會完整重建管線。緩衝中的舊資料在斷線窗口被靜默丟棄，不會在新連線上送出過期資料。
