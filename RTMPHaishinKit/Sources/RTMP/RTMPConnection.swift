@@ -621,13 +621,18 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         streams.append(stream)
     }
 
+    private var outputBacklogBytes = 0
+    private let outputBacklogLock = NSLock()
+
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
         let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
         outputContinuation = continuation
         Task {
             for await data in stream {
+                outputBacklogLock.withLock { outputBacklogBytes += data.count }
                 await socket.send(data)
+                outputBacklogLock.withLock { outputBacklogBytes -= data.count }
             }
         }
     }

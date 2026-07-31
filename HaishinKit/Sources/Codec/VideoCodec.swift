@@ -47,6 +47,8 @@ final class VideoCodec {
     private(set) var outputFormat: CMFormatDescription?
     /// Consecutive clear checks before recovering frame rate.
     private var clearStreak: Int = 0
+    /// Consecutive high-pending checks before throttling down (avoid single-spike triggers).
+    private var highPendingStreak: Int = 0
     /// Accumulates pending-frame log entries; fires on every 60th frame (~1Hz at 60fps).
     private var pendingFramesLogCounter: Int = 0
     /// Last throttle-down time, minimum 500ms between steps.
@@ -66,14 +68,16 @@ final class VideoCodec {
         lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
         clearStreak = 0
+        highPendingStreak = 0
         lastThrottleTime = .distantPast
         lastFrameTime = .distantPast
         smoothedFrameInterval = 1.0 / 60.0
     }
 
-    /// Gradual frame-interval throttle: when `numberOfPendingFrames` exceeds
-    /// threshold, drops current fps by 15% (min 15fps), at most once per 500ms.
-    /// Recovers by 10% every 30 consecutive clear checks (~1s at output rate).
+    /// Adaptive frame throttle: only engages when VT is *sustained* overloaded
+    /// (3 consecutive high-pending checks), reduces by 10% per step (min 20fps),
+    /// and restores the baseline immediately after 5 consecutive clear checks.
+    /// Design goal: barely interfere during normal operation.
     private func updateAdaptiveFrameInterval() {
         let now = Date()
         if lastFrameTime != .distantPast {
@@ -86,6 +90,7 @@ final class VideoCodec {
         guard settings.adaptiveFrameThrottle else {
             frameInterval = VideoCodec.frameInterval
             clearStreak = 0
+            highPendingStreak = 0
             lastThrottleTime = .distantPast
             lastFrameTime = .distantPast
             smoothedFrameInterval = 1.0 / 60.0
@@ -99,26 +104,27 @@ final class VideoCodec {
             threshold = max(2, Int(ceil((settings.expectedFrameRate ?? 60.0) / 12.0)))
         }
         if pending > threshold {
+            // Sustained overload: need 3 consecutive high checks before throttling.
+            highPendingStreak += 1
             clearStreak = 0
+            guard 3 <= highPendingStreak else { return }
             guard 0.5 < now.timeIntervalSince(lastThrottleTime) else { return }
             lastThrottleTime = now
             let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 1.0 / smoothedFrameInterval
-            let targetFps = currentFps * 0.85
-            frameInterval = 1.0 / max(15.0, targetFps)
-        } else if frameInterval > VideoCodec.frameInterval {
-            clearStreak += 1
-            if 30 <= clearStreak {
-                clearStreak = 0
-                let currentFps = 1.0 / frameInterval
-                let targetFps = currentFps * 1.10
-                if 59.0 <= targetFps {
-                    frameInterval = VideoCodec.frameInterval
-                } else {
-                    frameInterval = 1.0 / targetFps
-                }
-            }
+            let targetFps = currentFps * 0.90
+            frameInterval = 1.0 / max(20.0, targetFps)
         } else {
-            clearStreak = 0
+            highPendingStreak = 0
+            if frameInterval > VideoCodec.frameInterval {
+                clearStreak += 1
+                // Fast recovery: restore baseline after 5 consecutive clear checks (~170ms at 30fps).
+                if 5 <= clearStreak {
+                    frameInterval = VideoCodec.frameInterval
+                    clearStreak = 0
+                }
+            } else {
+                clearStreak = 0
+            }
         }
     }
 

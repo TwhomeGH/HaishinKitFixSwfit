@@ -774,7 +774,51 @@ private func updateAdaptiveFrameInterval() {
 
 `stopRunning()` 與 `resetSessionState()` 中也重置 tracking 變數，防止 restart 後初始 interval 誤判。
 
-#### 9.12.3 建議配置
+#### 9.12.3 重新設計（2026-07-31）：近乎不干涉
+
+原本的 recovery 需要 30 次連續 clear checks 才恢復 10%，且任何 pending spike 都會重置 `clearStreak`，導致 throttle 一旦啟動就卡死在低幀率：
+
+```
+videoInputFrames=33 videoFrames=15  ← 被卡在 15fps，VT 早就恢復了
+pending frames = 1                  ← VT 實際很健康，但 recovery 太慢
+```
+
+**重新設計原則**：
+1. **持續過載才介入**：`highPendingStreak >= 3` 才降速，單次 spike 不觸發
+2. **快速恢復**：5 次連續 clear checks（~170ms @ 30fps）就恢復 baseline，不是 30 次
+3. **直接恢復**：恢復時 `frameInterval = 0` 一步到位，不做 10% 漸進
+4. **更溫和的降速**：10%/step（原 15%），floor 從 15fps 提高到 20fps
+
+```swift
+private func updateAdaptiveFrameInterval() {
+    ...
+    if pending > threshold {
+        highPendingStreak += 1
+        clearStreak = 0
+        guard 3 <= highPendingStreak else { return }   // 持續過載才降
+        guard 0.5 < now.timeIntervalSince(lastThrottleTime) else { return }
+        lastThrottleTime = now
+        let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 1.0 / smoothedFrameInterval
+        let targetFps = currentFps * 0.90
+        frameInterval = 1.0 / max(20.0, targetFps)
+    } else {
+        highPendingStreak = 0
+        if frameInterval > VideoCodec.frameInterval {
+            clearStreak += 1
+            if 5 <= clearStreak {                       // 快速恢復
+                frameInterval = VideoCodec.frameInterval
+                clearStreak = 0
+            }
+        } else {
+            clearStreak = 0
+        }
+    }
+}
+```
+
+**效果**：正常運作時 throttle 幾乎不介入（需 3 次持續 overload 才啟動）；真的塞車時快速降速（10%/step）；VT 恢復後 ~170ms 內回到完整幀率。不會再出現 VT 健康但被卡在低幀率的狀態。
+
+#### 9.12.4 建議配置
 
 ```swift
 // 最穩定的 1080p60 配置
