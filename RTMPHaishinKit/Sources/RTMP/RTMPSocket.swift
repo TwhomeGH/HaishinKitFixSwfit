@@ -4,8 +4,8 @@ import Network
 
 final actor RTMPSocket {
     static let defaultWindowSizeC = Int(UInt16.max)
-    static let maxQueueBytesOut = 15 * 1024 * 1024
-    private static let sendChunkSize = 64 * 1024
+    static let maxQueueBytesOut = 2 * 1024 * 1024
+    private static let sendChunkSize = 128 * 1024
 
     enum Error: Swift.Error {
         case invalidState
@@ -29,8 +29,84 @@ final actor RTMPSocket {
             oldValue?.forceCancel()
         }
     }
-    private var sendBuffer = Data()
-    private var sendOffset = 0
+    /// Ring-buffer style pending-send queue: segmented deque with a head cursor.
+    /// O(1) enqueue/dequeue, no Data compaction churn.
+    private struct SendQueue {
+        private var segments: [Data] = []
+        private var headIndex = 0
+        private var headOffset = 0
+
+        var isEmpty: Bool {
+            return headIndex >= segments.count
+        }
+
+        var totalBytes: Int {
+            guard headIndex < segments.count else { return 0 }
+            var total = 0
+            for i in headIndex..<segments.count {
+                total += segments[i].count
+            }
+            return total - headOffset
+        }
+
+        mutating func append(_ data: Data) {
+            segments.append(data)
+        }
+
+        /// Returns up to `maxBytes` from the front without consuming.
+        func peek(maxBytes: Int) -> Data {
+            guard headIndex < segments.count else { return Data() }
+            var result = Data()
+            result.reserveCapacity(min(maxBytes, totalBytes))
+            var remaining = maxBytes
+            var i = headIndex
+            var offset = headOffset
+            while remaining > 0 && i < segments.count {
+                let segment = segments[i]
+                let available = segment.count - offset
+                let take = min(available, remaining)
+                result.append(segment.subdata(in: offset..<offset + take))
+                remaining -= take
+                if take == available {
+                    i += 1
+                    offset = 0
+                } else {
+                    offset += take
+                }
+            }
+            return result
+        }
+
+        /// Advances the cursor past `bytes` after the send is confirmed.
+        mutating func consume(_ bytes: Int) {
+            var remaining = bytes
+            while remaining > 0 && headIndex < segments.count {
+                let segment = segments[headIndex]
+                let available = segment.count - headOffset
+                let take = min(available, remaining)
+                headOffset += take
+                remaining -= take
+                if headOffset >= segment.count {
+                    headIndex += 1
+                    headOffset = 0
+                }
+            }
+            // Compact consumed prefix to bound memory.
+            if 16 < headIndex {
+                segments.removeFirst(headIndex)
+                headIndex = 0
+                headOffset = 0
+            }
+        }
+
+        mutating func removeAll() {
+            segments.removeAll()
+            headIndex = 0
+            headOffset = 0
+        }
+    }
+
+    private var sendQueue = SendQueue()
     private var isSending = false
     private var qualityOfService: DispatchQoS = .userInitiated
     private var continuation: CheckedContinuation<Void, any Swift.Error>?
@@ -57,8 +133,7 @@ final actor RTMPSocket {
         guard !connected else {
             throw Error.invalidState
         }
-        sendBuffer.removeAll()
-        sendOffset = 0
+        sendQueue.removeAll()
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
@@ -101,19 +176,14 @@ final actor RTMPSocket {
             return
         }
 
-        if sendBuffer.count + data.count > Self.maxQueueBytesOut {
-            let excess = (sendBuffer.count + data.count) - Self.maxQueueBytesOut
-            // 只丟尚未送出的資料（sendOffset 之後）。
-            // 不能 removeFirst：會刪掉已交給 NWConnection 的部分，導致 sendOffset > count。
-            let unsentCount = sendBuffer.count - sendOffset
-            let dropSize = min(unsentCount, excess)
-            if 0 < dropSize {
-                sendBuffer.removeSubrange(sendOffset..<sendOffset + dropSize)
-                onLog?(.init(level: .warn, message: "Backpressure: dropped unsent", detail: "dropSize=\(dropSize)"))
-            }
+        // Backpressure: 佇列已滿時直接丟棄新進資料。
+        // 不碰已排隊資料，避免破壞 in-flight 狀態（與 sendOffset 不變量）。
+        if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
+            onLog?(.init(level: .warn, message: "Backpressure: dropped incoming", detail: "size=\(data.count)"))
+            return
         }
 
-        sendBuffer.append(data)
+        sendQueue.append(data)
         if !isSending {
             sendNextChunk()
         }
@@ -163,7 +233,7 @@ final actor RTMPSocket {
 
     func drain() async {
         guard connected else { return }
-        guard sendOffset < sendBuffer.count || isSending else { return }
+        guard !sendQueue.isEmpty || isSending else { return }
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             drainContinuation = c
         }
@@ -185,8 +255,7 @@ final actor RTMPSocket {
         onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
         connected = false
         isSending = false
-        sendBuffer.removeAll()
-        sendOffset = 0
+        sendQueue.removeAll()
         connection = nil
         continuation = nil
     }
@@ -199,7 +268,7 @@ final actor RTMPSocket {
         switch state {
         case .ready:
             logger.info("Connection is ready.")
-            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) buffer=\(sendBuffer.count)"))
+            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) buffer=\(sendQueue.totalBytes)"))
             connected = true
             self.continuation?.resume()
             self.continuation = nil
@@ -233,33 +302,26 @@ final actor RTMPSocket {
     private func sendNextChunk() {
         guard let connection else {
             isSending = false
-            sendBuffer.removeAll()
-            sendOffset = 0
+            sendQueue.removeAll()
             return
         }
-        let available = sendBuffer.count - sendOffset
-        let chunkSize = min(Self.sendChunkSize, available)
-        let chunk = sendBuffer.subdata(in: sendOffset..<sendOffset + chunkSize)
-        sendOffset += chunkSize
+        let chunk = sendQueue.peek(maxBytes: Self.sendChunkSize)
+        guard !chunk.isEmpty else {
+            isSending = false
+            return
+        }
         isSending = true
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            Task { await self.didSendChunk(chunkSize, error: error) }
+            Task { await self.didSendChunk(chunk.count, error: error) }
         })
     }
 
     private func didSendChunk(_ size: Int, error: NWError?) {
         totalBytesOut += size
-        if sendOffset >= sendBuffer.count / 2 {
-            // 防禦：sendOffset 永不超過 count（backpressure drop 或 append 可能變動）
-            let safeOffset = min(sendOffset, sendBuffer.count)
-            if 0 < safeOffset {
-                sendBuffer.removeSubrange(0..<safeOffset)
-            }
-            sendOffset = max(0, sendOffset - safeOffset)
-        }
+        sendQueue.consume(size)
         isSending = false
-        if sendOffset < sendBuffer.count {
+        if !sendQueue.isEmpty {
             sendNextChunk()
         } else if let drainContinuation {
             drainContinuation.resume()
@@ -280,6 +342,6 @@ extension RTMPSocket: NetworkTransportReporter {
     }
 
     func makeNetworkTransportReport() -> NetworkTransportReport {
-        return .init(queueBytesOut: sendBuffer.count, totalBytesIn: totalBytesIn, totalBytesOut: totalBytesOut)
+        return .init(queueBytesOut: sendQueue.totalBytes, totalBytesIn: totalBytesIn, totalBytesOut: totalBytesOut)
     }
 }

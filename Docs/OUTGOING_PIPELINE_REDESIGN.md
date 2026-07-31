@@ -1195,3 +1195,61 @@ if sendOffset >= sendBuffer.count / 2 {
 - backpressure drop 不再破壞 `sendOffset` 不變量 → 不會崩潰
 - 只丟「還沒送出的」新資料，已送出的 chunk 不受影響
 - 極端情況（`sendOffset > count`）由 `didSendChunk` 的 clamp 安全恢復
+
+### 9.23 RTMPSocket Send 路徑重構 — Ring Buffer + 128KB chunk + 2MB 上限
+
+**檔案**: `RTMPSocket.swift`
+
+#### 9.23.1 動機
+
+原設計三項效能/延遲問題：
+1. `Data` 連續緩衝區 + `sendOffset`，`didSendChunk` 的 `removeSubrange(0..<offset)` 每次搬移最高 7.5MB（O(n) 壓縮）
+2. 64KB chunk → 6000 Kbps 下每 ~87ms 一次 actor hop + Task 分配
+3. `maxQueueBytesOut = 15MB` → 網路塞車時累積 20 秒延遲才觸發 drop
+
+#### 9.23.2 實作
+
+**Ring buffer（segmented deque with head cursor）**：
+
+```swift
+private struct SendQueue {
+    private var segments: [Data] = []   // 分段儲存
+    private var headIndex = 0           // 第一個未送出 segment
+    private var headOffset = 0          // 該 segment 內的偏移
+
+    var totalBytes: Int { ... }         // 未送出 bytes 總和
+    mutating func append(_ data: Data)  // O(1) 入隊
+    func peek(maxBytes: Int) -> Data    // 取 chunk（不消費）
+    mutating func consume(_ bytes: Int) // 送出確認後推進游標（O(1)）
+    mutating func removeAll()
+}
+```
+
+| 操作 | 舊（Data） | 新（SendQueue） |
+|------|-----------|-----------------|
+| append | O(1) 攤銷 | O(1) 攤銷 |
+| 取 chunk | `subdata` 複製 64KB | `peek` 複製 128KB |
+| 送出後清理 | `removeSubrange` O(n) 搬移 | `consume` O(1) 游標推進 |
+| 記憶體 | 15MB 單塊 | 分段，2MB 上限 |
+
+**其他變更**：
+- `maxQueueBytesOut = 2MB`（延遲上限 20s → ~2.6s @ 6000 Kbps）
+- `sendChunkSize = 128KB`（減少 actor hop 次數一半）
+- Backpressure drop 改為**拒絕新進資料**：佇列滿時直接不 append，永不破壞已排隊資料
+
+```swift
+// ✅ send() 的 backpressure
+if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
+    onLog?(.init(level: .warn, message: "Backpressure: dropped incoming", detail: "size=\(data.count)"))
+    return   // 不 append，不碰佇列內既有資料
+}
+```
+
+#### 9.23.3 效果
+
+| 指標 | 舊 | 新 |
+|------|-----|-----|
+| buffer 壓縮 | O(n) 搬移 7.5MB | O(1) 游標 |
+| chunk size | 64KB | 128KB |
+| 延遲上限 | 20s（15MB） | ~2.6s（2MB） |
+| backpressure drop | 刪除佇列中段資料 | 拒絕新進資料（安全） |
