@@ -1254,6 +1254,29 @@ if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
 | 延遲上限 | 20s（15MB） | ~2.6s（2MB） |
 | backpressure drop | 刪除佇列中段資料 | 拒絕新進資料（安全） |
 
+#### 9.23.4 單次 send 大小調整（2026-08-01）
+
+`sendChunkSize` 從 128KB 調整為 **256KB**，且 `sendNextChunk` 改用 `peekSegment`（只取**第一個 segment = 一筆 RTMP message**，不再跨 message 合併）：
+
+```swift
+// ✅ 每筆 RTMP message 直接送；超過 256KB 才拆分（避免撞 NWConnection 單次 content 限制）
+func peekSegment(maxBytes: Int) -> Data {
+    guard headIndex < segments.count else { return Data() }
+    let segment = segments[headIndex]
+    let available = segment.count - headOffset
+    let take = min(available, maxBytes)
+    return segment.subdata(in: headOffset..<headOffset + take)
+}
+```
+
+| 場景 | 行為 |
+|------|------|
+| 音訊（~1KB） | 整筆直接送 |
+| 一般 video frame（~50KB） | 整筆直接送 |
+| 大 keyframe（>256KB） | 切成 256KB 塊 |
+
+不能完全移除上限的原因：一次把整個 queue 丟給 `connection.send` 會讓 `sendQueue.totalBytes` 立即歸零 → NetworkMonitor 看不到塞車 → backpressure 失效（回到 #2000）。256KB 接近 Apple 對單一 content 的軟性限制，是安全上限。
+
 ### 9.24 斷線/重連期間輸出靜默丟棄
 
 **檔案**: `RTMPConnection.swift:601-611`, `RTMPStream.swift:823-832`

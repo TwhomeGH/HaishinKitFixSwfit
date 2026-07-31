@@ -5,7 +5,8 @@ import Network
 final actor RTMPSocket {
     static let defaultWindowSizeC = Int(UInt16.max)
     static let maxQueueBytesOut = 2 * 1024 * 1024
-    private static let sendChunkSize = 128 * 1024
+    /// 單次 NWConnection.send 的內容上限（Apple 對單一 content 的軟性限制）。
+    private static let sendChunkSize = 256 * 1024
 
     enum Error: Swift.Error {
         case invalidState
@@ -75,6 +76,16 @@ final actor RTMPSocket {
                 }
             }
             return result
+        }
+
+        /// Returns up to `maxBytes` from the FIRST segment only (one RTMP message),
+        /// capped at `maxBytes`. Does not coalesce across segments.
+        func peekSegment(maxBytes: Int) -> Data {
+            guard headIndex < segments.count else { return Data() }
+            let segment = segments[headIndex]
+            let available = segment.count - headOffset
+            let take = min(available, maxBytes)
+            return segment.subdata(in: headOffset..<headOffset + take)
         }
 
         /// Advances the cursor past `bytes` after the send is confirmed.
@@ -305,7 +316,7 @@ final actor RTMPSocket {
             sendQueue.removeAll()
             return
         }
-        let chunk = sendQueue.peek(maxBytes: Self.sendChunkSize)
+        let chunk = sendQueue.peekSegment(maxBytes: Self.sendChunkSize)
         guard !chunk.isEmpty else {
             isSending = false
             return
