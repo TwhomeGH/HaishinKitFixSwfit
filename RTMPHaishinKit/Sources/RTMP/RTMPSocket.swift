@@ -124,6 +124,16 @@ final actor RTMPSocket {
     private var drainContinuation: CheckedContinuation<Void, Never>?
     private lazy var networkQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.RTMPSocket.network", qos: qualityOfService)
 
+    /// Non-isolated congestion signal the raw-frame intake path reads to drop
+    /// frames *before* encoding. The socket is the only writer; it publishes
+    /// `sendQueue.totalBytes` after every enqueue/dequeue.
+    private var backpressureSignal: SocketBackpressure?
+
+    func setBackpressureSignal(_ signal: SocketBackpressure) {
+        backpressureSignal = signal
+        signal.update(queueBytes: sendQueue.totalBytes)
+    }
+
     init() {
     }
 
@@ -148,6 +158,7 @@ final actor RTMPSocket {
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
+        backpressureSignal?.reset()
         do {
             let connection = NWConnection(to: NWEndpoint.hostPort(host: .init(name), port: .init(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))), using: parameters)
             self.connection = connection
@@ -187,14 +198,17 @@ final actor RTMPSocket {
             return
         }
 
-        // Backpressure: 佇列已滿時直接丟棄新進資料。
-        // 不碰已排隊資料，避免破壞 in-flight 狀態（與 sendOffset 不變量）。
+        // OOM guard — should be unreachable. The raw-frame intake path
+        // (SocketBackpressure) stops encoder production well before the queue
+        // approaches this bound, so incoming data is never shed here in normal
+        // operation. Keeping a hard cap protects against encoder-throttle bugs.
         if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
-            onLog?(.init(level: .warn, message: "Backpressure: dropped incoming", detail: "size=\(data.count)"))
+            onLog?(.init(level: .error, message: "OOM guard: dropped incoming (upstream throttle failed)", detail: "size=\(data.count) queue=\(sendQueue.totalBytes)"))
             return
         }
 
         sendQueue.append(data)
+        backpressureSignal?.update(queueBytes: sendQueue.totalBytes)
         if !isSending {
             sendNextChunk()
         }
@@ -267,6 +281,7 @@ final actor RTMPSocket {
         connected = false
         isSending = false
         sendQueue.removeAll()
+        backpressureSignal?.reset()
         connection = nil
         continuation = nil
     }
@@ -331,6 +346,7 @@ final actor RTMPSocket {
     private func didSendChunk(_ size: Int, error: NWError?) {
         totalBytesOut += size
         sendQueue.consume(size)
+        backpressureSignal?.update(queueBytes: sendQueue.totalBytes)
         isSending = false
         if !sendQueue.isEmpty {
             sendNextChunk()

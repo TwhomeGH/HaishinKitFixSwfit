@@ -1398,3 +1398,66 @@ for stream in streams {
 ```
 
 `stream.close()`（使用者主動關閉）仍會清 `lastPublishName`，這是有意的：使用者關閉的 stream 不該被自動 republish。
+
+### 9.26 背壓重構 — 輸出層永不丟棄，丟包點移到「編碼前 raw frame」（2026-08-04）
+
+**檔案**: `SocketBackpressure.swift`（新增）、`RTMPSocket.swift`、`RTMPConnection.swift`、`RTMPStream.swift`
+
+#### 9.26.1 問題
+
+9.23 的 backpressure drop 是在 `RTMPSocket.send()` 超過 2MB 時**整包丟棄剛進來的 RTMP message**：
+
+- 丟 keyframe → server 收到不完整 GOP，player 卡到下一顆 IDR → 畫面整個凍結。
+- 丟 audio → 音訊缺口，player 為了 A/V sync 凍結。
+- 這些正是「推流突然卡一下」的來源。
+
+而且 drop 發生在**編碼後**，`RTMPConnection.startOutputConsumer` 無條件消費，訊號傳不回 encoder，編碼照跑資料照丟（9.14.3 的「自然回堵」承諾未兌現）。
+
+#### 9.26.2 修復
+
+原則：**RTMP 輸出層永不主動丟。** 丟包（更精確說：跳幀）只發生在**編碼前 raw frame**，安全性：
+
+| 丟包位置 | 後果 |
+|---------|------|
+| 編碼前 raw frame | player 只看到瞬間降幀率，GOP / A/V sync 完整 ✅ |
+| 編碼後 RTMP message | P-frame 依賴鏈斷掉 → 卡到下一顆 IDR ❌ |
+
+新增 `SocketBackpressure`（nonisolated、NSLock 保護）作為 socket 佇列狀態的非同步共享視角。RTMPSocket 在每次 enqueue/dequeue 後 publish `sendQueue.totalBytes`；RTMPStream 的 nonisolated mixer 路徑（60fps 相機 callback）在**每個 raw frame 進 encoder 前**詢問：
+
+```
+Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
+                                                          │
+        camera callback (nonisolated) ── shouldDropVideoFrame/AudioFrame ──► 跳過 encoder feed
+```
+
+**三級降級（帶 hysteresis，避免邊界抖動）**：
+
+| 等級 | 門檻（on / off） | 行為 |
+|------|----------------|------|
+| L1 video throttle | 512KB / 128KB | 丟 ~50% raw video frame（平滑降幀，NetworkMonitor 同時降 bitrate） |
+| L2 video stop | 1MB / 512KB | 丟全部 raw video（encoder 暫停至佇列排空） |
+| L3 audio stop | 1.28MB / 1MB | 連 raw audio 也丟（生產完全停止） |
+
+`RTMPSocket.send()` 的 2MB 上限降級為 **OOM guard**（`.error` log，正常應不可達）——上游跳幀會在任何資料到達 2MB 前停止生產。
+
+**Stall-detector 抑制**：L2/L3 期間 encoder 產出為 0 是**蓄意**的，`RTMPStream.dispatch(.status)` 在 `isStalling` 時重置 stall 計數器、跳過 `restartVideoPipeline/AudioPipeline`，避免把蓄意暫停誤判為管線故障而二次卡頓。
+
+**控制訊息保證送達**：connect / createStream / publish / FCUnpublish 等指令走 `doOutput` 的 command path，媒體節流不影響。
+
+#### 9.26.3 檔案變更
+
+| 檔案 | 變更 |
+|------|------|
+| `SocketBackpressure.swift` | **新增**：lock 保護的佇列狀態 + 三級跳幀決策（hysteresis） |
+| `RTMPSocket.swift` | `send`/`didSendChunk`/`close`/`connect` publish queue 狀態；silent drop → OOM guard（`.error`） |
+| `RTMPConnection.swift` | 持有 `nonisolated let backpressureSignal`，接線至 socket 與所有 stream |
+| `RTMPStream.swift` | mixer + `append` 路徑在 raw frame 進 encoder 前跳幀；stall detector 在 `isStalling` 時抑制 restart |
+
+#### 9.26.4 效果
+
+| 指標 | 修復前 | 修復後 |
+|------|--------|--------|
+| 塞車時輸出層丟 RTMP message | 可能丟 keyframe / audio → 卡頓 | **永不主動丟**（OOM guard 除外） |
+| 丟包位置 | 編碼後（破壞 GOP） | 編碼前 raw frame（安全） |
+| 塞車時畫面 | 凍結到下一顆 IDR | 平滑降幀（30fps）→ 恢復 |
+| 背壓訊號 | drop 後無回饋 | socket 佇列即時驅動 encoder 跳幀 |

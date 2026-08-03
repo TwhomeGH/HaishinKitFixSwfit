@@ -257,6 +257,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     private var socket: RTMPSocket?
+    /// Non-isolated congestion signal shared with the socket (writer) and the
+    /// streams (raw-frame intake readers). Owned here so it survives socket
+    /// recreation across reconnects.
+    nonisolated let backpressureSignal = SocketBackpressure()
     private var chunks: [UInt16: RTMPChunkMessageHeader] = [:]
     private var streams: [RTMPStream] = []
     private var sequence: Int64 = 0
@@ -437,6 +441,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
+        await socket?.setBackpressureSignal(backpressureSignal)
         await socket?.setOnLog { [weak self] event in
             Task { [weak self] in
                 guard let self, event.level.severity >= self.minimumLogLevel.severity else { return }
@@ -626,6 +631,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     func addStream(_ stream: RTMPStream) {
         guard !streams.contains(where: { $0 === stream }) else { return }
+        stream.backpressureSignal = backpressureSignal
         streams.append(stream)
     }
 

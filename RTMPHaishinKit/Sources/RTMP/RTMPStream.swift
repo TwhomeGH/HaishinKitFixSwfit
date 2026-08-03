@@ -228,6 +228,10 @@ public actor RTMPStream {
     private var videoSourceWasStalled = false
     private var audioStallCount: Int = 0
     private let inflowLock = NSLock()
+    /// Congestion signal owned by RTMPConnection. Read from the nonisolated
+    /// mixer path to drop raw frames *before* encoding when the network can't
+    /// keep up (dropping encoded RTMP messages would break the GOP / A/V sync).
+    nonisolated(unsafe) weak var backpressureSignal: SocketBackpressure?
     private nonisolated(unsafe) var _videoInputFrames: Int = 0
     private nonisolated(unsafe) var _audioInputFrames: Int = 0
     private nonisolated(unsafe) var _audioSampleAccess = true
@@ -925,20 +929,41 @@ extension RTMPStream: _Stream {
                     doOutput(.one, chunkStreamId: .video, message: message)
                 } else {
                 videoInputFrames += 1
-                outgoing.append(sampleBuffer)
-                if sampleBuffer.formatDescription?.isCompressed == false {
-                    outputs.forEach {
-                        switch sampleBuffer.formatDescription?.mediaType {
-                        case .audio:
-                            if audioSampleAccess {
+                // Network congestion: skip the encoder feed (pre-encode drop),
+                // keep the local preview.
+                if backpressureSignal?.shouldDropVideoFrame() == true {
+                    if sampleBuffer.formatDescription?.isCompressed == false {
+                        outputs.forEach {
+                            switch sampleBuffer.formatDescription?.mediaType {
+                            case .audio:
+                                if audioSampleAccess {
+                                    $0.stream(self, didOutput: sampleBuffer)
+                                }
+                            case .video:
+                                if videoSampleAccess || ($0 is View) {
+                                    $0.stream(self, didOutput: sampleBuffer)
+                                }
+                            default:
                                 $0.stream(self, didOutput: sampleBuffer)
                             }
-                        case .video:
-                            if videoSampleAccess || ($0 is View) {
+                        }
+                    }
+                } else {
+                    outgoing.append(sampleBuffer)
+                    if sampleBuffer.formatDescription?.isCompressed == false {
+                        outputs.forEach {
+                            switch sampleBuffer.formatDescription?.mediaType {
+                            case .audio:
+                                if audioSampleAccess {
+                                    $0.stream(self, didOutput: sampleBuffer)
+                                }
+                            case .video:
+                                if videoSampleAccess || ($0 is View) {
+                                    $0.stream(self, didOutput: sampleBuffer)
+                                }
+                            default:
                                 $0.stream(self, didOutput: sampleBuffer)
                             }
-                        default:
-                            $0.stream(self, didOutput: sampleBuffer)
                         }
                     }
                 }
@@ -961,8 +986,17 @@ extension RTMPStream: _Stream {
             audioSentBytes += message.payload.count
             doOutput(.one, chunkStreamId: .audio, message: message)
         default:
+            let isPCM = audioBuffer is AVAudioPCMBuffer
+            // Network congestion (full stall): drop the raw buffer BEFORE the
+            // audio encoder so no new compressed messages are produced.
+            if backpressureSignal?.shouldDropAudioFrame() == true {
+                if isPCM {
+                    audioInputFrames += 1
+                }
+                return
+            }
             outgoing.append(audioBuffer, when: when)
-            if audioBuffer is AVAudioPCMBuffer {
+            if isPCM {
                 audioInputFrames += 1
                 if audioSampleAccess {
                     outputs.forEach { $0.stream(self, didOutput: audioBuffer, when: when) }
@@ -1003,7 +1037,16 @@ extension RTMPStream: _Stream {
                     detail: "videoInputFrames=\(videoInputFrames) >> videoFrames=\(frameCount) queueBytes=\(report.currentQueueBytesOut)")
             }
             var restartedVideoPipeline = false
-            if readyState == .publishing && videoInputFrames == 0 && audioInputFrames > 0 {
+            if backpressureSignal?.isStalling == true {
+                // Network stall: encoder production is deliberately halted until
+                // the socket queue drains. Reset the stall counters so the
+                // detector doesn't mistake it for a broken pipeline and restart
+                // (which would cause another visible freeze).
+                videoSourceStallCount = 0
+                videoSourceWasStalled = false
+                videoStallCount = 0
+                audioStallCount = 0
+            } else if readyState == .publishing && videoInputFrames == 0 && audioInputFrames > 0 {
                 videoSourceStallCount += 1
                 if videoSourceStallCount == 3 {
                     videoSourceWasStalled = true
@@ -1134,9 +1177,17 @@ extension RTMPStream: MediaMixerOutput {
         _videoInputFrames += 1
         let outputs = self.outputs
         let sampleAccess = _videoSampleAccess
+        // Only uncompressed (raw) frames can be shed pre-encode; compressed
+        // frames are already encoded and dropping them would break the stream.
+        let isUncompressed = sampleBuffer.formatDescription?.isCompressed == false
+        let dropForBackpressure = isUncompressed && backpressureSignal?.shouldDropVideoFrame() == true
         inflowLock.unlock()
-        outgoing.append(sampleBuffer)
-        if sampleBuffer.formatDescription?.isCompressed == false {
+        // Network congestion: drop the raw frame BEFORE the encoder so the
+        // encoded stream stays intact (only the frame rate dips temporarily).
+        if !dropForBackpressure {
+            outgoing.append(sampleBuffer)
+        }
+        if isUncompressed {
             for output in outputs {
                 if sampleAccess || output is View {
                     output.stream(self, didOutput: sampleBuffer)
