@@ -880,6 +880,9 @@ extension RTMPStream: _Stream {
             throw Error.unsupportedCodec
         }
         outgoing.videoSettings = videoSettings
+        // Scale the socket OOM guard to the current bitrate so a large keyframe
+        // still in flight during a network stall is absorbed, not shed.
+        backpressureSignal?.updateVideoSettings(bitRate: videoSettings.bitRate, maxKeyFrameInterval: videoSettings.maxKeyFrameIntervalDuration)
     }
 
     /// Ensures the current video codec is supported by the server.

@@ -1438,7 +1438,20 @@ Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
 | L2 video stop | 1MB / 512KB | 丟全部 raw video（encoder 暫停至佇列排空） |
 | L3 audio stop | 1.28MB / 1MB | 連 raw audio 也丟（生產完全停止） |
 
-`RTMPSocket.send()` 的 2MB 上限降級為 **OOM guard**（`.error` log，正常應不可達）——上游跳幀會在任何資料到達 2MB 前停止生產。
+`RTMPSocket.send()` 的 2MB 上限降級為 **OOM guard**（`.error` log，正常應不可達）——上游跳幀會在任何資料到達上限前停止生產。OOM guard 上限**依 bitrate 動態計算**（`SocketBackpressure.updateVideoSettings`，隨 bitrate 調整或用戶 `setVideoSettings` 更新）：
+
+```
+OOM guard = L3(1.28MB) + max(256KB, GOP bytes × 35%) + 256KB margin
+          = 1.28MB + 最大 keyframe 預算 + 餘裕，下限 2MB、上限 8MB
+```
+
+原因：L3 觸發瞬間，**已編好的 keyframe** 仍在管線中會流進 socket。若 guard 太小（固定 2MB），高碼率下大 keyframe 會撞上 guard 被丟掉——正好回到我們要消除的情境。隨 bitrate 放大 guard 讓它吸收在途 keyframe；正常運作的穩定態延遲仍由 L3（1.28MB）限制，guard 放大不影響延遲。
+
+| bitrate | GOP bytes (2s) | keyframe 預算(35%) | OOM guard |
+|---------|---------------|-------------------|-----------|
+| 6Mbps | 1.5MB | 525KB | ~2.06MB |
+| 12Mbps | 3MB | 1.05MB | ~2.6MB |
+| 20Mbps | 5MB | 1.75MB | ~3.3MB |
 
 **Stall-detector 抑制**：L2/L3 期間 encoder 產出為 0 是**蓄意**的，`RTMPStream.dispatch(.status)` 在 `isStalling` 時重置 stall 計數器、跳過 `restartVideoPipeline/AudioPipeline`，避免把蓄意暫停誤判為管線故障而二次卡頓。
 
@@ -1449,9 +1462,9 @@ Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
 | 檔案 | 變更 |
 |------|------|
 | `SocketBackpressure.swift` | **新增**：lock 保護的佇列狀態 + 三級跳幀決策（hysteresis） |
-| `RTMPSocket.swift` | `send`/`didSendChunk`/`close`/`connect` publish queue 狀態；silent drop → OOM guard（`.error`） |
+| `RTMPSocket.swift` | `send`/`didSendChunk`/`close`/`connect` publish queue 狀態；silent drop → 動態 OOM guard（`.error`） |
 | `RTMPConnection.swift` | 持有 `nonisolated let backpressureSignal`，接線至 socket 與所有 stream |
-| `RTMPStream.swift` | mixer + `append` 路徑在 raw frame 進 encoder 前跳幀；stall detector 在 `isStalling` 時抑制 restart |
+| `RTMPStream.swift` | mixer + `append` 路徑在 raw frame 進 encoder 前跳幀；stall detector 在 `isStalling` 時抑制 restart；`setVideoSettings` 更新 OOM guard |
 
 #### 9.26.4 效果
 

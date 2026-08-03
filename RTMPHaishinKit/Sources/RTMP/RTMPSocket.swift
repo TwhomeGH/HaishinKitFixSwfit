@@ -200,10 +200,12 @@ final actor RTMPSocket {
 
         // OOM guard — should be unreachable. The raw-frame intake path
         // (SocketBackpressure) stops encoder production well before the queue
-        // approaches this bound, so incoming data is never shed here in normal
-        // operation. Keeping a hard cap protects against encoder-throttle bugs.
-        if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
-            onLog?(.init(level: .error, message: "OOM guard: dropped incoming (upstream throttle failed)", detail: "size=\(data.count) queue=\(sendQueue.totalBytes)"))
+        // approaches this bound. The limit scales with video bitrate (keyframe
+        // budget) via SocketBackpressure; the static value is the floor.
+        // Keeping a hard cap protects against encoder-throttle bugs.
+        let oomGuardLimit = backpressureSignal?.oomGuardLimit ?? Self.maxQueueBytesOut
+        if sendQueue.totalBytes + data.count > oomGuardLimit {
+            onLog?(.init(level: .error, message: "OOM guard: dropped incoming (upstream throttle failed)", detail: "size=\(data.count) queue=\(sendQueue.totalBytes) limit=\(oomGuardLimit)"))
             return
         }
 

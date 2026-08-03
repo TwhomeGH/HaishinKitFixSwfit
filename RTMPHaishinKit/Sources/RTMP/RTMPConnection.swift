@@ -632,6 +632,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     func addStream(_ stream: RTMPStream) {
         guard !streams.contains(where: { $0 === stream }) else { return }
         stream.backpressureSignal = backpressureSignal
+        // Push the current video settings so the OOM guard is scaled even if
+        // setVideoSettings was called before the stream was wired to the socket.
+        backpressureSignal.updateVideoSettings(
+            bitRate: stream.outgoing.videoSettings.bitRate,
+            maxKeyFrameInterval: stream.outgoing.videoSettings.maxKeyFrameIntervalDuration
+        )
         streams.append(stream)
     }
 

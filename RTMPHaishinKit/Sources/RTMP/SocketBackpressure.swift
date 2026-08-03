@@ -30,12 +30,40 @@ final class SocketBackpressure: @unchecked Sendable {
     private var videoStopActive = false
     private var audioStopActive = false
     private var videoCounter = 0
+    /// Dynamically computed OOM guard limit, scaled by video bitrate (see
+    /// `updateVideoSettings`). Never below RTMPSocket.maxQueueBytesOut.
+    private var computedOOMGuardLimit = RTMPSocket.maxQueueBytesOut
 
     /// Current pending send queue bytes (for diagnostics).
     var queueBytesCurrent: Int {
         lock.lock()
         defer { lock.unlock() }
         return queueBytes
+    }
+
+    /// Hard send-queue cap enforced by RTMPSocket. Sized to L3 + the largest
+    /// plausible in-flight keyframe + margin, so a big keyframe still flowing
+    /// when the throttle triggers is absorbed instead of shed by the guard.
+    /// Normal operation never reaches it — the throttle thresholds stop
+    /// production first.
+    var oomGuardLimit: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return max(RTMPSocket.maxQueueBytesOut, computedOOMGuardLimit)
+    }
+
+    /// Feed the current video encoding parameters so the OOM guard can absorb
+    /// the largest plausible keyframe. Call whenever videoSettings change
+    /// (user config or bitrate adaptation).
+    func updateVideoSettings(bitRate: Int, maxKeyFrameInterval: Int32) {
+        lock.lock()
+        let gopSeconds = Double(maxKeyFrameInterval > 0 ? maxKeyFrameInterval : 2)
+        // Bytes in one full GOP; the I-frame typically carries ~35% of it.
+        let gopBytes = Double(max(bitRate, 0)) / 8.0 * gopSeconds
+        let keyframeBudget = Int(gopBytes * 0.35)
+        let computed = Self.audioStopOn + max(256 * 1024, keyframeBudget) + 256 * 1024
+        computedOOMGuardLimit = min(8 * 1024 * 1024, computed)
+        lock.unlock()
     }
 
     /// Video is being throttled or fully stopped.
