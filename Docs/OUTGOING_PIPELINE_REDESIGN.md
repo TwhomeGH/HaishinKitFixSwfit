@@ -1492,21 +1492,25 @@ OOM guard = L3(1.28MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 - ffmpeg 的 flv muxer 遇 Non-monotonous DTS 會把輸出 DTS **clamp 到前一值**（log 的 `changing to 3081`）。期間所有幀卡在同一 DTS，平台瞬時碼率量測爆衝到 232 Mbps——這是時間戳錯亂的**量測假象**，不是 encoder rate control 失效（VBR 的 1.5×/1.2× 限制仍正常作用）。
 - mid-stream 格式變更則把同一絕對值當 **type-1 delta** 送出 → 累計時間被加倍，大幅向前跳。
 
-#### 9.27.2 修復
+#### 9.27.2 修復（一版：回 `0` → 二版：回**真實 wire 位置**）
 
-Sequence header 是**無時間戳的中繼資料**，一律送回 `timestamp: 0`：
+Sequence header 不是「無時間戳」——它的時間戳決定伺服器 clock 落點，**必須乘在真實的線上累計時間（wire cumulative）上**：
 
-| 情境 | chunkType | 修復前 | 修復後 |
-|------|-----------|--------|--------|
-| 首次格式 / (重)發佈 | type-0（絕對） | `updatedAt*1000`（鏡頭相對值，可能倒退） | `0`（新串流歸零） |
-| mid-stream 格式變更 | type-1（delta） | `updatedAt*1000`（被當 delta 加倍） | `0`（時間軸不動） |
+| 情境 | chunkType | 修復前 | 一版（`0`） | 二版（真實值） |
+|------|-----------|--------|-------------|----------------|
+| 首次格式 / (重)發佈 | type-0（絕對） | `updatedAt*1000`（鏡頭相對值，可能倒退） | `0`（重發佈時把 clock 倒回原點 → DTS 照樣倒退） | `UInt32(cumulativeTime*1000)`（乘在現行 wire 位置上，clock 不動） |
+| mid-stream 格式變更 | type-1（delta） | `updatedAt*1000`（被當 delta 加倍） | `0`（時間軸不動） | `0`（delta 本就不應推進，即真實值） |
 
-`videoTimestamp`/`audioTimestamp` 本身保留：幀的 delta 依然由連續的鏡頭 PTS 算出，A/V 同步與重連後的線程連續性不受影響。與上游 HaishinKit 及 `bec2735b` 之前的行為一致。
+關鍵機制：
+
+- **`RTMPTimestamp.cumulativeTime`**：新增的累計量 = 每一個實際送出 delta 的總和（秒），**只前進、永不重置**。鏡頭 PTS base 位移（`invalid sequence` 重置）時 delta 為 `0`、累計不動，線程照常連續——所以 type-0 header 永遠落在現行線程上，不會倒退也不會跳。
+- **`append()` 順序調整**：`videoFormat`/`audioFormat` 的 didSet（送出 seq header）移到 `Timestamp.update()` **之前**，使 type-0 header 承載的是**前一幀**的 wire 位置；緊接著的 type-1 幀再加一次自身 delta——避免把同一 delta 重複算兩次。
+- 首次發佈時 `cumulativeTime == 0`，type-0 自然送 `0`（標準行為）；(重)發佈/重連時送出真實位置，伺服器 clock 沿原線程繼續，HLS 分段 PTS 連續。
 
 #### 9.27.3 效果
 
 | 指標 | 修復前 | 修復後 |
 |------|--------|--------|
-| ffmpeg Non-monotonous DTS | 重連/重發佈後倒退 ~920ms | 不再倒退（type-0 歸零、type-1 不變） |
+| ffmpeg Non-monotonous DTS | 重連/重發佈後倒退 ~920ms | 不再倒退（type-0 乘在 wire 位置、type-1 delta 為 0） |
 | 平台 Max bitrate | 232 Mbps（DTS clamp 量測假象） | 回到真實 encoder 峰值（≈1.2× VBR 上限） |
-| 中繼 metadata | 承載鏡頭相對時間 | 無時間戳（標準 RTMP） |
+| (重)發佈後線程 | clock 重置 / 幀擠在同一 DTS | 沿現行位置連續前進，A/V 同步不受影響 |

@@ -15,6 +15,11 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     private var lastRawTimestamp: UInt32 = 0
     private var rolloverCount: UInt64 = 0
     private var lastDelta: TimeInterval = 0
+    // Sum of every delta actually sent on the wire (seconds). Only ever moves
+    // forward, so it stays valid across camera PTS base shifts ("invalid
+    // sequence" resets) — that is what a sequence header must carry: the real
+    // wire-cumulative position, not the camera-relative PTS and not 0.
+    private(set) var cumulativeTime: TimeInterval = kRTMPTimestamp_defaultTimeInterval
 
     mutating func update(_ value: T, source: String = "") -> UInt32 {
         if startedAt == 0 {
@@ -35,6 +40,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
             timedelta += 1
         }
         updatedAt = value.seconds
+        cumulativeTime += timedelta / 1000
         return UInt32(timedelta)
     }
 
@@ -85,6 +91,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         lastRawTimestamp = 0
         rolloverCount = 0
         lastDelta = 0
+        cumulativeTime = kRTMPTimestamp_defaultTimeInterval
     }
 }
 

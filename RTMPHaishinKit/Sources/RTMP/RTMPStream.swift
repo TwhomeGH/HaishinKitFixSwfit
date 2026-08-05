@@ -280,12 +280,13 @@ public actor RTMPStream {
             }
             switch readyState {
             case .publishing:
-                // Sequence headers are timestamp-less metadata: always 0, never
-                // the absolute PTS. updatedAt*1000 is camera-relative and can
-                // diverge from the wire timeline, so a type-0 header here would
-                // reset the server's clock backward (non-monotonous DTS) and a
-                // type-1 header would double-count it as a delta.
-                guard let message = RTMPAudioMessage(streamId: id, timestamp: 0, formatDescription: audioFormat?.formatDescription) else {
+                // A type-0 header must ride the real wire-cumulative position
+                // (not 0): at 0 the server's clock resets backward mid-stream
+                // and ffmpeg clamps DTS (non-monotonous + bitrate spike). A
+                // type-1 header is a delta of 0 — the header itself adds no
+                // time to the wire timeline.
+                let timestamp = oldValue == nil ? UInt32(audioTimestamp.cumulativeTime * 1000) : 0
+                guard let message = RTMPAudioMessage(streamId: id, timestamp: timestamp, formatDescription: audioFormat?.formatDescription) else {
                     return
                 }
                 doOutput(oldValue == nil ? .zero : .one, chunkStreamId: .audio, message: message)
@@ -308,8 +309,10 @@ public actor RTMPStream {
             }
             switch readyState {
             case .publishing:
-                // Same rule as the audio sequence header: 0, never updatedAt*1000.
-                guard let message = RTMPVideoMessage(streamId: id, timestamp: 0, formatDescription: videoFormat) else {
+                // Same rule as the audio sequence header: type-0 carries the
+                // real wire-cumulative position, type-1 is a zero delta.
+                let timestamp = oldValue == nil ? UInt32(videoTimestamp.cumulativeTime * 1000) : 0
+                guard let message = RTMPVideoMessage(streamId: id, timestamp: timestamp, formatDescription: videoFormat) else {
                     Task { await connection?.log(.warn, "video: sequence header creation failed") }
                     return
                 }
@@ -920,9 +923,13 @@ extension RTMPStream: _Stream {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
                 let decodeTimeStamp = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
+                // Emit the sequence header (if the format changed) BEFORE the
+                // timestamp advances, so a type-0 header carries the position of
+                // the previous frame; the following type-1 frame then adds its
+                // own delta once instead of double-counting it.
+                videoFormat = sampleBuffer.formatDescription
                 let timedelta = videoTimestamp.update(decodeTimeStamp, source: "video")
                 frameCount += 1
-                videoFormat = sampleBuffer.formatDescription
                 let compositionTime: Int32
                 if sampleBuffer.decodeTimeStamp.isValid {
                     compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
@@ -984,8 +991,11 @@ extension RTMPStream: _Stream {
     public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
         switch audioBuffer {
         case let audioBuffer as AVAudioCompressedBuffer:
-            let timedelta = audioTimestamp.update(when, source: "audio")
+            // Same ordering rule as video: emit the sequence header before the
+            // timestamp advances so the type-0 header rides the wire position
+            // of the previous frame.
             audioFormat = audioBuffer.format
+            let timedelta = audioTimestamp.update(when, source: "audio")
             guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                 return
