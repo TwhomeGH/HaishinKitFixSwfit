@@ -1474,3 +1474,39 @@ OOM guard = L3(1.28MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 | 丟包位置 | 編碼後（破壞 GOP） | 編碼前 raw frame（安全） |
 | 塞車時畫面 | 凍結到下一顆 IDR | 平滑降幀（30fps）→ 恢復 |
 | 背壓訊號 | drop 後無回饋 | socket 佇列即時驅動 encoder 跳幀 |
+
+### 9.27 Sequence Header 時間戳修正 — 消除 Non-monotonous DTS 與碼率爆衝假象（2026-08-06）
+
+**檔案**: `RTMPStream.swift`
+
+#### 9.27.1 問題
+
+平台健康檢查回報兩個異常：
+
+- **Non-monotonous DTS**：ffmpeg remux 出現 `previous: 3081, current: 2161; changing to 3081`，audio/video **同時倒退 ~920ms** 後以相同順序爬升——偏移量一致，代表是**時間軸重置**而非單幀抖動。
+- **Max bitrate 232,155 Kbps**：平台判定「位元率控制有問題造成出包」。
+
+根因（提交 `bec2735b 修正PTS處理方式`）把 audio/video sequence header 的時間戳從 `0` 改成 `UInt32(...Timestamp.updatedAt * 1000)`：
+
+- (重)發佈時 `publish()` 將 `videoFormat`/`audioFormat` 設為 `nil`，下一次格式變更送出 **type-0（絕對值）** sequence header，帶的是**鏡頭絕對 PTS**，而非線上累計時間（wire cumulative）。兩者一旦偏移（負的初始 PTS、或早前一次 `invalid sequence` PTS 重置把 base 下移），絕對值就落在現行線程**下方** → 伺服器/ffmpeg 時間軸**倒退**。
+- ffmpeg 的 flv muxer 遇 Non-monotonous DTS 會把輸出 DTS **clamp 到前一值**（log 的 `changing to 3081`）。期間所有幀卡在同一 DTS，平台瞬時碼率量測爆衝到 232 Mbps——這是時間戳錯亂的**量測假象**，不是 encoder rate control 失效（VBR 的 1.5×/1.2× 限制仍正常作用）。
+- mid-stream 格式變更則把同一絕對值當 **type-1 delta** 送出 → 累計時間被加倍，大幅向前跳。
+
+#### 9.27.2 修復
+
+Sequence header 是**無時間戳的中繼資料**，一律送回 `timestamp: 0`：
+
+| 情境 | chunkType | 修復前 | 修復後 |
+|------|-----------|--------|--------|
+| 首次格式 / (重)發佈 | type-0（絕對） | `updatedAt*1000`（鏡頭相對值，可能倒退） | `0`（新串流歸零） |
+| mid-stream 格式變更 | type-1（delta） | `updatedAt*1000`（被當 delta 加倍） | `0`（時間軸不動） |
+
+`videoTimestamp`/`audioTimestamp` 本身保留：幀的 delta 依然由連續的鏡頭 PTS 算出，A/V 同步與重連後的線程連續性不受影響。與上游 HaishinKit 及 `bec2735b` 之前的行為一致。
+
+#### 9.27.3 效果
+
+| 指標 | 修復前 | 修復後 |
+|------|--------|--------|
+| ffmpeg Non-monotonous DTS | 重連/重發佈後倒退 ~920ms | 不再倒退（type-0 歸零、type-1 不變） |
+| 平台 Max bitrate | 232 Mbps（DTS clamp 量測假象） | 回到真實 encoder 峰值（≈1.2× VBR 上限） |
+| 中繼 metadata | 承載鏡頭相對時間 | 無時間戳（標準 RTMP） |

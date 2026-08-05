@@ -280,7 +280,12 @@ public actor RTMPStream {
             }
             switch readyState {
             case .publishing:
-                guard let message = RTMPAudioMessage(streamId: id, timestamp: UInt32(audioTimestamp.updatedAt * 1000), formatDescription: audioFormat?.formatDescription) else {
+                // Sequence headers are timestamp-less metadata: always 0, never
+                // the absolute PTS. updatedAt*1000 is camera-relative and can
+                // diverge from the wire timeline, so a type-0 header here would
+                // reset the server's clock backward (non-monotonous DTS) and a
+                // type-1 header would double-count it as a delta.
+                guard let message = RTMPAudioMessage(streamId: id, timestamp: 0, formatDescription: audioFormat?.formatDescription) else {
                     return
                 }
                 doOutput(oldValue == nil ? .zero : .one, chunkStreamId: .audio, message: message)
@@ -303,8 +308,8 @@ public actor RTMPStream {
             }
             switch readyState {
             case .publishing:
-                let streamTime = UInt32(videoTimestamp.updatedAt * 1000)
-                guard let message = RTMPVideoMessage(streamId: id, timestamp: streamTime, formatDescription: videoFormat) else {
+                // Same rule as the audio sequence header: 0, never updatedAt*1000.
+                guard let message = RTMPVideoMessage(streamId: id, timestamp: 0, formatDescription: videoFormat) else {
                     Task { await connection?.log(.warn, "video: sequence header creation failed") }
                     return
                 }
