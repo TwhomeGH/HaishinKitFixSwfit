@@ -832,6 +832,37 @@ videoSettings.prioritizeEncodingSpeedOverQuality = true
 - `adaptiveFrameThrottle` 從真實 30fps baseline 計算，降速有效
 - VT 負載穩定 → bitrate 波動大幅減少
 
+#### 9.12.5 重新設計（2026-08-06）：drop-ratio 閘控
+
+> 取代 9.12.1~9.12.3 的 `frameInterval` 漸進式 throttle。詳見 CHANGES.md #32。
+
+**動機：** v31 以 `frameInterval` 為調節旋鈕，產生四大缺陷：牆鐘 EMA baseline 被 throttle 自己的過濾空窗污染 → 間歇負載下階梯式下修到 20fps floor；10% 步進 + PTS 相位丟幀造成 step 邊界節拍不均、恢復瞬間 20→60fps stutter；`resetSessionState()`/`stopRunning()` 不重置 `frameInterval` 造成狀態洩漏；且違反「frameInterval 不屬自適應機制」原則。
+
+**新機制：pre-encode drop-ratio 閘控** — 每 N 幀收 1 幀，PTS 原封不動，輸出為乾淨的 60/N fps（60→30→20→15），DTS 遞增：
+
+```swift
+// 唯一狀態
+private var dropRatio: Int = 1      // 每 N 幀取 1；1 = 全收
+private var frameCounter: Int = 0
+
+// hysteresis 閘控（步間 ≥500ms）
+if pending > highThreshold {        // maxFrameDelayCount 或 ceil(expectedFrameRate/12)
+    dropRatio = min(dropRatio + 1, maxDropRatio)   // maxDropRatio = ceil(expectedFrameRate/15)
+} else if pending < lowThreshold {  // highThreshold/2
+    dropRatio = max(dropRatio - 1, 1)              // 回到 1 = 全速
+}
+
+// useFrame() 內均勻取樣，PTS 不變
+frameCounter += 1
+return frameCounter % dropRatio == 0
+```
+
+- **信號**：只讀 `numberOfPendingFrames`，無牆鐘 EMA → 無 baseline 污染、無 ratchet
+- **去彈跳**：高低閾值間隙本身即 hysteresis；500ms 步間下限防震盪
+- **Encoder error backoff**：`dropRatio *= 2`（cap 同 maxDropRatio），不再寫 frameInterval
+- **狀態重置**：`resetSessionState()` / `stopRunning()` 重置 `dropRatio = 1`
+- `frameInterval` 回歸純用戶手動旋鈕
+
 ### 9.14 Output Continuation — 移除 bounded buffer，消除資料靜默丟棄
 
 **檔案**: `RTMPStream.swift:813`, `RTMPConnection.swift:626`

@@ -1119,6 +1119,45 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `checkFrameRate()` 自鎖修復 — throttled 時不再觸發降頻
 - `MediaMixerOutputBridge.finish()` 同步化 — 避免 pipeline restart 時 DispatchQueue 非同步造成 continuation race → 12 秒卡死
 
+## 32. adaptiveFrameThrottle 重新設計（drop-ratio 閘控）
+
+**檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`, `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
+
+**問題：** v31 的漸進式 throttle 以 `frameInterval`（PTS 間距過濾）作為調節旋鈕，有下列缺陷：
+
+- **Baseline 污染 + 階梯式下修**：baseline 由牆鐘 `Date()` 在「通過過濾的幀」上做 EMA。throttle 介入後量到的間隔混入過濾空窗 + encode 延遲，基準被拉低；間歇性負載下每輪 overload 都從被污染的 baseline 再降 10%，長期待在 20fps floor。
+- **牆鐘 vs PTS 不一致**：決策變數是牆鐘 EMA，過濾條件是 PTS；CPU 爭用時牆鐘間隔暴漲，把 thread 調度抖動誤判成編碼過載。
+- **節拍不均勻**：10% 步進（60→54→48.6→...）配 PTS 相位丟幀，step 邊界節拍不規則；恢復時 20fps 瞬間跳回 60fps，動作恢復那一刻 stutter 明顯。
+- **狀態洩漏**：`resetSessionState()` / `stopRunning()` 不重置 `frameInterval`，重連或 settings 熱更新後帶舊的 throttled 值。
+- **違反 #53 原則**：frameInterval 是品質旋鈕，不該被自適應機制寫入。
+
+**新設計：pre-encode drop-ratio 閘控（不碰 frameInterval）**
+
+- 唯一狀態：`dropRatio: Int`（每 N 幀收 1 幀，1 = 全收）+ `frameCounter` + `lastThrottleTime`。
+- **信號**：只讀 `numberOfPendingFrames`（encoder backlog 的 ground truth），刪除牆鐘 EMA（`smoothedFrameInterval`/`lastFrameTime`）。
+- **hysteresis**：
+  - 上調：`pending > highThreshold`（`maxFrameDelayCount` 或 `ceil(expectedFrameRate/12)`）→ `dropRatio += 1`，步間 ≥500ms。
+  - 下調：`pending < lowThreshold`（= highThreshold/2）→ `dropRatio -= 1`，回到 1 全速。
+  - 高低閾值間隙即去彈跳；500ms 步間下限防震盪。
+- **丟幀**：`useFrame()` 用 `frameCounter % dropRatio == 0` 均勻取樣，PTS 原封不動 → 輸出為乾淨的 60/N fps（60→30→20→15），無 step 邊界節拍不均，DTS 遞增。
+- **上限**：`maxDropRatio = ceil(expectedFrameRate/15)`（60fps → 4，即 15fps 下限）。
+- **Encoder error backoff**：`dropRatio *= 2`（cap 同上限），不再寫 frameInterval。
+- **狀態重置**：`resetSessionState()` / `stopRunning()` 都重置 `dropRatio = 1`。
+- `frameInterval` 僅剩用戶手動設定會寫。
+
+**與 v31 的差別對照表：**
+
+| | v31（漸進式 throttle） | v32（drop-ratio 閘控） |
+|---|---|---|
+| 調節旋鈕 | `frameInterval`（PTS 間距） | `dropRatio`（每 N 幀取 1） |
+| 信號 | 牆鐘 EMA + pending | 僅 `numberOfPendingFrames` |
+| 步進 | 10% 遞減（60→54→48.6→...） | 整數比（60→30→20→15） |
+| 節拍 | step 邊界不均勻 | 均勻取樣，PTS 不變 |
+| 狀態 | 6 個變數 | 3 個變數 |
+| 洩漏 | 重連/熱更新帶舊值 | reset 清乾淨 |
+
+**預設保持 `false`** — 實驗性功能，用戶可透過 `setReconnectEnabled` 或建構子啟用。
+
 ## 31. adaptiveFrameThrottle 重新設計（漸進式 throttle）
 
 **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`

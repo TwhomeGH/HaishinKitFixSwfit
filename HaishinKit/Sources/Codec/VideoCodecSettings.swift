@@ -157,9 +157,10 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// Default (nil) lets the encoder decide.
     public var maxFrameDelayCount: Int?
 
-    /// When true, monitors VT's `numberOfPendingFrames` and automatically increases
-    /// `frameInterval` to throttle encoding when the encoder falls behind
-    /// (e.g., during GPU-intensive games). Resets when pending clears.
+    /// When true, monitors VT's `numberOfPendingFrames` and, when the encoder falls
+    /// behind (e.g., during GPU-intensive games), accepts only every Nth raw frame
+    /// (drop-ratio gate: 60→30→20→15fps). Recovers when pending clears.
+    /// Never modifies `frameInterval`.
     public var adaptiveFrameThrottle = false
 
     /// When false, prevents VT from dropping frames to maintain bitrate.
