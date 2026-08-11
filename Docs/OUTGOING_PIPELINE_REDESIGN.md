@@ -1308,6 +1308,29 @@ func peekSegment(maxBytes: Int) -> Data {
 
 不能完全移除上限的原因：一次把整個 queue 丟給 `connection.send` 會讓 `sendQueue.totalBytes` 立即歸零 → NetworkMonitor 看不到塞車 → backpressure 失效（回到 #2000）。256KB 接近 Apple 對單一 content 的軟性限制，是安全上限。
 
+#### 9.23.5 回歸修正：send 改回跨 message 合併（2026-08-11）
+
+**問題**：9.23.4 把 send 從「合併到 128KB」改成「逐筆 message send」後，send 路徑出現序列化吞吐瓶頸：
+
+- `isSending` 旗標保證**一次只有一個 send 在飛行**；每筆 message 都要等 `connection.send` 的 `.contentProcessed` completion 回來才送下一筆。
+- 60fps 影片（~10KB/frame）+ 44.1kHz 音訊（~1KB/frame）≈ 每秒 100+ 筆 send 往返，每筆都有固定開銷（複製、派發、completion 回調、actor hop）。
+- encoder 生產得比 socket 排空快 → `sendQueue.totalBytes` 持續堆積 → 觸發 backpressure → 影片凍結數秒。**這是「預設應該幾乎不可能堆積卻堆積了」的根因**：不是網路頻寬不足，是 send 路徑的每筆固定延遲被放大成吞吐天花板。
+
+**修復**：`sendNextChunk` 改用 `peek(maxBytes: 256KB)`，一次把多筆排隊 message 合併成一個 `connection.send`：
+
+```swift
+let chunk = sendQueue.peek(maxBytes: Self.sendChunkSize)
+```
+
+| 指標 | 逐筆 send（9.23.4） | 合併 send（9.23.5） |
+|------|--------------------|--------------------|
+| send 往返/秒 | ~100+（每 message 一筆） | ~5-10（每 256KB 一筆） |
+| 吞吐天花板 | 受限於每筆 completion 延遲 | 受限於網路頻寬 |
+| 佇列堆積 | 健康連結也會堆 | 只在真塞車時堆 |
+| backpressure 能見度 | 逐筆 | 仍逐 256KB 遞減（不會歸零） |
+
+佇列仍逐 256KB 遞減，`NetworkMonitor` 看得到塞車，backpressure 不失效；且 encoder 常態遠低於佇列上限，正常連結下佇列保持在極低位。
+
 ### 9.24 斷線/重連期間輸出靜默丟棄
 
 **檔案**: `RTMPConnection.swift:601-611`, `RTMPStream.swift:823-832`
@@ -1461,30 +1484,32 @@ Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
         camera callback (nonisolated) ── shouldDropVideoFrame/AudioFrame ──► 跳過 encoder feed
 ```
 
-**三級降級（帶 hysteresis，避免邊界抖動）**：
+**連續漸進降級（取代三級硬停）**：
 
-| 等級 | 門檻（on / off） | 行為 |
-|------|----------------|------|
-| L1 video throttle | 512KB / 128KB | 丟 ~50% raw video frame（平滑降幀，NetworkMonitor 同時降 bitrate） |
-| L2 video stop | 1MB / 512KB | 丟全部 raw video（encoder 暫停至佇列排空） |
-| L3 audio stop | 1.28MB / 1MB | 連 raw audio 也丟（生產完全停止） |
+| 佇列水位 | 影片 drop ratio | 音訊 |
+|----------|----------------|------|
+| < 256KB | 0%（健康連結，正常送） | 永不 drop |
+| 256KB → 1.5MB | 線性 0% → 90% | 永不 drop |
+| ≥ 1.5MB | 90%（60fps → ~6fps 下限） | 永不 drop |
 
-`RTMPSocket.send()` 的 2MB 上限降級為 **OOM guard**（`.error` log，正常應不可達）——上游跳幀會在任何資料到達上限前停止生產。OOM guard 上限**依 bitrate 動態計算**（`SocketBackpressure.updateVideoSettings`，隨 bitrate 調整或用戶 `setVideoSettings` 更新）：
+影片 drop ratio 依佇列填滿度線性爬升，**永不達 100%**（encoder 保持生產，時間軸前進，stall detector 不誤判）。音訊**永不 drop**：它只佔 ~100kbps，是 A/V 同步錨點，drop 省下的空間微不足道卻破壞同步（正是用戶聽到的「音頻斷斷續續」——是 video 凍結造成的 desync，不是音訊掉幀）。
+
+`RTMPSocket.send()` 的 2MB 上限降級為 **OOM guard**（`.error` log，正常應不可達）——上游 drop ratio 會在任何資料到達上限前停止生產。OOM guard 上限**依 bitrate 動態計算**（`SocketBackpressure.updateVideoSettings`，隨 bitrate 調整或用戶 `setVideoSettings` 更新）：
 
 ```
-OOM guard = L3(1.28MB) + max(256KB, GOP bytes × 35%) + 256KB margin
-          = 1.28MB + 最大 keyframe 預算 + 餘裕，下限 2MB、上限 8MB
+OOM guard = videoDropEnd(1.5MB) + max(256KB, GOP bytes × 35%) + 256KB margin
+          = 1.5MB + 最大 keyframe 預算 + 餘裕，下限 2MB、上限 8MB
 ```
 
-原因：L3 觸發瞬間，**已編好的 keyframe** 仍在管線中會流進 socket。若 guard 太小（固定 2MB），高碼率下大 keyframe 會撞上 guard 被丟掉——正好回到我們要消除的情境。隨 bitrate 放大 guard 讓它吸收在途 keyframe；正常運作的穩定態延遲仍由 L3（1.28MB）限制，guard 放大不影響延遲。
+原因：drop ratio 觸發瞬間，**已編好的 keyframe** 仍在管線中會流進 socket。若 guard 太小（固定 2MB），高碼率下大 keyframe 會撞上 guard 被丟掉——正好回到我們要消除的情境。隨 bitrate 放大 guard 讓它吸收在途 keyframe；正常運作的穩定態延遲仍由 drop ratio 上限限制，guard 放大不影響延遲。
 
 | bitrate | GOP bytes (2s) | keyframe 預算(35%) | OOM guard |
 |---------|---------------|-------------------|-----------|
-| 6Mbps | 1.5MB | 525KB | ~2.06MB |
-| 12Mbps | 3MB | 1.05MB | ~2.6MB |
-| 20Mbps | 5MB | 1.75MB | ~3.3MB |
+| 6Mbps | 1.5MB | 525KB | ~2.3MB |
+| 12Mbps | 3MB | 1.05MB | ~2.8MB |
+| 20Mbps | 5MB | 1.75MB | ~3.5MB |
 
-**Stall-detector 抑制**：L2/L3 期間 encoder 產出為 0 是**蓄意**的，`RTMPStream.dispatch(.status)` 在 `isStalling` 時重置 stall 計數器、跳過 `restartVideoPipeline/AudioPipeline`，避免把蓄意暫停誤判為管線故障而二次卡頓。
+**Stall-detector 抑制**：drop ratio ≥ 50% 期間 encoder 產出降低是**蓄意**的，`RTMPStream.dispatch(.status)` 在 `isStalling` 時重置 stall 計數器、跳過 `restartVideoPipeline/AudioPipeline`，避免把蓄意降級誤判為管線故障而二次卡頓。
 
 **控制訊息保證送達**：connect / createStream / publish / FCUnpublish 等指令走 `doOutput` 的 command path，媒體節流不影響。
 
@@ -1492,8 +1517,8 @@ OOM guard = L3(1.28MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 
 | 檔案 | 變更 |
 |------|------|
-| `SocketBackpressure.swift` | **新增**：lock 保護的佇列狀態 + 三級跳幀決策（hysteresis） |
-| `RTMPSocket.swift` | `send`/`didSendChunk`/`close`/`connect` publish queue 狀態；silent drop → 動態 OOM guard（`.error`） |
+| `SocketBackpressure.swift` | **重寫**：三級硬停 → 連續 drop ratio（0%→90% 線性爬升）；音訊永不 drop |
+| `RTMPSocket.swift` | `send`/`didSendChunk`/`close`/`connect` publish queue 狀態；silent drop → 動態 OOM guard（`.error`）；`sendNextChunk` 跨 message 合併（見 9.23.5） |
 | `RTMPConnection.swift` | 持有 `nonisolated let backpressureSignal`，接線至 socket 與所有 stream |
 | `RTMPStream.swift` | mixer + `append` 路徑在 raw frame 進 encoder 前跳幀；stall detector 在 `isStalling` 時抑制 restart；`setVideoSettings` 更新 OOM guard |
 
@@ -1503,7 +1528,9 @@ OOM guard = L3(1.28MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 |------|--------|--------|
 | 塞車時輸出層丟 RTMP message | 可能丟 keyframe / audio → 卡頓 | **永不主動丟**（OOM guard 除外） |
 | 丟包位置 | 編碼後（破壞 GOP） | 編碼前 raw frame（安全） |
-| 塞車時畫面 | 凍結到下一顆 IDR | 平滑降幀（30fps）→ 恢復 |
+| 塞車時畫面 | 凍結 3.5~5.9s（video 全停） | 平滑降幀 60→30→15→6fps，**永不歸零** |
+| 塞車時音訊 | （L3 觸發時）整段停 → desync | **永不 drop**，A/V 同步保持 |
+| 健康連結佇列 | 因 send 逐筆序列化仍會堆積 | send 合併後保持在極低位，backpressure 幾乎不觸發 |
 | 背壓訊號 | drop 後無回饋 | socket 佇列即時驅動 encoder 跳幀 |
 
 ### 9.27 Sequence Header 時間戳修正 — 消除 Non-monotonous DTS 與碼率爆衝假象（2026-08-06）

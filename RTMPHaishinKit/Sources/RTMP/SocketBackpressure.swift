@@ -9,27 +9,35 @@ import Foundation
 ///
 /// The socket publishes `update(queueBytes:)` on every enqueue/dequeue; the
 /// intake path asks `shouldDropVideoFrame()` / `shouldDropAudioFrame()` per
-/// frame. All state transitions use hysteresis to avoid boundary chatter.
+/// frame.
+///
+/// # Design (2026-08): continuous degradation, audio never shed
+///
+/// The previous three-level design (50% video throttle → 100% video stop →
+/// 100% audio stop) caused visible freeze spikes: video production halted
+/// entirely at 1MB and stayed dark until the queue drained, producing seconds
+/// of frozen picture (and A/V desync that the player interprets as audio
+/// stutter). With send coalescing in `RTMPSocket`, the queue only grows under
+/// genuine congestion, so the signal is now a *continuous drop ratio*:
+///
+/// - Video drop ratio ramps smoothly 0% → ~90% as the queue fills, so the
+///   stream degrades 60 → 30 → 15 → 6 fps instead of freezing to 0.
+/// - Audio is never shed. It is tiny (~100 kbps) relative to video and is the
+///   A/V sync anchor; dropping it saves almost nothing while breaking sync.
+/// - The OOM guard remains the last line against runaway queues.
 final class SocketBackpressure: @unchecked Sendable {
-    // Thresholds (relative to RTMPSocket.maxQueueBytesOut = 2MB).
-    // Level 1 — video throttle (drop ~1/2 raw frames) while the 1Hz bitrate
-    //           adaptation catches up. Engages at the same 512KB the
-    //           NetworkMonitor uses to trigger bitrate reduction.
-    static let videoThrottleOn = 512 * 1024
-    static let videoThrottleOff = 128 * 1024
-    // Level 2 — video full stop: encoder pauses until the queue drains.
-    static let videoStopOn = 1024 * 1024
-    static let videoStopOff = 512 * 1024
-    // Level 3 — audio full stop: production halts entirely.
-    static let audioStopOn = 1280 * 1024
-    static let audioStopOff = 1024 * 1024
+    // Continuous video drop-ratio ramp.
+    // Below `videoDropStart` the link is healthy — no frames dropped.
+    // Between start and `videoDropEnd` the ratio ramps linearly up to
+    // `videoDropMax` (never 1.0: the encoder must keep producing so the
+    // timeline advances and the stall detector stays quiet).
+    static let videoDropStart = 256 * 1024
+    static let videoDropEnd = 1536 * 1024
+    static let videoDropMax = 0.9
 
     private let lock = NSLock()
     private var queueBytes = 0
-    private var videoThrottleActive = false
-    private var videoStopActive = false
-    private var audioStopActive = false
-    private var videoCounter = 0
+    private var dropAccumulator = 0.0
     /// Dynamically computed OOM guard limit, scaled by video bitrate (see
     /// `updateVideoSettings`). Never below RTMPSocket.maxQueueBytesOut.
     private var computedOOMGuardLimit = RTMPSocket.maxQueueBytesOut
@@ -41,11 +49,10 @@ final class SocketBackpressure: @unchecked Sendable {
         return queueBytes
     }
 
-    /// Hard send-queue cap enforced by RTMPSocket. Sized to L3 + the largest
+    /// Hard send-queue cap enforced by RTMPSocket. Sized to absorb the largest
     /// plausible in-flight keyframe + margin, so a big keyframe still flowing
     /// when the throttle triggers is absorbed instead of shed by the guard.
-    /// Normal operation never reaches it — the throttle thresholds stop
-    /// production first.
+    /// Normal operation never reaches it — the ramp stops production first.
     var oomGuardLimit: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -61,53 +68,30 @@ final class SocketBackpressure: @unchecked Sendable {
         // Bytes in one full GOP; the I-frame typically carries ~35% of it.
         let gopBytes = Double(max(bitRate, 0)) / 8.0 * gopSeconds
         let keyframeBudget = Int(gopBytes * 0.35)
-        let computed = Self.audioStopOn + max(256 * 1024, keyframeBudget) + 256 * 1024
+        let computed = Self.videoDropEnd + max(256 * 1024, keyframeBudget) + 256 * 1024
         computedOOMGuardLimit = min(8 * 1024 * 1024, computed)
         lock.unlock()
     }
 
-    /// Video is being throttled or fully stopped.
+    /// Video is being degraded (any non-zero drop ratio).
     var isVideoThrottled: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return videoThrottleActive || videoStopActive
+        return currentDropRatioLocked() > 0
     }
 
-    /// Production is halted (video or audio full stop) — pipeline stall is
-    /// deliberate, so the stall-detector must not restart the pipeline.
+    /// Production is degraded enough that reduced output is deliberate — the
+    /// stall-detector must not restart the pipeline over it.
     var isStalling: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return videoStopActive || audioStopActive
+        return currentDropRatioLocked() >= 0.5
     }
 
     /// Publish the socket's current pending-send queue size.
     func update(queueBytes: Int) {
         lock.lock()
         self.queueBytes = queueBytes
-        if videoStopActive {
-            if queueBytes < Self.videoStopOff {
-                videoStopActive = false
-                videoCounter = 0
-            }
-        } else if Self.videoStopOn <= queueBytes {
-            videoStopActive = true
-        }
-        if audioStopActive {
-            if queueBytes < Self.audioStopOff {
-                audioStopActive = false
-            }
-        } else if Self.audioStopOn <= queueBytes {
-            audioStopActive = true
-        }
-        if videoThrottleActive {
-            if queueBytes < Self.videoThrottleOff {
-                videoThrottleActive = false
-                videoCounter = 0
-            }
-        } else if Self.videoThrottleOn <= queueBytes {
-            videoThrottleActive = true
-        }
         lock.unlock()
     }
 
@@ -115,36 +99,50 @@ final class SocketBackpressure: @unchecked Sendable {
     func reset() {
         lock.lock()
         queueBytes = 0
-        videoThrottleActive = false
-        videoStopActive = false
-        audioStopActive = false
-        videoCounter = 0
+        dropAccumulator = 0
         lock.unlock()
     }
 
     /// Returns true when this incoming raw video frame should be skipped
-    /// (dropped before encoding). Smooth ~50% fps cut during throttle, full
-    /// stop during stall — never breaks the encoded GOP.
+    /// (dropped before encoding). The drop ratio ramps continuously with the
+    /// queue fill: 0% on a healthy link, ~90% under heavy congestion. A
+    /// Bresenham-style accumulator turns the float ratio into an exact
+    /// long-run drop rate (ratio 0.9 → keep 1 of 10; 0.05 → keep 19 of 20)
+    /// without the quantization jump a fixed counter would introduce at low
+    /// ratios. The encoder always keeps producing (never 100%), so the
+    /// timeline advances and A/V sync is preserved.
     func shouldDropVideoFrame() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        if videoStopActive {
+        let ratio = currentDropRatioLocked()
+        guard ratio > 0 else {
+            dropAccumulator = 0
+            return false
+        }
+        dropAccumulator += ratio
+        if dropAccumulator >= 1.0 {
+            dropAccumulator -= 1.0
             return true
         }
-        if videoThrottleActive {
-            videoCounter += 1
-            return videoCounter % 2 == 0
-        }
-        videoCounter = 0
         return false
     }
 
     /// Returns true when this incoming raw audio buffer should be skipped.
-    /// Audio is small, so it only drops at the full-stop level — halting
-    /// audio production entirely so the queue never reaches the OOM guard.
+    /// Always false — audio is never shed. It is small (~100 kbps) and is the
+    /// A/V sync anchor; dropping it saves negligible queue space while causing
+    /// audible stutter via desync.
     func shouldDropAudioFrame() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return audioStopActive
+        return false
+    }
+
+    /// Linear drop ratio in `videoDropStart..<videoDropEnd`, clamped to
+    /// `videoDropMax`. Caller must hold `lock`.
+    private func currentDropRatioLocked() -> Double {
+        let span = Self.videoDropEnd - Self.videoDropStart
+        guard span > 0, queueBytes > Self.videoDropStart else {
+            return 0
+        }
+        let t = Double(min(queueBytes, Self.videoDropEnd) - Self.videoDropStart) / Double(span)
+        return t * Self.videoDropMax
     }
 }

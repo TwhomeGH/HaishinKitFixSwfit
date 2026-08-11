@@ -78,16 +78,6 @@ final actor RTMPSocket {
             return result
         }
 
-        /// Returns up to `maxBytes` from the FIRST segment only (one RTMP message),
-        /// capped at `maxBytes`. Does not coalesce across segments.
-        func peekSegment(maxBytes: Int) -> Data {
-            guard headIndex < segments.count else { return Data() }
-            let segment = segments[headIndex]
-            let available = segment.count - headOffset
-            let take = min(available, maxBytes)
-            return segment.subdata(in: headOffset..<headOffset + take)
-        }
-
         /// Advances the cursor past `bytes` after the send is confirmed.
         mutating func consume(_ bytes: Int) {
             var remaining = bytes
@@ -333,7 +323,15 @@ final actor RTMPSocket {
             sendQueue.removeAll()
             return
         }
-        let chunk = sendQueue.peekSegment(maxBytes: Self.sendChunkSize)
+        // Coalesce up to sendChunkSize bytes across multiple queued messages
+        // into one send. Sending one RTMP message at a time serializes
+        // throughput on the per-send round-trip (encode → send → completion →
+        // next), which makes the queue grow even on a healthy link: audio
+        // frames (~1KB) and video frames (~10KB) each pay the full send latency
+        // (~60-100 sends/s at 60fps). Batching cuts that to a handful of sends
+        // per second while the queue still drains in 256KB steps, so the
+        // NetworkMonitor/backpressure view of congestion stays accurate.
+        let chunk = sendQueue.peek(maxBytes: Self.sendChunkSize)
         guard !chunk.isEmpty else {
             isSending = false
             return
