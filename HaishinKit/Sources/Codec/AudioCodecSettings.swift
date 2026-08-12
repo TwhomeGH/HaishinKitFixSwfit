@@ -98,7 +98,10 @@ public struct AudioCodecSettings: Codable, Sendable {
         var inputBufferCounts: Int {
             switch self {
             case .aac, .heAac, .heAacV2, .opus:
-                return 6
+                // 6×1024 ≈ 139ms 對即時管線偏小，抖動大時 converter 來不及
+                // 消化而丟幀（音訊斷續）。調大為 12（≈278ms）給 encoder 更多
+                // 呼吸空間，穩定性優先（延遲增量可忽略，直播本有 ~1s 延遲）。
+                return 12
             case .pcm:
                 return 1
             }
@@ -107,7 +110,9 @@ public struct AudioCodecSettings: Codable, Sendable {
         var outputBufferCounts: Int {
             switch self {
             case .aac, .heAac, .heAacV2, .opus:
-                return 1
+                // 1 個 output buffer 在 convert 迴圈中 removeFirst/release
+                // 反覆進出；調大為 2 避免轉換迴圈頻繁重分配。
+                return 2
             case .pcm:
                 return 24
             }

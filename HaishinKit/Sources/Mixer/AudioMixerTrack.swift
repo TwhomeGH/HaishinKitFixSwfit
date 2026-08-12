@@ -1,7 +1,12 @@
 import Accelerate
 import AVFoundation
 
-private let kAudioMixerTrack_frameCapacity: AVAudioFrameCount = 1024
+// 單次 AVAudioConverter.convert 的輸出幀數（也決定 OutputNode.render 的
+// AudioUnitRender 幀數）。1024@44.1k ≈ 23ms；調大為 4096（≈93ms）減少
+// convert / AudioUnitRender 呼叫次數 4 倍，降低 MediaMixer actor 上每次
+// append 的同步處理次數。OutputNode（AudioNode）的 buffer frameCapacity
+// 必須同步為此值，否則 render 寫入會 overflow。
+let kAudioMixerTrack_frameCapacity: AVAudioFrameCount = 4096
 
 protocol AudioMixerTrackDelegate: AnyObject {
     func track(_ track: AudioMixerTrack<Self>, didOutput audioPCMBuffer: AVAudioPCMBuffer, when: AVAudioTime)

@@ -236,7 +236,10 @@ final class OutputNode: AudioNode {
     }()
 
     init(format: AVAudioFormat) throws {
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024) else {
+        // frameCapacity 必須 ≥ kAudioMixerTrack_frameCapacity：mix() 以
+        // AudioMixerTrack outputBuffer 的 frameLength 呼叫 AudioUnitRender，
+        // 若小於 render 幀數會寫入 overflow。
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: kAudioMixerTrack_frameCapacity) else {
             throw Error.unableToAllocateBuffer
         }
         self.buffer = buffer
