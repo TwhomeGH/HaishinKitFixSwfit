@@ -1,12 +1,13 @@
 import Accelerate
 import AVFoundation
 
-// 單次 AVAudioConverter.convert 的輸出幀數（也決定 OutputNode.render 的
-// AudioUnitRender 幀數）。1024@44.1k ≈ 23ms；調大為 4096（≈93ms）減少
-// convert / AudioUnitRender 呼叫次數 4 倍，降低 MediaMixer actor 上每次
-// append 的同步處理次數。OutputNode（AudioNode）的 buffer frameCapacity
-// 必須同步為此值，否則 render 寫入會 overflow。
-let kAudioMixerTrack_frameCapacity: AVAudioFrameCount = 4096
+// 單次 AVAudioConverter.convert 的輸出幀數。**必須與上游輸入幀數對齊**
+// （ReplayKit 每幀 1024 samples）：AVAudioConverter 的輸入 callback 請求
+// inNumberFrames == outputBuffer frameCapacity，若調大於輸入幀數，ring buffer
+// 每次只有一幀（1024），converter 拿不到足夠輸入 → 回 .noDataNow → resample
+// 停擺 → 整條音訊管線無輸出（audioInputFrames=0）。維持 1024。
+// internal：OutputNode（AudioNode.swift）的 render buffer 需要同步引用。
+let kAudioMixerTrack_frameCapacity: AVAudioFrameCount = 1024
 
 protocol AudioMixerTrackDelegate: AnyObject {
     func track(_ track: AudioMixerTrack<Self>, didOutput audioPCMBuffer: AVAudioPCMBuffer, when: AVAudioTime)
@@ -99,20 +100,28 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         repeat {
             var error: NSError?
             status = audioConverter?.convert(to: outputBuffer, error: &error) { inNumberFrames, status in
-                if inNumberFrames <= ringBuffer.counts {
-                    _ = ringBuffer.render(inNumberFrames, ioData: inputBuffer.mutableAudioBufferList)
-                    inputBuffer.frameLength = inNumberFrames
-                    status.pointee = .haveData
-                    return inputBuffer
-                } else {
+                // 動態提供 ring buffer 現有全部幀數（min(請求, 可用)），
+                // 而非「不足請求量就 .noDataNow」。AVAudioConverterInputBlock
+                // 允許回傳少於請求的幀數（frameLength = 實際幀數），converter
+                // 會消費這些幀並視需要再請求 — 因此 outputBuffer.frameCapacity
+                // 不需對齊上游單幀大小，任何輸入幀數都能自動消化。
+                let available = ringBuffer.counts
+                guard available > 0 else {
                     status.pointee = .noDataNow
                     return nil
                 }
+                let frames = min(Int(inNumberFrames), available)
+                _ = ringBuffer.render(AVAudioFrameCount(frames), ioData: inputBuffer.mutableAudioBufferList)
+                inputBuffer.frameLength = AVAudioFrameCount(frames)
+                status.pointee = .haveData
+                return inputBuffer
             }
             switch status {
             case .haveData:
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
-                audioTime.advanced(1024)
+                // 時間軸依實際輸出幀數推進（而非硬編碼 1024），完全配合
+                // 上游送進來的幀大小自動配置。
+                audioTime.advanced(AVAudioFramePosition(outputBuffer.frameLength))
                 rendered += 1
             case .error:
                 if let error {
