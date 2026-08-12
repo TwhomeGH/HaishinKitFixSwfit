@@ -98,27 +98,25 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         repeat {
             var error: NSError?
             status = audioConverter?.convert(to: outputBuffer, error: &error) { inNumberFrames, status in
-                // 動態提供 ring buffer 現有全部幀數（min(請求, 可用)），
-                // 而非「不足請求量就 .noDataNow」。AVAudioConverterInputBlock
-                // 允許回傳少於請求的幀數（frameLength = 實際幀數），converter
-                // 會消費這些幀並視需要再請求 — 因此 outputBuffer.frameCapacity
-                // 不需對齊上游單幀大小，任何輸入幀數都能自動消化。
-                let available = ringBuffer.counts
-                guard available > 0 else {
+                // 只提供「完整幀數」：ring buffer 累積夠 inNumberFrames 才
+                // render，不足回 .noDataNow（資料留待下次 append 累積）。
+                // ⚠️ 不可改為 min(inNumberFrames, 可用) 的部分幀餵入 —
+                // 會讓 outputBuffer.frameLength 非 1024 對齊，下游
+                // AudioMixerByMultiTrack.mix() → AudioUnitRender 用非對齊
+                // 幀數拉取 AudioRingBuffer，造成樣本錯位 → 電磁音/爆音。
+                if inNumberFrames <= ringBuffer.counts {
+                    _ = ringBuffer.render(inNumberFrames, ioData: inputBuffer.mutableAudioBufferList)
+                    inputBuffer.frameLength = inNumberFrames
+                    status.pointee = .haveData
+                    return inputBuffer
+                } else {
                     status.pointee = .noDataNow
                     return nil
                 }
-                let frames = min(Int(inNumberFrames), available)
-                _ = ringBuffer.render(AVAudioFrameCount(frames), ioData: inputBuffer.mutableAudioBufferList)
-                inputBuffer.frameLength = AVAudioFrameCount(frames)
-                status.pointee = .haveData
-                return inputBuffer
             }
             switch status {
             case .haveData:
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
-                // 時間軸依實際輸出幀數推進（而非硬編碼 1024），完全配合
-                // 上游送進來的幀大小自動配置。
                 audioTime.advanced(AVAudioFramePosition(outputBuffer.frameLength))
             case .error:
                 if let error {

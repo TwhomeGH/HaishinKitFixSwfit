@@ -107,20 +107,20 @@ final class AudioCodec {
                     inputStatus.pointee = .haveData
                     return inputBuffer
                 case let inputBuffer as AVAudioPCMBuffer:
-                    // 動態提供 ring buffer 現有全部幀數（min(請求, 可用)），
-                    // 而非「不足請求量就 .noDataNow」。inputBlock 允許回傳
-                    // 少於請求的幀數，converter 會消費後視需要再請求 — 
-                    // outputBuffer.frameCapacity 不需對齊上游幀大小。
-                    let available = self.ringBuffer?.counts ?? 0
-                    guard available > 0 else {
+                    // 只提供「完整幀數」：ring buffer 累積夠 inNumberFrames 才
+                    // render，不足回 .noDataNow（資料留待下次 append 累積）。
+                    // ⚠️ 不可改為 min(inNumberFrames, 可用) 的部分幀餵入 —
+                    // AAC 需要固定 1024 幀才產出一 packet，部分幀會讓
+                    // converter 輸出錯位 → 電磁音/爆音。
+                    if self.ringBuffer?.isDataAvailable(inNumberFrames) == true {
+                        inputBuffer.frameLength = inNumberFrames
+                        _ = self.ringBuffer?.render(inNumberFrames, ioData: inputBuffer.mutableAudioBufferList)
+                        inputStatus.pointee = .haveData
+                        return inputBuffer
+                    } else {
                         inputStatus.pointee = .noDataNow
                         return nil
                     }
-                    let frames = min(Int(inNumberFrames), available)
-                    inputBuffer.frameLength = AVAudioFrameCount(frames)
-                    _ = self.ringBuffer?.render(AVAudioFrameCount(frames), ioData: inputBuffer.mutableAudioBufferList)
-                    inputStatus.pointee = .haveData
-                    return inputBuffer
                 default:
                     inputStatus.pointee = .noDataNow
                     return nil
