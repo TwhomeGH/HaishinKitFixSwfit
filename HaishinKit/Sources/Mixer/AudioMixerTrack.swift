@@ -82,6 +82,14 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         guard let outputBuffer, let inputBuffer, let ringBuffer else {
             return
         }
+        // 限制每次 append 最多轉換 `maxRendersPerAppend` 幀輸出。
+        // 原實作 `repeat { convert } while .haveData` 會在 ring buffer 積壓
+        // 時一次轉完所有幀 — 同步霸佔呼叫它的 MediaMixer actor，阻塞 video
+        // 與其他 audio track 的 append，造成整條管線節奏斷裂（音訊斷續）。
+        // 積壓資料留在 ring buffer，由後續 append 逐幀消化，每幀輸出時間戳
+        // 照樣推進，只把「一次暴衝」攤平成多次小步，不改變音訊內容。
+        let maxRendersPerAppend = 4
+        var rendered = 0
         var status: AVAudioConverterOutputStatus? = .endOfStream
         repeat {
             var error: NSError?
@@ -100,6 +108,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             case .haveData:
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
                 audioTime.advanced(1024)
+                rendered += 1
             case .error:
                 if let error {
                     delegate?.track(self, errorOccurred: .failedToConvert(error: error))
@@ -107,7 +116,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             default:
                 break
             }
-        } while(status == .haveData)
+        } while(status == .haveData && rendered < maxRendersPerAppend)
     }
 
     private func setUp(_ inSourceFormat: CMFormatDescription?) {
