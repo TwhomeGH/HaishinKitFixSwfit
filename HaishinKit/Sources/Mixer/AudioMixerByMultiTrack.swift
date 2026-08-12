@@ -5,21 +5,51 @@ import Foundation
 final class AudioMixerByMultiTrack: AudioMixer {
     private static let defaultSampleTime: AVAudioFramePosition = 0
 
+    // 專用 serial queue：所有音訊處理（append→convert→mix→AudioUnitRender）
+    // 都排到這裡執行，MediaMixer actor 的 append 立即返回。convert 迴圈與
+    // AudioUnitRender 不再佔用 MediaMixer actor，video 與 audio 在 actor 上
+    // 互不阻塞（治本：消除「audio convert 霸佔 actor → video 卡頓」的耦合）。
+    private let queue = DispatchQueue(label: "com.haishinkit.HaishinKit.AudioMixerByMultiTrack")
+
     weak var delegate: (any AudioMixerDelegate)?
-    var settings = AudioMixerSettings.default {
-        didSet {
-            if let inSourceFormat, settings.invalidateOutputFormat(oldValue) {
-                outputFormat = settings.makeOutputFormat(inSourceFormat)
-            }
-            for (id, trackSettings) in settings.tracks {
-                tracks[id]?.settings = trackSettings
-                try? mixerNode?.update(volume: trackSettings.volume, bus: id, scope: .input)
+
+    // settings 可能被 MediaMixer actor 讀寫，用 lock 保護；內部處理統一走
+    // _settings（queue 上），對外 getter/setter 用 lock。
+    private let lock = NSLock()
+    private var _settings = AudioMixerSettings.default
+    var settings: AudioMixerSettings {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _settings
+        }
+        set {
+            lock.lock()
+            let oldValue = _settings
+            _settings = newValue
+            lock.unlock()
+            queue.async { [weak self] in
+                self?.applySettings(newValue, previous: oldValue)
             }
         }
     }
     var inputFormats: [UInt8: AVAudioFormat] {
+        lock.lock()
+        defer { lock.unlock() }
         return tracks.compactMapValues { $0.inputFormat }
     }
+
+    /// 套用新的 mixer settings（必須在 queue 上執行，因為會重建 outputFormat）。
+    private func applySettings(_ newValue: AudioMixerSettings, previous: AudioMixerSettings) {
+        if let inSourceFormat, newValue.invalidateOutputFormat(previous) {
+            outputFormat = newValue.makeOutputFormat(inSourceFormat)
+        }
+        for (id, trackSettings) in newValue.tracks {
+            tracks[id]?.settings = trackSettings
+            try? mixerNode?.update(volume: trackSettings.volume, bus: id, scope: .input)
+        }
+    }
+
     private(set) var outputFormat: AVAudioFormat? {
         didSet {
             guard let outputFormat, outputFormat != oldValue else {
@@ -37,7 +67,7 @@ final class AudioMixerByMultiTrack: AudioMixer {
             guard inSourceFormat != oldValue else {
                 return
             }
-            outputFormat = settings.makeOutputFormat(inSourceFormat)
+            outputFormat = _settings.makeOutputFormat(inSourceFormat)
         }
     }
     private var tracks: [UInt8: AudioMixerTrack<AudioMixerByMultiTrack>] = [:] {
@@ -77,17 +107,23 @@ final class AudioMixerByMultiTrack: AudioMixer {
     }
 
     func append(_ track: UInt8, buffer: CMSampleBuffer) {
-        if settings.mainTrack == track {
-            inSourceFormat = buffer.formatDescription
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self._settings.mainTrack == track {
+                self.inSourceFormat = buffer.formatDescription
+            }
+            self.track(for: track)?.append(buffer)
         }
-        self.track(for: track)?.append(buffer)
     }
 
     func append(_ track: UInt8, buffer: AVAudioPCMBuffer, when: AVAudioTime) {
-        if settings.mainTrack == track {
-            inSourceFormat = buffer.format.formatDescription
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self._settings.mainTrack == track {
+                self.inSourceFormat = buffer.format.formatDescription
+            }
+            self.track(for: track)?.append(buffer, when: when)
         }
-        self.track(for: track)?.append(buffer, when: when)
     }
 
     private func tryToSetupAudioNodes() {
@@ -182,7 +218,7 @@ final class AudioMixerByMultiTrack: AudioMixer {
         }
         let track = AudioMixerTrack<AudioMixerByMultiTrack>(id: id, outputFormat: outputFormat)
         track.delegate = self
-        if let trackSettings = settings.tracks[id] {
+        if let trackSettings = _settings.tracks[id] {
             track.settings = trackSettings
         }
         tracks[id] = track
@@ -196,7 +232,7 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
     func track(_ track: AudioMixerTrack<AudioMixerByMultiTrack>, didOutput audioPCMBuffer: AVAudioPCMBuffer, when: AVAudioTime) {
         delegate?.audioMixer(self, track: track.id, didInput: audioPCMBuffer, when: when)
         buffers[track.id]?.append(audioPCMBuffer, when: when)
-        if settings.mainTrack == track.id {
+        if _settings.mainTrack == track.id {
             if sampleTime == Self.defaultSampleTime {
                 sampleTime = when.sampleTime
                 anchor = when

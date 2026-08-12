@@ -95,12 +95,9 @@ final class AudioCodec {
             }
         }
         var outputStatus: AVAudioConverterOutputStatus = .endOfStream
-        // 限制每次 append 的 convert 次數：ring buffer 積壓（例如上游一次
-        // 暴衝送出多幀）時，原迴圈會一次轉完所有積壓，長時間霸佔呼叫它的
-        // 執行緒（RTMPStream encoder 輸入路徑），阻塞整條媒體管線。上限 8
-        // 足以消化一筆正常積壓（8×1024 幀），超過則留待下次 append 消化。
-        let maxConvertsPerAppend = 8
-        var converted = 0
+        // 無界迴圈：動態 inputBlock 下正常每 append 轉一幀就 .noDataNow 結束。
+        // 實測 audioFrames 完全跟上 input（43-45/s，44.1k/1024 即時節奏），
+        // 不需要 convert 上限。積壓時一次消化全部才能追上延遲，避免丟幀。
         repeat {
             let outputBuffer = self.outputBuffer
             outputStatus = audioConverter.convert(to: outputBuffer, error: &error) { inNumberFrames, inputStatus in
@@ -141,11 +138,10 @@ final class AudioCodec {
                 if inputBuffersCursor == inputBuffers.count {
                     inputBuffersCursor = Self.defaultInputBuffersCursor
                 }
-                converted += 1
             default:
                 releaseOutputBuffer(outputBuffer)
             }
-        } while(outputStatus == .haveData && converted < maxConvertsPerAppend && settings.format != .pcm)
+        } while(outputStatus == .haveData && settings.format != .pcm)
     }
 
     private func makeInputBuffer() -> AVAudioBuffer? {
