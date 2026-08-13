@@ -8,11 +8,12 @@ protocol RTMPTimeConvertible {
 
 private let kRTMPTimestamp_defaultTimeInterval: TimeInterval = 0
 
+/// 單一 delta 的上限（ms）。超過視為基準跳變（向前大跳），用上一次正常
+/// delta 取代，避免巨大 timestamp 上 wire 造成下游斷流。2 秒涵蓋最低幀率
+/// （0.5fps idle），正常直播幀間距 < 100ms。
+private let kRTMPTimestamp_maxDelta: TimeInterval = 2000
+
 struct RTMPTimestamp<T: RTMPTimeConvertible> {
-    /// 單一 delta 的上限（ms）。超過視為基準跳變（向前大跳），用上一次
-    /// 正常 delta 取代，避免巨大 timestamp 上 wire 造成下游斷流。
-    /// 2 秒涵蓋最低幀率（0.5fps idle），正常直播幀間距 < 100ms。
-    private static let maxDelta: TimeInterval = 2000
     private var startedAt = kRTMPTimestamp_defaultTimeInterval
     private(set) var updatedAt = kRTMPTimestamp_defaultTimeInterval
     private var timedeltaFraction: TimeInterval = kRTMPTimestamp_defaultTimeInterval
@@ -42,7 +43,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         //    上一次正常 delta 維持平滑，避免巨大 timestamp 跳變讓下游誤判為
         //    gap/seek → 畫面凍結、音訊中斷、AV 自動修正（斷流）
         // 這樣基準跳變時 wire 時間戳仍單調連續，下游完全察覺不到跳變。
-        if timedelta < 0 || timedelta > Self.maxDelta {
+        if timedelta < 0 || timedelta > kRTMPTimestamp_maxDelta {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
             timedelta = lastNormalDelta
         }
