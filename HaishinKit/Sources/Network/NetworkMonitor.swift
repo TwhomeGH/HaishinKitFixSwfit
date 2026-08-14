@@ -29,6 +29,11 @@ package final actor NetworkMonitor {
     private var currentBytesOutPerSecond = 0
     private var previousTotalBytesIn = 0
     private var previousTotalBytesOut = 0
+    /// EMA smoothing factor for per-second throughput samples. A single 1s
+    /// window can read as a burst when the socket drains its backlog after a
+    /// stall; smoothing keeps downstream consumers (stats, bitrate strategy)
+    /// seeing sustainable throughput rather than the momentary drain rate.
+    private static let emaSmoothing: Double = 0.3
     private var previousQueueBytesOut: [Int] = []
     private var previousQueueHighCounts: Int = 0
     private var continuation: AsyncStream<NetworkMonitorEvent>.Continuation? {
@@ -52,10 +57,24 @@ package final actor NetworkMonitor {
         let totalBytesIn = report.totalBytesIn
         let totalBytesOut = report.totalBytesOut
         let queueBytesOut = report.queueBytesOut
-        currentBytesInPerSecond = totalBytesIn - previousTotalBytesIn
-        currentBytesOutPerSecond = totalBytesOut - previousTotalBytesOut
+        let rawBytesIn = totalBytesIn - previousTotalBytesIn
+        let rawBytesOut = totalBytesOut - previousTotalBytesOut
         previousTotalBytesIn = totalBytesIn
         previousTotalBytesOut = totalBytesOut
+        // EMA-smooth the throughput samples so a single burst window (e.g. the
+        // socket draining a multi-MB backlog in one second after a stall) does
+        // not get reported as sustainable bandwidth. Seed with the first raw
+        // sample; afterwards blend with the previous estimate.
+        if 0 < currentBytesInPerSecond {
+            currentBytesInPerSecond = Int(Double(rawBytesIn) * Self.emaSmoothing + Double(currentBytesInPerSecond) * (1 - Self.emaSmoothing))
+        } else {
+            currentBytesInPerSecond = rawBytesIn
+        }
+        if 0 < currentBytesOutPerSecond {
+            currentBytesOutPerSecond = Int(Double(rawBytesOut) * Self.emaSmoothing + Double(currentBytesOutPerSecond) * (1 - Self.emaSmoothing))
+        } else {
+            currentBytesOutPerSecond = rawBytesOut
+        }
         previousQueueBytesOut.append(queueBytesOut)
         let eventReport = NetworkMonitorReport(
             totalBytesIn: totalBytesIn,

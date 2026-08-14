@@ -112,6 +112,12 @@ final actor RTMPSocket {
     private var qualityOfService: DispatchQoS = .userInitiated
     private var continuation: CheckedContinuation<Void, any Swift.Error>?
     private var drainContinuation: CheckedContinuation<Void, Never>?
+    /// Receive continuation feeding the `recv()` AsyncStream. Kept so the
+    /// callback-driven receive loop can yield/finish and close() can tear down.
+    private var receiveContinuation: AsyncStream<Data>.Continuation?
+    /// Guards the recursive receive callback: once a receive errors / the
+    /// consumer terminates / the socket closes, no further `receive` is armed.
+    private var isReceiveStopped = false
     private lazy var networkQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.RTMPSocket.network", qos: qualityOfService)
 
     /// Non-isolated congestion signal the raw-frame intake path reads to drop
@@ -148,6 +154,9 @@ final actor RTMPSocket {
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
+        isReceiveStopped = true
+        receiveContinuation?.finish()
+        receiveContinuation = nil
         backpressureSignal?.reset()
         do {
             let connection = NWConnection(to: NWEndpoint.hostPort(host: .init(name), port: .init(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port))), using: parameters)
@@ -207,45 +216,67 @@ final actor RTMPSocket {
     }
 
 
-    private func recvOnce() async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            connection?.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { content, _, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let content {
-                    continuation.resume(returning: content)
-                } else {
-                    continuation.resume(throwing: Error.endOfStream)
-                }
-            }
+    /// Arms exactly one NWConnection.receive at a time. The completion handler
+    /// runs on `networkQueue` and hops back to this actor via `didReceive`,
+    /// which re-arms the next receive — the same recursive-callback cadence as
+    /// the send side (`sendNextChunk` → `didSendChunk` → `sendNextChunk`).
+    /// Exactly one outstanding receive is the contract NWConnection expects;
+    /// no continuations are created, so there is nothing to leak on close.
+    private func armNextReceive() {
+        guard !isReceiveStopped, let connection else {
+            return
+        }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { [weak self] content, _, _, error in
+            guard let self else { return }
+            Task { await self.didReceive(content: content, error: error) }
         }
     }
 
-    func recv() -> AsyncStream<Data> {
-        AsyncStream { continuation in
-            Task {
-                while connected {
-                    do {
-                        let data = try await recvOnce()
-                        totalBytesIn += data.count   // ← 補回統計
-                        onLog?(.init(level: .trace,
-                                    message: "Socket recv",
-                                    detail: "size=\(data.count) totalIn=\(totalBytesIn)"))
-                                    
-                        continuation.yield(data)
-                    } catch {
-                        // 這裡就是所有 recv error 的集中點
-                        logger.error("recv error:", error)
-                        onLog?(.init(level: .error,
-                                    message: "recv error",
-                                    detail: "\(error)"))
-
-                        continuation.finish()
-                        break
-                    }
-                }
-            }
+    private func didReceive(content: Data?, error: NWError?) async {
+        guard !isReceiveStopped else {
+            return
         }
+        if let error {
+            // 這裡就是所有 recv error 的集中點
+            isReceiveStopped = true
+            logger.error("recv error:", error)
+            onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
+            receiveContinuation?.finish()
+            return
+        }
+        if let content {
+            totalBytesIn += content.count
+            onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(content.count) totalIn=\(totalBytesIn)"))
+            receiveContinuation?.yield(content)
+        } else {
+            // content == nil && error == nil: clean end of stream.
+            isReceiveStopped = true
+            receiveContinuation?.finish()
+            return
+        }
+        guard connected else {
+            receiveContinuation?.finish()
+            return
+        }
+        armNextReceive()
+    }
+
+    private func stopReceive() {
+        isReceiveStopped = true
+        receiveContinuation?.finish()
+        receiveContinuation = nil
+    }
+
+    func recv() -> AsyncStream<Data> {
+        let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
+        receiveContinuation = continuation
+        isReceiveStopped = false
+        continuation.onTermination = { [weak self] _ in
+            guard let self else { return }
+            Task { await self.stopReceive() }
+        }
+        armNextReceive()
+        return stream
     }
 
     func drain() async {
@@ -273,6 +304,7 @@ final actor RTMPSocket {
         connected = false
         isSending = false
         sendQueue.removeAll()
+        stopReceive()
         backpressureSignal?.reset()
         connection = nil
         continuation = nil

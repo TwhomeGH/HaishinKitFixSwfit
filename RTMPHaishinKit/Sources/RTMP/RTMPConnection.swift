@@ -66,6 +66,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         RTMPVideoFourCC.hevc.description: FourCcInfoMask.canDecode.rawValue | FourCcInfoMask.canEncode.rawValue
     ]
     private static let connectTransactionId = 1
+    /// Consecutive 1s monitor intervals with zero bytes in AND out before the
+    /// liveness watchdog forces the socket closed. 8s of total silence on a
+    /// previously-active link is never normal for live RTMP (audio always
+    /// flows at ~100kbps, so totalBytesOut advances every interval).
+    private static let silentIntervalsThreshold = 8
 
     /**
      - NetStatusEvent#info.code for NetConnection
@@ -295,6 +300,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     private var reconnectAttempts = 0
     private var isReconnecting = false
     private var reconnectionTask: Task<Void, Never>?
+    /// Liveness watchdog state: consecutive 1s monitor intervals where neither
+    /// totalBytesIn nor totalBytesOut moved. A silently dead link (half-open
+    /// TCP, radio drop) never errors NWConnection, so the recv loop would block
+    /// forever and no reconnect would ever fire — this forces the socket closed
+    /// so the recv loop exits and the existing reconnect path runs.
+    private var silentIntervals = 0
+    private var lastActivityBytesIn = 0
+    private var lastActivityBytesOut = 0
+    private var hasSeenActivity = false
 
     /// Creates a new connection with E-RTMP command parameters.
     ///
@@ -450,6 +464,12 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
         networkMonitor = await socket?.makeNetworkMonitor()
         log(.info, "HaishinKit revision", detail: kHaishinKitRevision)
+        // Fresh socket/monitor: clear liveness watchdog state so a brand-new
+        // connection isn't flagged for a stall inherited from the previous one.
+        silentIntervals = 0
+        lastActivityBytesIn = 0
+        lastActivityBytesOut = 0
+        hasSeenActivity = false
         guard let socket, let networkMonitor else {
             throw Error.invalidState
         }
@@ -727,11 +747,60 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 doOutput(sequence == 0 ? .zero : .one, chunkStreamId: .control, message: RTMPAcknowledgementMessage(sequence: UInt32(report.totalBytesIn)))
                 sequence += 1
             }
+            checkLiveness(report)
         case .reset:
+            // Fresh connection after reconnect: clear the liveness state so a
+            // brand-new socket isn't flagged for a stall inherited from the
+            // previous (stale) counters.
+            silentIntervals = 0
+            lastActivityBytesIn = 0
+            lastActivityBytesOut = 0
+            hasSeenActivity = false
             break
         }
         for stream in streams {
             Task { await stream.dispatch(event) }
+        }
+    }
+
+    /// Detects a silently dead link (half-open TCP / radio drop) that never
+    /// errors NWConnection: the recv loop would block forever and no reconnect
+    /// would fire. When totalBytesIn and totalBytesOut are both frozen for
+    /// `silentIntervalsThreshold` consecutive 1s monitor intervals on a link
+    /// that previously carried traffic, force the socket closed — the recv
+    /// loop exits, and the existing disconnect/reconnect path in
+    /// `performConnect` takes over. Audio is never shed, so an active publish
+    /// always advances totalBytesOut; silence means the transport is dead.
+    private func checkLiveness(_ report: NetworkMonitorReport) {
+        let moved = report.totalBytesIn != lastActivityBytesIn || report.totalBytesOut != lastActivityBytesOut
+        lastActivityBytesIn = report.totalBytesIn
+        lastActivityBytesOut = report.totalBytesOut
+        if moved {
+            hasSeenActivity = true
+            silentIntervals = 0
+            return
+        }
+        guard state == .connected, hasSeenActivity else {
+            silentIntervals = 0
+            return
+        }
+        silentIntervals += 1
+        guard Self.silentIntervalsThreshold <= silentIntervals else {
+            return
+        }
+        log(.warn, "Liveness watchdog: no traffic for \(silentIntervals)s, forcing socket close", detail: "in=\(report.totalBytesIn) out=\(report.totalBytesOut)")
+        silentIntervals = 0
+        hasSeenActivity = false
+        Task {
+            // Only force-close when a stream is actively publishing. A
+            // connection that is intentionally idle (connected but no stream,
+            // or paused playback) must not be killed for being quiet.
+            for stream in streams {
+                if await stream.readyState == .publishing {
+                    await self.socket?.close()
+                    return
+                }
+            }
         }
     }
 

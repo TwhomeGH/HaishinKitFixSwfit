@@ -2,7 +2,22 @@
 
 ## 最新
 
-### 18. 移除 Socket 層自動重連 — 全權交由 RTMPConnection 處理
+### 20. 位元率爆衝 + Receive 安全重構（2026-08）
+
+- **檔案：** `HaishinKit/Sources/Network/NetworkMonitor.swift`、`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、`MoQTHaishinKit/Sources/MoQTSocket.swift`
+- **背景：** 1080p30 量測出現 max 15,965 Kbps（avg 6,556）、max 42.69 fps。根因是「socket 卡住 → 爆量補送」+「bitrate strategy 把 burst 吞吐讀回當目標」的複合。
+- **位元率控制：**
+  - `NetworkMonitor.currentBytesOutPerSecond` 改 EMA 平滑（α=0.3），單一 1s burst 窗口不再被當成可持續頻寬
+  - `StreamBitRateStrategy` insufficientBW 路徑 `min(current, derived)` **只降不升**，堵住自我放大迴路
+  - `.reset` 恢復 `lastStableBitRate` 而非直接彈到 max；移除對 `frameInterval` 的寫入
+- **Receive 重構：**
+  - `RTMPSocket`/`MoQTSocket` 的 `withCheckedThrowingContinuation` + Task loop 改為 **callback 遞迴 + actor hop**（`armNextReceive → didReceive → armNextReceive`）
+  - 消除 continuation 洩漏（`connection` nil 時 `connection?.receive` 靜默跳過 → 永不 resume）
+  - actor hop 中斷同步遞迴，stack 有界（不會重蹈 `nw-recursion.md` 的 stack overflow）
+  - `MoQTSocket` 同時修掉 `incomingContinuation` didSet 呼叫已刪除 `receive(on:continuation:)` 的 compile error
+- **Liveness watchdog：** `RTMPConnection` 連續 8s 無 bytes 進出且 stream 在 `.publishing` → force close socket → 觸發重連。修復半開 TCP / radio 失效永不重連的問題。
+
+### 19. 移除 Socket 層自動重連 — 全權交由 RTMPConnection 處理
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
 - **問題：** `RTMPSocket.scheduleReconnect()` 只重建 TCP，不重新 RTMP 握手（C0/C1→S0/S1→C2/S2），且 `recv()` AsyncStream 是 single-use，新連線無人讀取，形成孤兒連線。同時與 `RTMPConnection.startReconnection()` 競爭，當 `isReconnectEnabled = true` 時兩個機制同時跑。
@@ -14,6 +29,16 @@
   - 不再有孤兒 TCP 連線
   - 重連必定走完整 RTMP 握手（C0C1→S0S1→C2→S2）
   - 無競態：socket 層不再插手重連邏輯
+
+### 18. 修正 `recv()` 半開連線偵測缺口（2026-08）
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- **問題：** 半開 TCP / radio 失效時，NWConnection 不 error，`recv()` 的 AsyncStream 永不結束 → `RTMPConnection` 靠 recv loop exit 偵測斷線的機制失效，永不重連，「socket 卡住」永久化。
+- **修改：** `RTMPConnection` 新增 liveness watchdog（`checkLiveness`）：
+  - 每次 `.status`（1s）比較 `totalBytesIn`/`totalBytesOut`
+  - 曾有流量後連續 8s 兩者都凍結 → force `socket.close()` → recv loop 退出 → 走既有 `startReconnection()`
+  - 只對 `.publishing` stream 生效（audio 永不 shed，正常推流 bytes-out 必持續前進；idle 連線不會誤殺）
+- **效應：** 半開連線能在 ~8s 內被偵測並觸發重連，不再永久卡死。
 
 ### 17. 停止直播時 drain 避免 buffer 丟棄 + Frame Rate 自動上限
 

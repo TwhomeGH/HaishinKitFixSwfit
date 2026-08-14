@@ -22,6 +22,11 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     public let mamimumAudioBitRate: Int = 0
     private var sufficientBWCounts: Int = 0
     private var insufficientBWCounts: Int = 0
+    /// The last stable bitrate the link sustained before a congestion event.
+    /// `.reset` restores this instead of jumping straight to the maximum, so a
+    /// reconnect right after a stall doesn't immediately burst a fresh
+    /// encoder at the ceiling.
+    private var lastStableBitRate: Int = 0
 
     /// Creates a new instance.
     public init(mamimumVideoBitrate: Int) {
@@ -31,6 +36,10 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
     private func deriveVBV(_ settings: inout VideoCodecSettings) {
         guard settings.bitRateMode == .variable else { return }
+        // VBV 硬上限跟著「當前目標」縮放（memory: VBR 需 1.2× 硬上限 +
+        // 1.5× soft dataRateLimits）：目標被策略調低時，上限同步下修，
+        // 這樣壅塞期間編碼器不會在上限處繼續爆衝。不要改成從 max 推導 —
+        // 那會讓低目標失去約束，且 dataRateLimits 變動會觸發 session 重建。
         settings.vbvMaxBitRate = settings.bitRate * 12 / 10
         settings.vbvBufferDuration = settings.vbvBufferDuration ?? 1.0
     }
@@ -41,6 +50,7 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             var videoSettings = await stream.videoSettings
             if videoSettings.bitRate == mamimumVideoBitRate {
                 insufficientBWCounts = 0
+                lastStableBitRate = mamimumVideoBitRate
                 return
             }
             if Self.statusCountsThreshold <= sufficientBWCounts {
@@ -50,6 +60,7 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
                     deriveVBV(&videoSettings)
                 }
                 try? await stream.setVideoSettings(videoSettings)
+                lastStableBitRate = videoSettings.bitRate
                 sufficientBWCounts = 0
             } else {
                 sufficientBWCounts += 1
@@ -65,9 +76,16 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             }
             var videoSettings = await stream.videoSettings
             let audioSettings = await stream.audioSettings
+            let currentBitRate = videoSettings.bitRate
             if 0 < report.currentBytesOutPerSecond {
-                let bitRate = Int(report.currentBytesOutPerSecond * 8)
-                videoSettings.bitRate = max(bitRate - audioSettings.bitRate, mamimumVideoBitRate / 5)
+                let measuredBitRate = Int(report.currentBytesOutPerSecond * 8)
+                // NEVER raise the target here. `currentBytesOutPerSecond` is
+                // the socket's measured drain rate, which during a
+                // stall→recovery burst reflects the backlog flush — not
+                // sustainable bandwidth. `min` caps the derived target at the
+                // current value so a transient burst can't ratchet bitrate up.
+                let derivedBitRate = max(measuredBitRate - audioSettings.bitRate, mamimumVideoBitRate / 5)
+                videoSettings.bitRate = min(currentBitRate, derivedBitRate)
             } else {
                 videoSettings.bitRate = max(videoSettings.bitRate / 2, mamimumVideoBitRate / 10)
             }
@@ -76,12 +94,18 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
                 deriveVBV(&videoSettings)
             }
             try? await stream.setVideoSettings(videoSettings)
+            // Remember the lowered (sustainable) rate so `.reset` on a
+            // reconnect right after this stall restores this — not the
+            // pre-stall maximum.
+            lastStableBitRate = videoSettings.bitRate
         case .reset:
             var videoSettings = await stream.videoSettings
             insufficientBWCounts = 0
             sufficientBWCounts = 0
-            videoSettings.bitRate = mamimumVideoBitRate
-            videoSettings.frameInterval = 0.0
+            // Restore the last stable rate instead of the configured maximum.
+            // A reconnect often follows a stall; starting the fresh encoder at
+            // the ceiling immediately produces a max-size keyframe burst.
+            videoSettings.bitRate = 0 < lastStableBitRate ? lastStableBitRate : mamimumVideoBitRate
             if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
                 deriveVBV(&videoSettings)
             }

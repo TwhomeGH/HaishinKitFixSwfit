@@ -92,11 +92,15 @@ while connected {
 **修正：**
 - 加入 `defer { continuation.finish() }` 確保無論如何都會 finish
 
+> ⚠️ **2026-08 現況：** receive 已重構為 **callback 遞迴 + actor hop**（見「缺陷十一」），`recv()` 不再使用 `while connected` + continuation loop，改由 `isReceiveStopped` flag 決定是否 re-arm、`receiveContinuation?.finish()` 在 error/EOF/close 三種路徑確定性收尾。此缺陷的成因（continuation 未 finish）已不存在。
+
 ---
 
 ## 缺陷五：`recv()` Task 正常路徑不 Finish Continuation
 
 與缺陷四同源。正常退出 `while` 時 catch 不走，continuation 永遠 open。導致 `RTMPConnection.listen()` for-await 無法退出。
+
+> ⚠️ **2026-08 現況：** 同上，callback 重構後無 continuation 可洩漏，`didReceive` 三條退出路徑（error / EOF / `!connected`）皆 `finish()`。
 
 ---
 
@@ -243,7 +247,7 @@ case .handshakeDone, .connected:
 | 🔥 Critical | `windowSizeC=255` 接收緩衝區過小 | 高 CPU、低吞吐、首次連接慢 | ✅ 已修 |
 | 🔥 Critical | output Task 死亡不清理 | 推流一段時間後 OOM | ✅ 已修 |
 | 🔴 High | viability 下降立即關閉 | 短暫抖動就斷連，無法恢復 | ✅ 已修 |
-| 🔴 High | `recv()` continuation 未 finish | 連線無法正常關閉，hang | ✅ 已修 |
+| 🔴 High | `recv()` continuation 未 finish | 連線無法正常關閉，hang | ✅ 已修（callback 重構） |
 | 🔴 High | lazy stream createStream 遺漏 | 首次推流失敗 | ✅ 已修 |
 | 🔴 High | connected 後停止解析 RTMP 回包 | createStream timeout、publish 管線無法建立 | ✅ 已修 |
 | 🟡 Medium | 三層 AsyncStream 無背壓 | 高碼率記憶體爆炸 | ✅ 已修 |
@@ -275,6 +279,105 @@ case .handshakeDone, .connected:
 | 🟢 Enhanced | `drain()` 等候 buffer 送完才 close | 確保所有 RTMP 指令送達伺服器後才斷連 |
 | 🟢 Enhanced | `useFrame()` 以 `expectedFrameRate` 做隱式 cap | frameInterval=0 時仍能限流，80fps 相機輸入自動降至 60fps |
 | 🔴 High | 移除 Socket 層 `scheduleReconnect()` | 孤兒連線 + RTMP 握手遺失，與上層重連機制競態 |
+
+### 本次 Session 修正（2026-08）：位元率爆衝 + Receive 安全重構
+
+**背景：** 1080p30 推流量測出現 max 15,965 Kbps（avg 6,556）、max 42.69 fps（目標 30），推測是「socket 卡住 → 爆量補送」+「bitrate strategy 把 burst 讀回當目標」的複合結果。
+
+#### A. 位元率爆衝根因修復
+
+| 檔案 | 修改 | 原理 |
+|------|------|------|
+| `HaishinKit/Sources/Network/NetworkMonitor.swift` | `currentBytesOutPerSecond` 改 EMA 平滑（α=0.3） | 單一 1s 窗口在 socket 卡住→恢復時 = backlog 爆量吞吐，平滑後不會被誤讀為可持續頻寬 |
+| `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | insufficientBW 路徑 `bitRate = min(current, derived)`，**只降不升** | 修復「burst 吞吐 ×8 讀回當目標」的自我放大迴路 |
+| `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `.reset` 恢復 `lastStableBitRate`，不再直接彈到 max | 重連後新 encoder 不再馬上爆一顆最大 keyframe |
+| `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | 移除 `.reset` 對 `frameInterval` 的寫入 | 符合「strategy 只調 bitRate」原則（frameInterval 是 user-only knob） |
+| `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `deriveVBV` 維持 current-target 縮放 | 從 max 推導會讓低目標失去約束 + dataRateLimits 變動觸發 session 重建；正確做法是目標不被 burst 拉高，ceiling 自然收斂 |
+
+#### B. Receive 安全重構：callback 遞迴 + actor hop
+
+**問題（原設計）：** `recv()` 用 `withCheckedThrowingContinuation` + `while connected` Task loop。
+
+- `recvOnce()` 若 `connection` 為 nil（`connection?.receive` 被靜默跳過）→ continuation 永不 resume → recv loop 永久掛起 + strict concurrency "leaked continuation" trap
+- `recvTask.cancel()` 無法 resume pending 的 `withCheckedContinuation`，取消依賴 NWConnection callback 恰好在 forceCancel 後觸發，脆弱
+- receive 是整條管線唯一的非 callback 異類，與 send 側 `sendNextChunk → didSendChunk` 不對稱
+
+**修正：** 改為 **callback 遞迴 + actor hop**（`armNextReceive → didReceive → armNextReceive`）：
+
+```swift
+private func armNextReceive() {
+    guard !isReceiveStopped, let connection else { return }
+    connection.receive(...) { [weak self] content, _, _, error in
+        guard let self else { return }
+        Task { await self.didReceive(content: content, error: error) } // ← actor hop
+    }
+}
+```
+
+- **無 continuation 洩漏**：完全移除 `withCheckedThrowingContinuation`，receive 生命週期由 `isReceiveStopped` flag + `receiveContinuation?.finish()` 決定，`close()` 為確定性 teardown
+- **stack 有界**：re-arm 在 actor 上執行（`Task { await ... }`），不在 NWConnection callback 的 stack frame 內遞迴 — 這是與原始「同步遞迴 stack overflow」（見 `nw-recursion.md`）的關鍵差異
+- **每次恰一個 outstanding receive**：NWConnection 期待的 contract
+- **與 send 側對稱**：相同的遞迴 callback 節奏
+
+**套用：** `RTMPSocket`、`MoQTSocket`（`MoQTSocket` 同時修掉 `incomingContinuation` didSet 呼叫已刪除的 `receive(on:continuation:)` 造成的 compile error）
+
+#### C. Liveness Watchdog（半開連線偵測）
+
+**問題：** 半開 TCP / radio 失效時，NWConnection 不 error，recv 永不回傳也永不失敗 → `RTMPConnection` 偵測不到斷線、永不重連 → 「socket 卡住」永久化。
+
+**修正：** `RTMPConnection` 加 liveness watchdog（`checkLiveness`）：
+
+- 每次 `.status` 事件（1s 間隔）比較 `totalBytesIn`/`totalBytesOut`
+- 曾有流量（`hasSeenActivity`）後，連續 8s 兩者都凍結 → force `socket.close()`
+- recv loop 退出 → 走既有 `startReconnection()` 路徑
+- 只對 `.publishing` stream 生效（audio 永不 shed，正常推流 bytes-out 必持續前進；idle 連線不會誤殺）
+
+## 缺陷十一：Receive 用 continuation-loop 而非 callback 遞迴（2026-08 已重構）
+
+**檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、`MoQTHaishinKit/Sources/MoQTSocket.swift`
+
+**原始碼（舊設計）：**
+```swift
+private func recvOnce() async throws -> Data {
+    return try await withCheckedThrowingContinuation { continuation in
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { ... }
+    }
+}
+func recv() -> AsyncStream<Data> {
+    AsyncStream { continuation in
+        Task {
+            while connected {
+                let data = try await recvOnce()
+                continuation.yield(data)
+            }
+        }
+    }
+}
+```
+
+**問題：**
+1. **continuation 洩漏：** `connection?.receive` 若 `connection` 為 `nil`（`close()` 與 receive 競態），optional chaining 靜默跳過，`withCheckedThrowingContinuation` 永遠不 resume → recv loop 永久掛起，strict concurrency 下還會 trap "leaked continuation"。
+2. **取消脆弱：** `Task.cancel()` 無法 resume 一個 pending 的 `withCheckedContinuation`，只有 NWConnection callback 能；取消與 teardown 依賴 forceCancel 恰好觸發 callback，脆弱。
+3. **與 send 側不對稱：** send 側已是 `sendNextChunk → didSendChunk → sendNextChunk` 的 callback 遞迴，receive 側是唯一的異類。
+
+**修正：callback 遞迴 + actor hop（`armNextReceive → didReceive → armNextReceive`）**
+```swift
+private func armNextReceive() {
+    guard !isReceiveStopped, let connection else { return }
+    connection.receive(...) { [weak self] content, _, _, error in
+        guard let self else { return }
+        Task { await self.didReceive(content: content, error: error) } // ← actor hop 斷開同步遞迴
+    }
+}
+```
+- **無 continuation 可洩漏**：`isReceiveStopped` flag + `receiveContinuation?.finish()` 決定生命週期
+- **stack 有界**：re-arm 在 actor task 上執行，不在 NWConnection callback 的 stack frame 內遞迴
+- **每次恰一個 outstanding receive**：NWConnection 期待的 contract，避免重複 arm
+- **確定性 teardown**：`close()` → `stopReceive()` → 之後的 callback 進來立即 `finish()` 不再 arm
+
+> 詳細論證（為何不是原始同步遞迴、為何比 async/await loop 好）見 [`nw-recursion.md`](nw-recursion.md)。
+
+---
 
 ## 相關檔案
 

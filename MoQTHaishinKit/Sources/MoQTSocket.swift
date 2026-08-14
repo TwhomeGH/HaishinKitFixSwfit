@@ -57,13 +57,23 @@ final actor MoQTSocket {
     private var qualityOfService: DispatchQoS = .userInitiated
     private var incomingContinuation: AsyncStream<Data>.Continuation? {
         didSet {
-            if let connection, let incomingContinuation {
-                receive(on: connection, continuation: incomingContinuation)
+            if let connection, !isIncomingArmed {
+                isIncomingArmed = true
+                armNextReceive(on: connection, routing: .incoming)
             }
         }
     }
     private var datagramContinuation: AsyncStream<Data>.Continuation?
+    /// Guards against double-arming the receive callback on the main
+    /// connection if `.incoming` is accessed more than once.
+    private var isIncomingArmed = false
     private lazy var networkQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.MoQSocket.network", qos: qualityOfService)
+
+    /// Routes a receive to the stream that owns the connection.
+    private enum ReceiveRouting {
+        case incoming
+        case datagram
+    }
 
     func connect(_ name: String, port: Int) async throws {
         guard !connected else {
@@ -72,6 +82,11 @@ final actor MoQTSocket {
         totalBytesIn = 0
         totalBytesOut = 0
         queueBytesOut = 0
+        isIncomingArmed = false
+        incomingContinuation?.finish()
+        incomingContinuation = nil
+        datagramContinuation?.finish()
+        datagramContinuation = nil
         do {
             let options = NWProtocolQUIC.Options(alpn: Self.alpn).verifySelfCert()
             let endpoint = NWEndpoint.hostPort(host: .init(name), port: .init(integerLiteral: NWEndpoint.Port.IntegerLiteralType(port)))
@@ -119,27 +134,70 @@ final actor MoQTSocket {
         }
         connected = false
         outputs = nil
+        isIncomingArmed = false
+        incomingContinuation?.finish()
+        incomingContinuation = nil
+        datagramContinuation?.finish()
+        datagramContinuation = nil
         connection = nil
         continuation = nil
     }
 
     private func newConnection(_ connection: NWConnection) {
-        startReceiveLoop(for: connection)
+        armNextReceive(on: connection, routing: .datagram)
         connection.start(queue: networkQueue)
     }
 
-    private func startReceiveLoop(for connection: NWConnection) {
-        Task { [weak self] in
+    /// Arms exactly one NWConnection.receive at a time. The completion handler
+    /// runs on `networkQueue` and hops back to this actor via `didReceive`,
+    /// which re-arms the next receive — a recursive callback, not a
+    /// continuation-await loop. Exactly one outstanding receive per connection
+    /// is the contract NWConnection expects; nothing to leak on close.
+    private func armNextReceive(on connection: NWConnection, routing: ReceiveRouting) {
+        connection.receive(minimumIncompleteLength: 0, maximumLength: 65558) { [weak self] content, _, _, error in
             guard let self else { return }
-            while self.connected {
-                let data: Data? = await withCheckedContinuation { continuation in
-                    connection.receive(minimumIncompleteLength: 0, maximumLength: 65558) { content, _, _, _ in
-                        continuation.resume(returning: content)
-                    }
-                }
-                guard let data else { break }
-                self.datagramContinuation?.yield(data)
-            }
+            Task { await self.didReceive(on: connection, routing: routing, content: content, error: error) }
+        }
+    }
+
+    private func didReceive(on connection: NWConnection, routing: ReceiveRouting, content: Data?, error: NWError?) async {
+        guard connected else {
+            finish(routing)
+            return
+        }
+        if let error {
+            logger.error("MoQT recv error:", error)
+            finish(routing)
+            return
+        }
+        if let content {
+            totalBytesIn += content.count
+            yield(content, routing: routing)
+        } else {
+            // content == nil && error == nil: clean end of stream.
+            finish(routing)
+            return
+        }
+        armNextReceive(on: connection, routing: routing)
+    }
+
+    private func yield(_ data: Data, routing: ReceiveRouting) {
+        switch routing {
+        case .incoming:
+            incomingContinuation?.yield(data)
+        case .datagram:
+            datagramContinuation?.yield(data)
+        }
+    }
+
+    private func finish(_ routing: ReceiveRouting) {
+        switch routing {
+        case .incoming:
+            incomingContinuation?.finish()
+            incomingContinuation = nil
+        case .datagram:
+            datagramContinuation?.finish()
+            datagramContinuation = nil
         }
     }
 
