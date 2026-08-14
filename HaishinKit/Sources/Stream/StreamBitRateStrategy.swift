@@ -55,12 +55,22 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             }
             if Self.statusCountsThreshold <= sufficientBWCounts {
                 let incremental = mamimumVideoBitRate / 5
-                videoSettings.bitRate = min(videoSettings.bitRate + incremental, mamimumVideoBitRate)
+                // Recovery ratchet cap: after a congestion drop, never climb
+                // more than one step past the last proven-sustainable rate.
+                // Climbing straight back to the max re-triggers congestion and
+                // lets VBR burst to 1.5x of an inflated target (the 15k+
+                // spikes). Only the initial ramp (lastStableBitRate == 0) may
+                // reach the max. `lastStableBitRate` is deliberately NOT
+                // updated here — only congestion and reaching-max update it,
+                // so the cap reflects the link's proven ceiling, not the climb.
+                let ceiling = 0 < lastStableBitRate
+                    ? min(mamimumVideoBitRate, lastStableBitRate + incremental)
+                    : mamimumVideoBitRate
+                videoSettings.bitRate = min(videoSettings.bitRate + incremental, ceiling)
                 if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
                     deriveVBV(&videoSettings)
                 }
                 try? await stream.setVideoSettings(videoSettings)
-                lastStableBitRate = videoSettings.bitRate
                 sufficientBWCounts = 0
             } else {
                 sufficientBWCounts += 1

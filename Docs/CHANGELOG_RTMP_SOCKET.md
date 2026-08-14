@@ -2,6 +2,17 @@
 
 ## 最新
 
+### 21. Stall Detection 改為 PTS 基準 + 恢復 ratchet 封頂（2026-08）
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`
+- **問題：** 舊 stall detection 用 frame count 當健康信號。ReplyKIT 是螢幕擷取（VFR），畫面靜態時幀數合法降到接近 0 → 舊邏輯把「靜態」誤判為「video source stalled」，畫面一恢復就 `restartVideoPipeline()` 重建 encoder → sequence header 重送、時間戳重置，造成 fps 掉幀假象與 spike。
+- **修正（PTS 基準）：**
+  - 追蹤 `lastVideoInputPTSSeconds`（原始幀 PTS），以 `inputPTSAdvanced` / `outputPTSAdvanced` 判斷健康
+  - 唯一真正的 encoder stall = `inputPTSAdvanced && !outputPTSAdvanced`（幀有進來但無編碼產出）才 restart
+  - 「video source idle」（`!inputPTSAdvanced && audio 有流`）→ 只 log、不 restart（靜態畫面正常）
+  - 移除「both audio/video silent」與「suspended gap」對 VFR 來源的誤觸 restart
+- **修正（ratchet 封頂）：** `.status` 恢復爬升改為 `min(max, lastStableBitRate + max/5)`，且爬升路徑不再更新 `lastStableBitRate` — 避免振盪回 max 造成的 VBR 1.5× keyframe burst（15k+ spike）。
+
 ### 20. 位元率爆衝 + Receive 安全重構（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Network/NetworkMonitor.swift`、`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、`MoQTHaishinKit/Sources/MoQTSocket.swift`

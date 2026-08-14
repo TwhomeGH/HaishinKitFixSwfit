@@ -280,7 +280,7 @@ case .handshakeDone, .connected:
 | 🟢 Enhanced | `useFrame()` 以 `expectedFrameRate` 做隱式 cap | frameInterval=0 時仍能限流，80fps 相機輸入自動降至 60fps |
 | 🔴 High | 移除 Socket 層 `scheduleReconnect()` | 孤兒連線 + RTMP 握手遺失，與上層重連機制競態 |
 
-### 本次 Session 修正（2026-08）：位元率爆衝 + Receive 安全重構
+### 本次 Session 修正（2026-08）：位元率爆衝 + Receive 安全重構 + PTS 基準
 
 **背景：** 1080p30 推流量測出現 max 15,965 Kbps（avg 6,556）、max 42.69 fps（目標 30），推測是「socket 卡住 → 爆量補送」+「bitrate strategy 把 burst 讀回當目標」的複合結果。
 
@@ -290,6 +290,7 @@ case .handshakeDone, .connected:
 |------|------|------|
 | `HaishinKit/Sources/Network/NetworkMonitor.swift` | `currentBytesOutPerSecond` 改 EMA 平滑（α=0.3） | 單一 1s 窗口在 socket 卡住→恢復時 = backlog 爆量吞吐，平滑後不會被誤讀為可持續頻寬 |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | insufficientBW 路徑 `bitRate = min(current, derived)`，**只降不升** | 修復「burst 吞吐 ×8 讀回當目標」的自我放大迴路 |
+| `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `.status` 恢復 ratchet 封頂：`min(max, lastStableBitRate + max/5)`，且爬升路徑不再更新 `lastStableBitRate` | 避免振盪回 max 造成的 VBR 1.5× keyframe burst（15k+ spike） |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `.reset` 恢復 `lastStableBitRate`，不再直接彈到 max | 重連後新 encoder 不再馬上爆一顆最大 keyframe |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | 移除 `.reset` 對 `frameInterval` 的寫入 | 符合「strategy 只調 bitRate」原則（frameInterval 是 user-only knob） |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `deriveVBV` 維持 current-target 縮放 | 從 max 推導會讓低目標失去約束 + dataRateLimits 變動觸發 session 重建；正確做法是目標不被 burst 拉高，ceiling 自然收斂 |
@@ -331,6 +332,27 @@ private func armNextReceive() {
 - 曾有流量（`hasSeenActivity`）後，連續 8s 兩者都凍結 → force `socket.close()`
 - recv loop 退出 → 走既有 `startReconnection()` 路徑
 - 只對 `.publishing` stream 生效（audio 永不 shed，正常推流 bytes-out 必持續前進；idle 連線不會誤殺）
+
+#### D. Stall Detection 改為 PTS 基準（VFR 來源正確性）
+
+**問題（根因）：** 舊 stall detection 用 **frame count** 當健康信號。但 ReplyKIT 是螢幕擷取（variable frame rate）：畫面靜態時 frame 數**合法地**降到接近 0。舊邏輯：
+
+- `videoInputFrames == 0` 連續 3 個 interval → 判定「video source stalled」
+- 畫面一有更新 → **立刻 `restartVideoPipeline()` 重建 encoder session**！
+
+對「靜態 → 偶爾更新」的螢幕擷取，這代表**每次畫面更新都重建 encoder** → sequence header 重送、時間戳重置、session 重建 churn → 全部的量測假象（fps 掉、spike）從此而來。
+
+**修正：** `RTMPStream` 改以 **PTS 前進**為健康信號：
+
+- 追蹤 `lastVideoInputPTSSeconds`（mixer callback / append 記錄原始幀 PTS）
+- `inputPTSAdvanced`：本次 interval 收到的最大 PTS > 上次 → 來源有在送幀
+- `outputPTSAdvanced`：`videoTimestamp.updatedAt`（wire-cumulative PTS）有前進 → encoder 有產出
+- **唯一真正的 encoder stall** = `inputPTSAdvanced && !outputPTSAdvanced`（幀有進來但沒有編碼產出）→ 才 restart
+- 「video source idle」（`!inputPTSAdvanced && audio 有流`）→ **只 log、不 restart**（靜態畫面是正常）
+- 移除「both audio/video silent」與「suspended gap」對 VFR 來源的誤觸 restart
+- `.reset` 時重置 PTS snapshot
+
+**fps avg 40 的真相：** 若相機/螢幕送 60fps 且 `frameInterval == 0`（未設門檻），編碼器吃全部幀 → 每秒幀數翻倍、keyframe 成本不變 → 更容易塞車。量測到的 fps 掉到 40-50 是 **VFR 來源靜態時的正確行為**，不是故障。若要固定幀率需設 `frameInterval`（user knob，strategy 不會動它）。
 
 ## 缺陷十一：Receive 用 continuation-loop 而非 callback 遞迴（2026-08 已重構）
 

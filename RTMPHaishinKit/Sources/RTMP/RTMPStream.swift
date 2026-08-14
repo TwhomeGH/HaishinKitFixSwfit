@@ -225,7 +225,6 @@ public actor RTMPStream {
     private var frameCount: UInt16 = 0
     private var videoStallCount: Int = 0
     private var videoSourceStallCount: Int = 0
-    private var videoSourceWasStalled = false
     private var audioStallCount: Int = 0
     private let inflowLock = NSLock()
     /// Congestion signal owned by RTMPConnection. Read from the nonisolated
@@ -241,6 +240,22 @@ public actor RTMPStream {
         get { inflowLock.withLock { _videoInputFrames } }
         set { inflowLock.withLock { _videoInputFrames = newValue } }
     }
+    /// PTS（秒）of the latest raw video frame received. The authoritative
+    /// liveness signal: for variable-frame-rate sources (ReplyKIT screen
+    /// capture) frame COUNT legitimately drops when the picture is static,
+    /// but the PTS of every delivered frame still advances — a stalled
+    /// pipeline is one whose input PTS no longer moves, not one that sends
+    /// few frames.
+    private nonisolated(unsafe) var _lastVideoInputPTSSeconds: Double = -1
+    private var lastVideoInputPTSSeconds: Double {
+        get { inflowLock.withLock { _lastVideoInputPTSSeconds } }
+        set { inflowLock.withLock { _lastVideoInputPTSSeconds = newValue } }
+    }
+    /// PTS snapshot from the previous status interval (for PTS-advance checks).
+    private var lastStatusVideoInputPTSSeconds: Double = -1
+    /// Wire-cumulative PTS (seconds) of the last encoded frame sent, snapshotted
+    /// at the previous status interval.
+    private var lastStatusVideoOutputPTSSeconds: Double = -1
     private var audioInputFrames: Int {
         get { inflowLock.withLock { _audioInputFrames } }
         set { inflowLock.withLock { _audioInputFrames = newValue } }
@@ -944,6 +959,9 @@ extension RTMPStream: _Stream {
                     doOutput(.one, chunkStreamId: .video, message: message)
                 } else {
                 videoInputFrames += 1
+                if sampleBuffer.formatDescription?.isCompressed == false {
+                    lastVideoInputPTSSeconds = sampleBuffer.presentationTimeStamp.seconds
+                }
                 // Network congestion: skip the encoder feed (pre-encode drop),
                 // keep the local preview.
                 if backpressureSignal?.shouldDropVideoFrame() == true {
@@ -1033,18 +1051,25 @@ extension RTMPStream: _Stream {
             videoInputFrames = 0
             videoStallCount = 0
             videoSourceStallCount = 0
-            videoSourceWasStalled = false
             audioInputFrames = 0
             audioStallCount = 0
+            lastStatusVideoInputPTSSeconds = -1
+            lastStatusVideoOutputPTSSeconds = -1
         case .status(let report):
             let now = Date()
             let interval = now.timeIntervalSince(lastStatusTime)
             lastStatusTime = now
+            // PTS-based liveness: for variable-frame-rate sources (ReplyKIT
+            // screen capture) frame COUNT legitimately drops when the picture
+            // is static — 0 frames per second is NORMAL, not a stall. The
+            // correct signal is whether the PTS of delivered frames advances.
+            let inputPTS = lastVideoInputPTSSeconds
+            let inputPTSAdvanced = 0 <= lastStatusVideoInputPTSSeconds && lastStatusVideoInputPTSSeconds < inputPTS
+            let outputPTSAdvanced = lastStatusVideoOutputPTSSeconds < videoTimestamp.updatedAt
+            lastStatusVideoInputPTSSeconds = inputPTS
+            lastStatusVideoOutputPTSSeconds = videoTimestamp.updatedAt
             if interval > 1.5 {
-                await connection?.log(.warn, "publish status gap", detail: "interval=\(interval) videoInputFrames=\(videoInputFrames) frameCount=\(frameCount)")
-                if interval > 3.0, readyState == .publishing, videoInputFrames == 0 || frameCount == 0 {
-                    await restartVideoPipeline(reason: "suspended gap of \(String(format: "%.1f", interval))s, no encoder progress")
-                }
+                await connection?.log(.warn, "publish status gap", detail: "interval=\(interval) videoInputFrames=\(videoInputFrames) frameCount=\(frameCount) inputPTS=\(inputPTS)")
             }
             if audioSentFrames > 0 || audioInputFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
                 await connection?.log(.debug, "publish throughput",
@@ -1061,39 +1086,34 @@ extension RTMPStream: _Stream {
                 // detector doesn't mistake it for a broken pipeline and restart
                 // (which would cause another visible freeze).
                 videoSourceStallCount = 0
-                videoSourceWasStalled = false
                 videoStallCount = 0
                 audioStallCount = 0
-            } else if readyState == .publishing && videoInputFrames == 0 && audioInputFrames > 0 {
+            } else if readyState == .publishing && !inputPTSAdvanced && audioInputFrames > 0 {
+                // Video source produced no new PTS while audio kept flowing.
+                // For a VFR source (static screen) this is normal and must NOT
+                // restart the pipeline. Only log; the encoder keeps running so
+                // the moment the source resumes, frames flow again without a
+                // session rebuild.
                 videoSourceStallCount += 1
                 if videoSourceStallCount == 3 {
-                    videoSourceWasStalled = true
-                    await connection?.log(.warn, "video source stalled", detail: "audioInputFrames=\(audioInputFrames)")
+                    await connection?.log(.warn, "video source idle", detail: "no new PTS, audioInputFrames=\(audioInputFrames) (static screen is normal)")
                 }
-            } else if readyState == .publishing && videoInputFrames > 0 {
-                if videoSourceWasStalled {
-                    await restartVideoPipeline(reason: "video source resumed after \(videoSourceStallCount) empty status intervals")
-                    restartedVideoPipeline = true
-                }
+            } else if readyState == .publishing && inputPTSAdvanced {
+                // Source resumed producing — no restart needed, just reset.
                 videoSourceStallCount = 0
-                videoSourceWasStalled = false
             } else if readyState != .publishing {
                 videoSourceStallCount = 0
-                videoSourceWasStalled = false
             }
-            if !restartedVideoPipeline && readyState == .publishing && 0 < videoInputFrames && frameCount == 0 {
+            if !restartedVideoPipeline && readyState == .publishing && inputPTSAdvanced && !outputPTSAdvanced {
+                // True encoder stall: input PTS advanced (frames are flowing
+                // into the encoder) but no encoded output emerged. Restart.
                 videoStallCount += 1
                 if 2 == videoStallCount {
-                    await connection?.log(.warn, "video stall detected, will restart pipeline", detail: "stallCount=\(videoStallCount)")
+                    await connection?.log(.warn, "video stall detected, will restart pipeline", detail: "stallCount=\(videoStallCount) inputPTSAdvanced=\(inputPTSAdvanced) outputPTSAdvanced=\(outputPTSAdvanced)")
                 }
                 if 3 <= videoStallCount {
-                    await restartVideoPipeline(reason: "encoded video stalled while input is active")
+                    await restartVideoPipeline(reason: "encoded video stalled while input PTS is advancing")
                     // resets both audioStallCount and videoStallCount
-                }
-            } else if !restartedVideoPipeline, readyState == .publishing, videoInputFrames == 0, audioInputFrames == 0, frameCount == 0 {
-                videoStallCount += 1
-                if 3 <= videoStallCount {
-                    await restartVideoPipeline(reason: "both audio/video silent, bridge likely disconnected")
                 }
             } else if !restartedVideoPipeline, readyState == .publishing, audioInputFrames > 0, audioSentFrames == 0 {
                 audioStallCount += 1
@@ -1158,7 +1178,6 @@ extension RTMPStream: _Stream {
         videoStallCount = 0
         audioStallCount = 0
         videoSourceStallCount = 0
-        videoSourceWasStalled = false
     }
 
     private func restartAudioPipeline(reason: String) async {
@@ -1193,6 +1212,9 @@ extension RTMPStream: MediaMixerOutput {
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSampleBuffer) {
         inflowLock.lock()
         _videoInputFrames += 1
+        if sampleBuffer.formatDescription?.isCompressed == false {
+            _lastVideoInputPTSSeconds = sampleBuffer.presentationTimeStamp.seconds
+        }
         let outputs = self.outputs
         let sampleAccess = _videoSampleAccess
         // Only uncompressed (raw) frames can be shed pre-encode; compressed
