@@ -23,8 +23,8 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     /// The minimum cooldown interval between bitrate reductions (in status events).
     public static let insufficientBWCooldown: Int = 3
 
-    public let mamimumVideoBitRate: Int
-    public let mamimumAudioBitRate: Int = 0
+    public var mamimumVideoBitRate: Int
+    public var mamimumAudioBitRate: Int = 0
     private var sufficientBWCounts: Int = 0
     private var insufficientBWCounts: Int = 0
     /// The last stable bitrate the link sustained before a congestion event.
