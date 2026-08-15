@@ -2,6 +2,22 @@
 
 ## 最新
 
+### 22. 自訂 StreamBitRateStrategy 必須 forward 內建適應（2026-08）
+
+- **檔案：** `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、`Docs/RTMP_SOCKET_DESIGN.md`
+- **背景：** 用戶自訂 `StreamBitRateStrategy`（例如只想要統計 log）時，用 protocol 實作直接取代了內建 `StreamVideoAdaptiveBitRateStrategy`。內建策略**預設並未啟動**（`RTMPStream.bitRateStrategy` 預設 `nil`，需自行實例化），一旦被自訂策略取代，`.publishInsufficientBWOccured`（壅塞降速）、`.status`（回復 ratchet 爬升）、`.reset`（恢復 `lastStableBitRate`）三個行為全部消失 → bitrate 永遠釘在設定值，壅塞時只剩 SocketBackpressure 丟 pre-encode raw frame（最高 90%）→ 畫面凍結、音訊正常、`isStalling` 抑制 stall detector → 永不恢復。
+- **規範：** 自訂策略若**不打算自己處理壅塞適應**，必須用**組合（composition）**持有內建策略並 forward：
+  ```swift
+  final actor MyStrategy: StreamBitRateStrategy {
+      private let inner = StreamVideoAdaptiveBitRateStrategy(mamimumVideobitrate: max)
+      func adjustBitrate(_ event: NetworkMonitorEvent, stream: some StreamConvertible) async {
+          await inner.adjustBitrate(event, stream: stream)  // 保留內建適應
+          // 之後才做自己的統計/日誌（只讀 report，不碰 setVideoSettings）
+      }
+  }
+  ```
+- **禁止：** 直接 `setVideoSettings` 只做統計（會喪失壅塞降速）；`StreamVideoAdaptiveBitRateStrategy` 是 `final actor` 無法繼承，只能組合。
+
 ### 21. Stall Detection 改為 PTS 基準 + 恢復 ratchet 封頂（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`

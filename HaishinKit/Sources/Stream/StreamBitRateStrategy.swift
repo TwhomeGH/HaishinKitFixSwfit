@@ -1,6 +1,11 @@
 import Foundation
 
 /// A type with a network bitrate strategy representation.
+///
+/// - Note: 自訂策略若**不打算自己處理壅塞適應**，必須以組合（composition）持有
+///   `StreamVideoAdaptiveBitRateStrategy` 並在 `adjustBitrate` 中 `await inner.adjustBitrate(...)`
+///   forward。直接取代會喪失 `.publishInsufficientBWOccured` 降速 / `.status` 回復爬升 /
+///   `.reset` 復原三個行為（內建策略預設未啟動，需自行實例化）。詳見 Docs/CHANGELOG_RTMP_SOCKET.md #22。
 public protocol StreamBitRateStrategy: Sendable {
     /// The mamimum video bitRate.
     var mamimumVideoBitRate: Int { get }

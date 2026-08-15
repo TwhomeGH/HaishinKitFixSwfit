@@ -295,6 +295,8 @@ case .handshakeDone, .connected:
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | 移除 `.reset` 對 `frameInterval` 的寫入 | 符合「strategy 只調 bitRate」原則（frameInterval 是 user-only knob） |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `deriveVBV` 維持 current-target 縮放 | 從 max 推導會讓低目標失去約束 + dataRateLimits 變動觸發 session 重建；正確做法是目標不被 burst 拉高，ceiling 自然收斂 |
 
+> **⚠️ 用戶注意（2026-08）：** 內建 `StreamVideoAdaptiveBitRateStrategy` **預設不啟動**（`RTMPStream.bitRateStrategy` 預設 `nil`）。若你自訂 `StreamBitRateStrategy`（例如只想要統計 log）且**不打算自己處理壅塞適應**，必須用**組合**持有內建策略並 `await inner.adjustBitrate(event, stream:)` forward（三個行為：`.publishInsufficientBWOccured` 降速 / `.status` ratchet 爬升 / `.reset` 復原）。直接取代會讓 bitrate 永遠釘在設定值，壅塞時只剩 SocketBackpressure 丟 raw frame → 畫面凍結且 `isStalling` 抑制 stall detector 永不恢復。詳見 `CHANGELOG_RTMP_SOCKET.md #22`。
+
 #### B. Receive 安全重構：callback 遞迴 + actor hop
 
 **問題（原設計）：** `recv()` 用 `withCheckedThrowingContinuation` + `while connected` Task loop。
