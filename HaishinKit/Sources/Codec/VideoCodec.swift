@@ -58,7 +58,7 @@ final class VideoCodec {
     /// the user has not declared one — never a hardcoded 30fps guess.
     private var lastRawFramePTSSeconds: Double?
     private var measuredFrameInterval: Double?
-    private(set) var measuredFrameRate: Double? {
+    var measuredFrameRate: Double? {
         measuredFrameInterval.map { 1.0 / $0 }
     }
     /// Last frame rate pushed into the VT session (refresh throttle).
