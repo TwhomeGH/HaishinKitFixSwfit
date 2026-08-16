@@ -58,7 +58,7 @@ final class AudioCodec {
 
     /// This instance is running to process(true) or not(false).
     private var _isRunning = false
-    private var isRunning: Bool {
+    private(set) var isRunning: Bool {
         get {
             lock.lock()
             defer { lock.unlock() }
