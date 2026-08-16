@@ -7,7 +7,7 @@ enum VTSessionMode {
 
     private func makeCompressionSession(_ videoCodec: VideoCodec, profileLevel: String) throws -> any VTSessionConvertible {
         var session: VTCompressionSession?
-        var options = videoCodec.settings.makeOptions()
+        var options = videoCodec.settings.makeOptions(measuredFrameRate: videoCodec.measuredFrameRate)
         options.update(with: .init(key: .profileLevel, value: profileLevel as NSObject))
         var status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,

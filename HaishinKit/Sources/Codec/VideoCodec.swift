@@ -53,6 +53,57 @@ final class VideoCodec {
     private var frameCounter: Int = 0
     /// Last throttle adjustment time, minimum 500ms between steps.
     private var lastThrottleTime: Date = .distantPast
+    /// Measured source cadence from raw-frame PTS deltas (EMA). Basis for the
+    /// keyframe frame-count interval and the VT `expectedFrameRate` hint when
+    /// the user has not declared one — never a hardcoded 30fps guess.
+    private var lastRawFramePTSSeconds: Double?
+    private var measuredFrameInterval: Double?
+    private(set) var measuredFrameRate: Double? {
+        measuredFrameInterval.map { 1.0 / $0 }
+    }
+    /// Last frame rate pushed into the VT session (refresh throttle).
+    private var lastPushedFrameRate: Double?
+
+    /// EMA of the real frame cadence from sample-buffer PTS deltas. Ignored
+    /// frames (useFrame filter / drop ratio) don't advance the source clock —
+    /// the source keeps delivering, so measure on every delivered raw frame.
+    private func updateMeasuredFrameRate(_ presentationTimeStamp: CMTime) {
+        let seconds = presentationTimeStamp.seconds
+        guard seconds.isFinite, 0 < seconds else {
+            return
+        }
+        if let last = lastRawFramePTSSeconds {
+            let delta = seconds - last
+            if delta.isFinite, 0 < delta {
+                if let current = measuredFrameInterval {
+                    measuredFrameInterval = current * 0.8 + delta * 0.2
+                } else {
+                    measuredFrameInterval = delta
+                }
+            }
+        }
+        lastRawFramePTSSeconds = seconds
+    }
+
+    /// Push the measured cadence into the VT session once it settles (session
+    /// is created on the first frame, before any delta is measurable). Only
+    /// when the user hasn't declared `expectedFrameRate`.
+    private func refreshMeasuredRateOptions() {
+        guard settings.expectedFrameRate == nil,
+              let measuredFrameRate, measuredFrameRate.isFinite, 0 < measuredFrameRate,
+              let session
+        else {
+            return
+        }
+        if let last = lastPushedFrameRate, abs(measuredFrameRate - last) / last <= 0.1 {
+            return
+        }
+        lastPushedFrameRate = measuredFrameRate
+        _ = session.setOption(.init(key: .expectedFrameRate, value: measuredFrameRate as CFNumber))
+        for option in settings.makeKeyFrameIntervalOptions(measuredFrameRate: measuredFrameRate) {
+            _ = session.setOption(option)
+        }
+    }
 
     private func resetSessionState(reason: @autoclosure () -> String, clearInputFormat: Bool) {
         logger.info("VideoCodec reset session:", reason())
@@ -67,6 +118,9 @@ final class VideoCodec {
         dropRatio = 1
         frameCounter = 0
         lastThrottleTime = .distantPast
+        lastRawFramePTSSeconds = nil
+        measuredFrameInterval = nil
+        lastPushedFrameRate = nil
     }
 
     /// Adaptive frame throttle: pre-encode drop-ratio gate. Only engages when VT is
@@ -106,6 +160,9 @@ final class VideoCodec {
         guard isRunning else {
             logger.debug("VideoCodec.append dropped: encoder not running")
             return
+        }
+        if sampleBuffer.formatDescription?.isCompressed == false {
+            updateMeasuredFrameRate(sampleBuffer.presentationTimeStamp)
         }
         do {
             inputFormat = sampleBuffer.formatDescription
@@ -160,6 +217,7 @@ final class VideoCodec {
                 onLog?("[60FPS Debug] pending frames = \(pending)")
             }
         }
+        refreshMeasuredRateOptions()
     }
 
     func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
@@ -245,5 +303,8 @@ extension VideoCodec: Runner {
         dropRatio = 1
         frameCounter = 0
         lastThrottleTime = .distantPast
+        lastRawFramePTSSeconds = nil
+        measuredFrameInterval = nil
+        lastPushedFrameRate = nil
     }
 }

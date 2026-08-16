@@ -2,6 +2,15 @@
 
 ## 最新
 
+### 23. Keyframe 幀數約束改以 sample buffer 實測幀率為基準（2026-08）
+
+- **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`、`HaishinKit/Sources/Codec/VideoCodecSettings.swift`、`HaishinKit/Sources/Codec/VTSessionMode.swift`、`HaishinKit/Tests/Codec/VideoCodecSettingsTests.swift`
+- **問題：** `maxKeyFrameInterval`（幀數）在 `expectedFrameRate` 未設定時用 `30.0` 兜底 → 60 幀。VFR 螢幕擷取實際 41~49fps 下 60 幀 ≈ 1.2~1.5s，比 `MaxKeyFrameIntervalDuration = 2s` 先觸發 → 伺服器量到 ~1s keyframe interval。
+- **修正：**
+  - `VideoCodec` 以 raw frame PTS delta 做 EMA 測量真實幀率（`measuredFrameRate`），session 建立後一併 refresh 到 VT
+  - 幀數基準優先序：`frameInterval` > `expectedFrameRate` > `measuredFrameRate` > **不設幀數約束**（不再猜 30fps；VFR 下只靠 duration 才是正確機制）
+  - 來源幀率未知時，以測量值作為 VT `expectedFrameRate` hint（官方要求 bitrate 與 frame rate 一致，避免 VT 用 30fps 假設算每幀 bit budget）
+
 ### 22. 自訂 StreamBitRateStrategy 必須 forward 內建適應（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、`Docs/RTMP_SOCKET_DESIGN.md`

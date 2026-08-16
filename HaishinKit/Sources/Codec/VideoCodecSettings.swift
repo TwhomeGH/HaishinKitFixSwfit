@@ -290,7 +290,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         if maxKeyFrameIntervalDuration != rhs.maxKeyFrameIntervalDuration ||
             expectedFrameRate != rhs.expectedFrameRate ||
             frameInterval != rhs.frameInterval {
-            for option in makeKeyFrameIntervalOptions() {
+            for option in makeKeyFrameIntervalOptions(measuredFrameRate: codec.measuredFrameRate) {
                 _ = codec.session?.setOption(option)
             }
         }
@@ -345,7 +345,7 @@ public struct VideoCodecSettings: Codable, Sendable {
     }
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
-    func makeOptions() -> Set<VTSessionOption> {
+    func makeOptions(measuredFrameRate: Double? = nil) -> Set<VTSessionOption> {
         let isBaseline = profileLevel.contains("Baseline")
         var options = Set<VTSessionOption>([
             .init(key: .realTime, value: kCFBooleanTrue),
@@ -358,7 +358,7 @@ public struct VideoCodecSettings: Codable, Sendable {
                 "ScalingMode": scalingMode.rawValue
             ] as NSObject)
         ])
-        options.formUnion(makeKeyFrameIntervalOptions())
+        options.formUnion(makeKeyFrameIntervalOptions(measuredFrameRate: measuredFrameRate))
         if bitRateMode == .average || bitRateMode == .variable {
             let limits0 = dataRateLimits?[0] ?? 0
             let limits1 = dataRateLimits?[1] ?? 0
@@ -402,6 +402,10 @@ public struct VideoCodecSettings: Codable, Sendable {
         }
         if let expectedFrameRate {
             options.insert(.init(key: .expectedFrameRate, value: expectedFrameRate as CFNumber))
+        } else if let measuredFrameRate, measuredFrameRate.isFinite, 0 < measuredFrameRate {
+            // 官方要求 average bitrate 與 frame rate 一致；來源幀率未知時
+            // 以 sample buffer 測量值作為 VT hint，避免 VT 用 30fps 假設算每幀 bit budget。
+            options.insert(.init(key: .expectedFrameRate, value: measuredFrameRate as CFNumber))
         }
         #if os(macOS)
         if isHardwareAcceleratedEnabled {
@@ -421,12 +425,17 @@ public struct VideoCodecSettings: Codable, Sendable {
         return options
     }
 
-    func makeKeyFrameIntervalOptions() -> Set<VTSessionOption> {
+    /// 幀數型 keyframe 約束的基準：
+    /// 1. `frameInterval`（用戶明確指定）→ `1/frameInterval`
+    /// 2. `expectedFrameRate`（用戶明確指定）→ 直接用
+    /// 3. `measuredFrameRate`（VideoCodec 從 sample buffer PTS 測量的真實幀率）→ 用測量值
+    /// 4. 以上皆無 → **不設幀數約束**（不再用 30fps 猜測；VFR 來源下幀數無意義，只靠 duration）
+    func makeKeyFrameIntervalOptions(measuredFrameRate: Double? = nil) -> Set<VTSessionOption> {
         let duration = effectiveMaxKeyFrameIntervalDuration
         var options = Set<VTSessionOption>([
             .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: duration))
         ])
-        if let maxKeyFrameInterval {
+        if let maxKeyFrameInterval(measuredFrameRate: measuredFrameRate) {
             options.insert(.init(key: .maxKeyFrameInterval, value: NSNumber(value: maxKeyFrameInterval)))
         }
         return options
@@ -443,7 +452,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         maxKeyFrameIntervalDuration > 0 ? maxKeyFrameIntervalDuration : 2
     }
 
-    private var maxKeyFrameInterval: Int32? {
+    private func maxKeyFrameInterval(measuredFrameRate: Double?) -> Int32? {
         let duration = effectiveMaxKeyFrameIntervalDuration
         guard 0 < duration else {
             return nil
@@ -453,10 +462,9 @@ public struct VideoCodecSettings: Codable, Sendable {
             frameRate = 1.0 / frameInterval
         } else if let expectedFrameRate {
             frameRate = expectedFrameRate
+        } else if let measuredFrameRate, measuredFrameRate.isFinite, 0 < measuredFrameRate {
+            frameRate = measuredFrameRate
         } else {
-            frameRate = 30.0
-        }
-        guard frameRate.isFinite, 0 < frameRate else {
             return nil
         }
         let interval = (Double(maxKeyFrameIntervalDuration) * frameRate).rounded(.up)
