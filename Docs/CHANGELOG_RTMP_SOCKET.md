@@ -2,6 +2,19 @@
 
 ## 最新
 
+### 24. AudioCodec 遷移到專用 serial queue（消除 A/V 不同步）（2026-08）
+
+- **檔案：** `HaishinKit/Sources/Codec/AudioCodec.swift`
+- **問題：** AAC 編碼（`AudioCodec.append`，含無界 drain 迴圈）同步跑在 `RTMPStream` actor 內，與 video append / socket send / backpressure update 爭搶 actor。video 早已解耦（`videoInputStream` → 獨立 task → 硬體 VT），audio 沒有 → actor 忙碌時音訊延遲送達 → 落後 video（A/V 不同步）。
+- **修正：**
+  - `AudioCodec` 內部掛 serial DispatchQueue（`.userInitiated`），所有處理（AAC 轉碼、converter 建立、settings 套用、start/stop 重置）統一 dispatch 到 queue；呼叫端 `append` 立即返回。
+  - `settings` 以 NSLock 保護（外部 actor 讀寫 + queue 內部處理），setter 同步更新值並 `queue.async` 套用到 converter — 保證下一次 append 前已生效。
+  - `outputFormat` 改 `queue.sync`（官方允許的「讀取計算結果」用法，只在 off-queue 呼叫；內部一律直接讀 `audioConverter`，避免 queue 內 `sync` 死鎖）。
+  - **全程非阻塞，不用 `queue.sync` 做排水**：`append` 在 enqueue 當下 capture continuation；`stopRunning` 把舊 continuation 以 `queue.async` 排到 queue 尾巴 finish — 排在所有 pending block 之後（它們看到 `isRunning=false` 會跳過），等同排水效果但無 sync 死鎖/thread 阻塞風險（Apple 官方文件明示 sync 是 blocking、main queue sync 會 deadlock）。
+  - `startRunning` 的 stream 建立保持同步（consumer 需要立刻讀 `outputStream`），狀態重置走 queue。
+  - 單執行緒保證由 queue 提供：converter / ringBuffer / buffers / audioTime 只在 queue 上被碰觸；`settings` / `isRunning` 以 NSLock 保護。
+- **注意：** 不改 timestamp 語意、不改 HE-AAC format。若剩餘 A/V 落差仍存在，再量 `ΔaudioPTS/Δwall` vs `ΔvideoPTS/Δwall` 確認是否為 timestamp 漂移（見 #23 思路），目前證據（`audioFrames=43~45/s`）指向送達延遲而非漂移。
+
 ### 23. Keyframe 幀數約束改以 sample buffer 實測幀率為基準（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`、`HaishinKit/Sources/Codec/VideoCodecSettings.swift`、`HaishinKit/Sources/Codec/VTSessionMode.swift`、`HaishinKit/Tests/Codec/VideoCodecSettingsTests.swift`

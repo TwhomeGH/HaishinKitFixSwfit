@@ -6,25 +6,70 @@ final class AudioCodec {
     static let defaultFrameCapacity: UInt32 = 1024
     static let defaultInputBuffersCursor = 0
 
-    var settings: AudioCodecSettings = .default {
-        didSet {
-            if settings.invalidateConverter(oldValue) {
-                inputFormat = nil
-            } else {
-                settings.apply(audioConverter, oldValue: oldValue)
+    // 專用 serial queue：所有 AudioCodec 處理（AAC 轉碼、converter 建立、
+    // settings 套用、start/stop 重置）都排到這裡，呼叫端（RTMPStream actor /
+    // IncomingStream）的 append 立即返回 — AAC 編碼不再與 video 爭搶 actor，
+    // 消除「audio 延遲送達 → 落後 video」的 A/V 不同步來源。
+    //
+    // 刻意不用 `queue.sync` 做等待/排水：sync 是 blocking（Apple 官方文件明示
+    // sync 會阻塞呼叫執行緒、main queue 上 sync 會 deadlock、blocking 會造成
+    // thread 耗盡）。跨 run 的殘留 block 改由「enqueue 時 capture continuation」
+    // +「stop 時以 async finish 排到 queue 尾巴」處理，全程非阻塞。
+    private let queue = DispatchQueue(label: "com.haishinkit.HaishinKit.AudioCodec", qos: .userInitiated)
+    // settings / isRunning 會被外部 actor 與 queue 同時讀寫，用 lock 保護；
+    // 內部處理一律以 capture 的 newSettings / continuation 進行，只在 queue 上
+    // 碰 converter 狀態（單執行緒 by construction）。
+    private let lock = NSLock()
+    private var _settings = AudioCodecSettings.default
+    /// Specifies the audio compression properties.
+    var settings: AudioCodecSettings {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _settings
+        }
+        set {
+            lock.lock()
+            let previous = _settings
+            _settings = newValue
+            lock.unlock()
+            queue.async { [weak self] in
+                self?.applySettings(newValue, previous: previous)
             }
         }
     }
 
+    /// The output format of the converter. Queue-serialized so callers (and
+    /// tests) observe a consistent value after pending appends have processed.
+    /// This is the documented legitimate use of `sync` (read a computed result);
+    /// it is only called off-queue. Internal code must read
+    /// `audioConverter?.outputFormat` directly (never this property) to avoid a
+    /// `queue.sync` deadlock from inside the queue.
     var outputFormat: AVAudioFormat? {
-        return audioConverter?.outputFormat
+        queue.sync {
+            audioConverter?.outputFormat
+        }
     }
 
     var outputStream = AsyncStream<(AVAudioBuffer, AVAudioTime)> { _ in }
+    // outputContinuation 只在呼叫端執行緒（actor）被 start/stop/append 讀寫，
+    // queue 上永遠用 append 當下 capture 的 continuation，不直接讀此屬性。
     private var outputContinuation: AsyncStream<(AVAudioBuffer, AVAudioTime)>.Continuation?
 
     /// This instance is running to process(true) or not(false).
-    private(set) var isRunning = false
+    private var _isRunning = false
+    private var isRunning: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _isRunning
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _isRunning = newValue
+        }
+    }
     private(set) var inputFormat: AVAudioFormat? {
         didSet {
             guard inputFormat != oldValue else {
@@ -48,7 +93,26 @@ final class AudioCodec {
     private var audioConverter: AVAudioConverter?
     private var inputBuffersCursor = AudioCodec.defaultInputBuffersCursor
 
+    /// Applies a settings change on the dedicated queue. Converter state is only
+    /// ever mutated here / inside `process` — single-threaded by construction.
+    private func applySettings(_ newSettings: AudioCodecSettings, previous: AudioCodecSettings) {
+        if newSettings.invalidateConverter(previous) {
+            inputFormat = nil
+        } else {
+            newSettings.apply(audioConverter, oldValue: previous)
+        }
+    }
+
     func append(_ sampleBuffer: CMSampleBuffer) {
+        // capture 當下 continuation：跨 stop→start 的殘留 block 只會把資料
+        // yield 給舊（已 finish / 無 consumer）的 continuation，不會污染新 run。
+        let continuation = outputContinuation
+        queue.async { [weak self] in
+            self?.process(sampleBuffer, continuation: continuation)
+        }
+    }
+
+    private func process(_ sampleBuffer: CMSampleBuffer, continuation: AsyncStream<(AVAudioBuffer, AVAudioTime)>.Continuation?) {
         guard isRunning else {
             logger.debug("AudioCodec.append(CMSampleBuffer) dropped: encoder not running")
             return
@@ -71,7 +135,7 @@ final class AudioCodec {
                 buffer.byteLength = UInt32(byteCount)
                 if let blockBuffer = sampleBuffer.dataBuffer {
                     CMBlockBufferCopyDataBytes(blockBuffer, atOffset: offset + ADTSHeader.size, dataLength: byteCount, destination: buffer.data)
-                    append(buffer, when: presentationTimeStamp.makeAudioTime())
+                    process(buffer, when: presentationTimeStamp.makeAudioTime(), continuation: continuation)
                     presentationTimeStamp = CMTimeAdd(presentationTimeStamp, CMTime(value: CMTimeValue(1024), timescale: sampleBuffer.presentationTimeStamp.timescale))
                     offset += sampleSize
                 }
@@ -82,9 +146,20 @@ final class AudioCodec {
     }
 
     func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
+        let continuation = outputContinuation
+        queue.async { [weak self] in
+            self?.process(audioBuffer, when: when, continuation: continuation)
+        }
+    }
+
+    private func process(_ audioBuffer: AVAudioBuffer, when: AVAudioTime, continuation: AsyncStream<(AVAudioBuffer, AVAudioTime)>.Continuation?) {
+        guard isRunning else {
+            logger.debug("AudioCodec.append(AVAudioBuffer) dropped: encoder not running")
+            return
+        }
         inputFormat = audioBuffer.format
-        guard let audioConverter, isRunning else {
-            logger.debug("AudioCodec.append(AVAudioBuffer) dropped: converter=\(audioConverter != nil) running=\(isRunning)")
+        guard let audioConverter else {
+            logger.debug("AudioCodec.append(AVAudioBuffer) dropped: converter=\(audioConverter != nil)")
             return
         }
         var error: NSError?
@@ -130,9 +205,9 @@ final class AudioCodec {
             case .haveData:
                 if audioTime.hasAnchor {
                     audioTime.advanced(AVAudioFramePosition(audioConverter.outputFormat.streamDescription.pointee.mFramesPerPacket))
-                    outputContinuation?.yield((outputBuffer, audioTime.at))
+                    continuation?.yield((outputBuffer, audioTime.at))
                 } else {
-                    outputContinuation?.yield((outputBuffer, audioTime.at))
+                    continuation?.yield((outputBuffer, audioTime.at))
                 }
                 inputBuffersCursor += 1
                 if inputBuffersCursor == inputBuffers.count {
@@ -169,7 +244,7 @@ final class AudioCodec {
         if inputFormat.formatDescription.mediaSubType == .linearPCM {
             ringBuffer = AudioRingBuffer(inputFormat)
         }
-        if self.outputFormat?.sampleRate != outputFormat.sampleRate {
+        if audioConverter?.outputFormat.sampleRate != outputFormat.sampleRate {
             audioTime.reset()
         }
         if logger.isEnabledFor(level: .info) {
@@ -210,13 +285,19 @@ extension AudioCodec: Runner {
         guard !isRunning else {
             return
         }
+        // Stream 必須同步建立：consumer 在 startRunning 後立刻讀 outputStream。
         let (stream, continuation) = AsyncStream.makeStream(of: (AVAudioBuffer, AVAudioTime).self)
         outputStream = stream
         outputContinuation = continuation
-        audioTime.reset()
-        ringBuffer?.reset()
-        audioConverter?.reset()
         isRunning = true
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            audioTime.reset()
+            ringBuffer?.reset()
+            audioConverter?.reset()
+        }
     }
 
     func stopRunning() {
@@ -224,7 +305,13 @@ extension AudioCodec: Runner {
             return
         }
         isRunning = false
-        outputContinuation?.finish()
+        // 舊 continuation 以 async 排到 queue 尾巴 finish：它在所有 pending
+        // process block 之後執行（那些 block 看到 isRunning=false 會跳過），
+        // 等同排水效果，但全程非阻塞、無 sync 死鎖風險。
+        let old = outputContinuation
         outputContinuation = nil
+        queue.async { [old] in
+            old?.finish()
+        }
     }
 }
