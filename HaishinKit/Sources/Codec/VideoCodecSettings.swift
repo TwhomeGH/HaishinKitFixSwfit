@@ -435,7 +435,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         var options = Set<VTSessionOption>([
             .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: duration))
         ])
-        if let maxKeyFrameInterval(measuredFrameRate: measuredFrameRate) {
+        if let maxKeyFrameInterval = maxKeyFrameInterval(measuredFrameRate: measuredFrameRate) {
             options.insert(.init(key: .maxKeyFrameInterval, value: NSNumber(value: maxKeyFrameInterval)))
         }
         return options
