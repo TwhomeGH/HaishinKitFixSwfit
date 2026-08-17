@@ -2,6 +2,14 @@
 
 ## 最新
 
+### 25. RTMPConnection.close() 等待 output consumer flush 後才關 socket（2026-08）
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- **問題（stop 訊號切斷 / 掉幀）：** `close()` 的順序是 `outputContinuation?.finish()` → `socket?.drain()` → `socket?.close()`。`FCUnpublish`/`deleteStream`（`deleteStream()` 用 `async let` 送出）與尾幀只被 yield 進 `outputContinuation`（AsyncStream），實際 `socket.send` 在非結構化 consumer Task（`startOutputConsumer`）非同步執行。若 `drain()` 檢查時 consumer 尚未把資料 push 進 sendQueue → sendQueue 空 → drain 立即返回 → `socket.close()` 清掉緩衝 → consumer 醒來 `socket.send` 回報 "not connected" → **最終 RTMP 指令與尾幀被丟棄**。
+- **修正：** 把 consumer Task 存為 `outputConsumerTask`，`close()` 在 `finish()` 後 **`await outputConsumerTask?.value`**（consumer 消化完所有緩衝並送進 socket send queue），再 `drain()`（等 sendQueue 上 wire）+ `socket?.close()`。
+- **為什麼不用 `Task.detached`：** 問題是 `close()` 沒 `await` consumer，不是耦合度；detached 反而無法被追蹤/等待。
+- **stream 層不需另修：** stream 的 outputContinuation 是 FIFO，`close()`/`deleteStream()` await 伺服器 response 表示先前幀已送達 wire，stream 層緩衝自然清空；缺口只在 connection 層。
+
 ### 24. AudioCodec 遷移到專用 serial queue（消除 A/V 不同步）（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Codec/AudioCodec.swift`

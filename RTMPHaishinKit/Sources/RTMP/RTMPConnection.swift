@@ -608,6 +608,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
         outputContinuation?.finish()
         outputContinuation = nil
+        // 等待 output consumer 把緩衝資料（FCUnpublish / deleteStream / 尾幀）
+        // 全部送進 socket send queue，再 drain + close。若不 await，consumer 可能
+        // 在 socket 關閉後才 flush → 最終訊息/尾幀被丟掉。
+        await outputConsumerTask?.value
         try? await socket?.drain()
         await socket?.close()
         await networkMonitor?.stopRunning()
@@ -663,12 +667,18 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private var outputBacklogBytes = 0
     private let outputBacklogLock = NSLock()
+    /// The task draining `outputContinuation` into the socket. `close()` awaits it
+    /// so the final buffered messages (FCUnpublish / deleteStream / trailing media
+    /// frames) reach the socket's send queue before `drain()` + `close()` — otherwise
+    /// the consumer may flush after the socket is torn down and the data is dropped
+    /// ("stop 時少送完" / 訊號沒傳遞下去)。
+    private var outputConsumerTask: Task<Void, Never>?
 
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
         let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
         outputContinuation = continuation
-        Task {
+        outputConsumerTask = Task {
             for await data in stream {
                 outputBacklogLock.withLock { outputBacklogBytes += data.count }
                 await socket.send(data)
