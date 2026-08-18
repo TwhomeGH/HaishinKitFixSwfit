@@ -226,6 +226,11 @@ public actor RTMPStream {
     private var videoStallCount: Int = 0
     private var videoSourceStallCount: Int = 0
     private var audioStallCount: Int = 0
+    /// A/V resync 門檻：audio wire 時間落後 video playhead 超過此值時，把 audio
+    /// 時間戳 clamp 到 video 附近並讓時間軸一次跳進（落後區間內容被跳過），
+    /// 避免 player 因長期 A/V 偏移而棄音/靜音。健康時偏移 < 門檻不觸發。
+    static let maxAudioBehindVideoSeconds: TimeInterval = 0.5
+    private var audioResyncCount = 0
     private let inflowLock = NSLock()
     /// Congestion signal owned by RTMPConnection. Read from the nonisolated
     /// mixer path to drop raw frames *before* encoding when the network can't
@@ -1013,7 +1018,11 @@ extension RTMPStream: _Stream {
             // timestamp advances so the type-0 header rides the wire position
             // of the previous frame.
             audioFormat = audioBuffer.format
-            let timedelta = audioTimestamp.update(when, source: "audio")
+            // A/V resync：音訊 capture 時間落後 video playhead 超過門檻時，把
+            // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
+            // 區間的音訊內容被跳過（丟棄舊資料），player 重新對齊而非靜音。
+            let resyncedWhen = resyncedAudioTime(original: when)
+            let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true)
             guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                 return
@@ -1039,6 +1048,28 @@ extension RTMPStream: _Stream {
                 }
             }
         }
+    }
+
+    /// A/V resync helper：audio wire 時間落後 video playhead 超過
+    /// `maxAudioBehindVideoSeconds` 時，把音訊時間戳 clamp 到 video 附近並回傳
+    /// （由呼叫端以 `allowJump: true` 讓時間軸一次跳進）。健康時（偏移 < 門檻）
+    /// 原樣回傳。若兩者時鐘基座不同導致常態誤差，此守衛會把音訊釘在 video
+    /// 附近 — 這正是「丟棄落後舊資料」的等價行為，避免 player 長期棄音。
+    private func resyncedAudioTime(original when: AVAudioTime) -> AVAudioTime {
+        let videoPosition = videoTimestamp.updatedAt
+        guard 0 <= videoPosition else {
+            return when
+        }
+        let behind = videoPosition - when.seconds
+        guard Self.maxAudioBehindVideoSeconds < behind else {
+            return when
+        }
+        audioResyncCount += 1
+        if audioResyncCount % 60 == 1 {
+            Task { await connection?.log(.warn, "audio resync: audio behind video, clamping to playhead", detail: "behind=\(String(format: "%.3f", behind))s video=\(String(format: "%.3f", videoPosition)) audio=\(String(format: "%.3f", when.seconds)) count=\(audioResyncCount)") }
+        }
+        let clampedSeconds = videoPosition - Self.maxAudioBehindVideoSeconds
+        return AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: clampedSeconds))
     }
 
     public func dispatch(_ event: NetworkMonitorEvent) async {
@@ -1072,8 +1103,15 @@ extension RTMPStream: _Stream {
                 await connection?.log(.warn, "publish status gap", detail: "interval=\(interval) videoInputFrames=\(videoInputFrames) frameCount=\(frameCount) inputPTS=\(inputPTS)")
             }
             if audioSentFrames > 0 || audioInputFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
+                // videoPTS / audioPTS = 各自「最後一幀」的原始 capture 時間（host time）。
+                // 兩者不會逐幀相等：1) 取樣時刻不同（video/audio 幀交錯）2) 兩子系統
+                // 時鐘基座可能有固定 offset。要看的是 avOffset 是否「固定」還是「增長」：
+                // 固定 = 健康；持續增大 = 兩時鐘漂移（player 可能因此棄音/凍結畫面）。
+                let videoPTS = videoTimestamp.updatedAt
+                let audioPTS = audioTimestamp.updatedAt
+                let avOffset = videoPTS - audioPTS
                 await connection?.log(.debug, "publish throughput",
-                    detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes)")
+                    detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes) videoPTS=\(String(format: "%.3f", videoPTS))s audioPTS=\(String(format: "%.3f", audioPTS))s avOffset=\(String(format: "%.3f", avOffset))s")
             }
             if videoInputFrames > Int(frameCount) * 2, videoInputFrames > 10 {
                 await connection?.log(.warn, "publish frame loss",

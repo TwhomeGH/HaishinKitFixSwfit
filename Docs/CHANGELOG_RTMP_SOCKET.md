@@ -2,6 +2,16 @@
 
 ## 最新
 
+### 26. Audio A/V resync 守衛 + wire 層偏移監測（2026-08）
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`
+- **背景：** 長推流出現「音訊 bytes 正常送出（44/s）但 player 靜音」，疑似 audio wire 時間軸落後 video 過多 → player 棄音。
+- **修正：**
+  - `RTMPTimestamp.update(_:source:allowJump:)` 新增 `allowJump`（僅音訊 resync 用）：允許一次向前大跳讓落後音訊時間軸直接跳進同步範圍；倒退 clamp 保持不變、video 路徑不傳 `allowJump`（行為不變）。
+  - `RTMPStream` compressed audio append 加入 resync 守衛：audio 落後 video playhead > 0.5s 時，把音訊時間戳 clamp 到 video 附近並 `allowJump` — 落後區間內容被跳過（丟棄舊資料），時間軸重新對齊。健康時（偏移 < 0.5s）完全不觸發，零副作用。觸發會 `warn` log（每 60 次）。
+  - `publish throughput` log 新增 `avOffset`（video - audio wire 位置，正=音訊落後）：固定常數=健康，持續增大=兩時鐘漂移。
+- **注意：** 此為**安全網**，非主嫌疑。音訊編碼管線本身（44 packets/s、每包 ~2ms）不可能自行落後；若 `avOffset` 恆定小值，問題應在格式（HE-AAC，檢查 `audio: AAC sequence header type=`）或**送達延遲**（app 端 DSP / socket 壅塞使音訊帶舊時間戳晚到 → player 視為 stale 丟棄）。
+
 ### 25. RTMPConnection.close() 等待 output consumer flush 後才關 socket（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`

@@ -28,7 +28,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     // wire-cumulative position, not the camera-relative PTS and not 0.
     private(set) var cumulativeTime: TimeInterval = kRTMPTimestamp_defaultTimeInterval
 
-    mutating func update(_ value: T, source: String = "") -> UInt32 {
+    mutating func update(_ value: T, source: String = "", allowJump: Bool = false) -> UInt32 {
         if startedAt == 0 {
             startedAt = value.seconds
             updatedAt = value.seconds
@@ -43,7 +43,12 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         //    上一次正常 delta 維持平滑，避免巨大 timestamp 跳變讓下游誤判為
         //    gap/seek → 畫面凍結、音訊中斷、AV 自動修正（斷流）
         // 這樣基準跳變時 wire 時間戳仍單調連續，下游完全察覺不到跳變。
-        if timedelta < 0 || timedelta > kRTMPTimestamp_maxDelta {
+        // allowJump（僅音訊 A/V resync 用）：允許一次向前大跳，讓落後到 video
+        // 之後的音訊時間軸直接跳進同步範圍，而非以 2000ms 上限慢慢追。
+        if timedelta < 0 {
+            logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
+            timedelta = lastNormalDelta
+        } else if timedelta > kRTMPTimestamp_maxDelta, !allowJump {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
             timedelta = lastNormalDelta
         }

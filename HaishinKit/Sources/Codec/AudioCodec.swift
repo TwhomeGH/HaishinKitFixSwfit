@@ -141,7 +141,9 @@ final class AudioCodec {
                 }
             }
         default:
-            break
+            // 編碼模式收到 CMSampleBuffer：編碼路徑預期 AVAudioPCMBuffer
+            // （append(_:when:)），此輸入格式不符 — 不靜默丟棄，留下可視痕跡。
+            logger.warn("AudioCodec.append(CMSampleBuffer) ignored: format=\(settings.format.audioDescription) expects AVAudioPCMBuffer input")
         }
     }
 
