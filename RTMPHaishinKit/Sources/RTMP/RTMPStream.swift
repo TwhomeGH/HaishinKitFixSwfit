@@ -1301,9 +1301,14 @@ private extension AVAudioCompressedBuffer {
             }
         }
         let framesPerPacket = format.streamDescription.pointee.mFramesPerPacket
-        guard framesPerPacket > 0 else {
+        if framesPerPacket > 0 {
+            return TimeInterval(framesPerPacket * UInt32(packetCount)) / sampleRate
+        }
+        switch format.streamDescription.pointee.mFormatID {
+        case kAudioFormatMPEG4AAC, kAudioFormatMPEG4AAC_HE, kAudioFormatMPEG4AAC_HE_V2:
+            return TimeInterval(1024 * packetCount) / sampleRate
+        default:
             return nil
         }
-        return TimeInterval(framesPerPacket * UInt32(packetCount)) / sampleRate
     }
 }

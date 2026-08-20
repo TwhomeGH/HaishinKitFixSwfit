@@ -46,6 +46,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         // 這樣基準跳變時 wire 時間戳仍單調連續，下游完全察覺不到跳變。
         // allowJump（僅音訊 A/V resync 用）：允許一次向前大跳，讓落後到 video
         // 之後的音訊時間軸直接跳進同步範圍，而非以 2000ms 上限慢慢追。
+        let usesPreferredDelta = preferredDelta != nil
         if let preferredDelta {
             let preferredTimedelta = preferredDelta * 1000
             // Compressed audio packets carry a fixed media duration. Ignore
@@ -69,10 +70,15 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
             timedeltaFraction -= 1
             timedelta += 1
         }
-        updatedAt = value.seconds
-        cumulativeTime += timedelta / 1000
-        lastNormalDelta = timedelta
-        return UInt32(timedelta)
+        let wireTimedelta = TimeInterval(UInt32(timedelta))
+        if usesPreferredDelta {
+            updatedAt += wireTimedelta / 1000
+        } else {
+            updatedAt = value.seconds
+        }
+        cumulativeTime += wireTimedelta / 1000
+        lastNormalDelta = wireTimedelta
+        return UInt32(wireTimedelta)
     }
 
     mutating func update(_ message: some RTMPMessage, chunkType: RTMPChunkType) {

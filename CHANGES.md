@@ -18,13 +18,15 @@
 - `RTMPStream` audio raw packet 發送改用 `AVAudioCompressedBuffer.packetDuration`
   - 優先讀 packet description 的 `mVariableFramesInPacket`
   - 無 packet description 時 fallback 到 ASBD `mFramesPerPacket`
+  - AAC 類格式若 ASBD `mFramesPerPacket` 為 0，固定 fallback 到 `1024 / sampleRate`
+- `preferredDelta` 路徑的 `updatedAt` / `cumulativeTime` 改為累加實際送出的整數 RTMP ms，避免內部時間軸與 wire timestamp 分裂
 - 保留既有 A/V resync 安全網：小抖動用 packet duration 平滑；若 audio source time 真的落後超過約 500ms，仍允許一次大跳追到 video 附近
-- 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC 仍輸出 `23/23/24ms` 的 RTMP delta
+- 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC 仍輸出約 `23/23/23/23/24ms` 的 RTMP delta
 
 **效果**：
 - 不改 AAC payload、不改 sequence header
 - FLV/RTMP audio timestamp 依壓縮音訊 media duration 單調平滑前進
-- 診斷頁 audio 間距應由 `20/36/37ms` 改為接近 `23/23/24ms`，降低播放器將合法 AAC 誤排程成斷續音訊的機率
+- 診斷頁 audio 間距應由 `20/36/37ms` 改為接近 `23/23/23/23/24ms`，降低播放器將合法 AAC 誤排程成斷續音訊的機率
 
 ---
 

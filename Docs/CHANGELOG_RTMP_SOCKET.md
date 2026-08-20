@@ -8,10 +8,11 @@
 - **診斷：** SRS 推流診斷頁確認 AAC payload 本身合規（sequence header `AF 00 12 10`、raw frame `AF 01`），但 FLV audio tag timestamp 間距出現 `20ms` 與 `36/37ms` 交錯。44.1k AAC 每個 1024-sample packet 的 media duration 應約 `23.22ms`，因此問題不是 AAC frame bytes，而是 wire timestamp cadence 被上游 callback / resample 排程抖動污染。
 - **修正：**
   - `RTMPTimestamp.update` 新增 `preferredDelta`，可讓呼叫端指定「媒體包本身代表的時間長度」。
-  - `RTMPStream` compressed audio append 改用 `AVAudioCompressedBuffer.packetDuration` 作為 audio RTMP delta：優先讀 packet description 的 `mVariableFramesInPacket`，無資料時 fallback 到 ASBD `mFramesPerPacket`。
+  - `RTMPStream` compressed audio append 改用 `AVAudioCompressedBuffer.packetDuration` 作為 audio RTMP delta：優先讀 packet description 的 `mVariableFramesInPacket`，無資料時 fallback 到 ASBD `mFramesPerPacket`；AAC 類格式若 ASBD 仍為 0，固定 fallback 到 `1024 / sampleRate`。
+  - `preferredDelta` 路徑的 `updatedAt` / `cumulativeTime` 改為累加實際送出的整數 RTMP ms，避免內部時間軸與 wire timestamp 分裂。
   - 保留既有 audio A/V resync 守衛：小抖動一律忽略，但若 source time 真的落後超過約 500ms，仍允許一次大跳追到 video 附近。
-  - 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC packet 仍輸出 `23/23/24ms` 的 RTMP delta。
-- **效果：** 不改 AAC payload、不改 sequence header，只讓 FLV/RTMP audio timestamp 依壓縮音訊的實際 media duration 單調平滑前進。診斷頁的 audio 間距應由 `20/36/37ms` 改為接近 `23/23/24ms`，降低播放器把合法 AAC 誤排程成斷續音訊的機率。
+  - 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC packet 仍輸出約 `23/23/23/23/24ms` 的 RTMP delta。
+- **效果：** 不改 AAC payload、不改 sequence header，只讓 FLV/RTMP audio timestamp 依壓縮音訊的實際 media duration 單調平滑前進。診斷頁的 audio 間距應由 `20/36/37ms` 改為接近 `23/23/23/23/24ms`，降低播放器把合法 AAC 誤排程成斷續音訊的機率。
 
 ### 26. Audio A/V resync 守衛 + wire 層偏移監測（2026-08）
 
