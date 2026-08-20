@@ -268,6 +268,7 @@ public actor RTMPStream {
     private var audioSentFrames: Int = 0
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
+    private var hasSentVideoFrame = false
     private var lastStatusTime = Date.distantPast
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
@@ -455,6 +456,7 @@ public actor RTMPStream {
             }
             audioFormat = nil
             videoFormat = nil
+            hasSentVideoFrame = false
             info.resourceName = name
             howToPublish = type
             lastPublishName = name
@@ -961,6 +963,7 @@ extension RTMPStream: _Stream {
                         return
                     }
                     videoSentBytes += message.payload.count
+                    hasSentVideoFrame = true
                     doOutput(.one, chunkStreamId: .video, message: message)
                 } else {
                 videoInputFrames += 1
@@ -1084,6 +1087,7 @@ extension RTMPStream: _Stream {
             videoSourceStallCount = 0
             audioInputFrames = 0
             audioStallCount = 0
+            hasSentVideoFrame = false
             lastStatusVideoInputPTSSeconds = -1
             lastStatusVideoOutputPTSSeconds = -1
         case .status(let report):
@@ -1126,6 +1130,15 @@ extension RTMPStream: _Stream {
                 videoSourceStallCount = 0
                 videoStallCount = 0
                 audioStallCount = 0
+            } else if readyState == .publishing && videoFormat != nil && !hasSentVideoFrame && audioSentFrames > 0 {
+                videoStallCount += 1
+                if 2 == videoStallCount {
+                    await connection?.log(.warn, "video startup stalled, will restart pipeline", detail: "stallCount=\(videoStallCount) audioFrames=\(audioSentFrames)")
+                }
+                if 3 <= videoStallCount {
+                    await restartVideoPipeline(reason: "video sequence header sent but no coded video frames reached RTMP")
+                    restartedVideoPipeline = true
+                }
             } else if readyState == .publishing && !inputPTSAdvanced && audioInputFrames > 0 {
                 // Video source produced no new PTS while audio kept flowing.
                 // For a VFR source (static screen) this is normal and must NOT
@@ -1213,6 +1226,7 @@ extension RTMPStream: _Stream {
         // 銝?蝵?videoFormat/audioFormat嚗 encoder session ?Ｗ?詨??澆???        // didSet 銝孛????銝?seq header ??timeline 銝葉?瑯?        await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
+        hasSentVideoFrame = false
         videoStallCount = 0
         audioStallCount = 0
         videoSourceStallCount = 0
