@@ -1022,7 +1022,7 @@ extension RTMPStream: _Stream {
             // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
             // 區間的音訊內容被跳過（丟棄舊資料），player 重新對齊而非靜音。
             let resyncedWhen = resyncedAudioTime(original: when)
-            let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true)
+            let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true, preferredDelta: audioBuffer.packetDuration)
             guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                 return
@@ -1276,5 +1276,34 @@ extension RTMPStream: MediaMixerOutput {
 
     nonisolated public func mixer(_ mixer: MediaMixer, didOutput buffer: AVAudioPCMBuffer, when: AVAudioTime) {
         mixerOutputBridge.yieldAudio(buffer, when: when)
+    }
+}
+
+private extension AVAudioCompressedBuffer {
+    var packetDuration: TimeInterval? {
+        let sampleRate = format.sampleRate
+        guard sampleRate > 0 else {
+            return nil
+        }
+        let packetCount = max(Int(self.packetCount), 1)
+        if let packetDescriptions {
+            var frames: UInt32 = 0
+            for index in 0..<packetCount {
+                let packetFrames = packetDescriptions[index].mVariableFramesInPacket
+                guard packetFrames > 0 else {
+                    frames = 0
+                    break
+                }
+                frames += packetFrames
+            }
+            if frames > 0 {
+                return TimeInterval(frames) / sampleRate
+            }
+        }
+        let framesPerPacket = format.streamDescription.pointee.mFramesPerPacket
+        guard framesPerPacket > 0 else {
+            return nil
+        }
+        return TimeInterval(framesPerPacket * UInt32(packetCount)) / sampleRate
     }
 }

@@ -40,4 +40,19 @@ import Testing
         #expect(try timestamp.update(times[4]) == 21)
         #expect(try timestamp.update(times[5]) == 21)
     }
+
+    @Test func updateAVAudioTimeWithPreferredDelta() throws {
+        let times: [AVAudioTime] = [
+            .init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)),
+            .init(hostTime: AVAudioTime.hostTime(forSeconds: 100.020)),
+            .init(hostTime: AVAudioTime.hostTime(forSeconds: 100.057)),
+            .init(hostTime: AVAudioTime.hostTime(forSeconds: 100.077))
+        ]
+        let aacPacketDuration = 1024.0 / 44100.0
+        var timestamp = RTMPTimestamp<AVAudioTime>()
+        #expect(try timestamp.update(times[0], preferredDelta: aacPacketDuration) == 0)
+        #expect(try timestamp.update(times[1], preferredDelta: aacPacketDuration) == 23)
+        #expect(try timestamp.update(times[2], preferredDelta: aacPacketDuration) == 23)
+        #expect(try timestamp.update(times[3], preferredDelta: aacPacketDuration) == 24)
+    }
 }

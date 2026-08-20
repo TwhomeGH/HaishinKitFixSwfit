@@ -28,14 +28,15 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     // wire-cumulative position, not the camera-relative PTS and not 0.
     private(set) var cumulativeTime: TimeInterval = kRTMPTimestamp_defaultTimeInterval
 
-    mutating func update(_ value: T, source: String = "", allowJump: Bool = false) -> UInt32 {
+    mutating func update(_ value: T, source: String = "", allowJump: Bool = false, preferredDelta: TimeInterval? = nil) -> UInt32 {
         if startedAt == 0 {
             startedAt = value.seconds
             updatedAt = value.seconds
             lastNormalDelta = 0
             return 0
         }
-        var timedelta = (value.seconds - updatedAt) * 1000
+        let sourceTimedelta = (value.seconds - updatedAt) * 1000
+        var timedelta = sourceTimedelta
         // 基準跳變 clamp：RTMP type-1/type-2 的 timestamp 是「相對 delta 累積」
         // 而非絕對值，下游的絕對時間 = 所有 delta 的累積和。因此：
         //  - 倒退（delta < 0）：clamp 到 0（視為同刻），不重置基準
@@ -45,6 +46,17 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         // 這樣基準跳變時 wire 時間戳仍單調連續，下游完全察覺不到跳變。
         // allowJump（僅音訊 A/V resync 用）：允許一次向前大跳，讓落後到 video
         // 之後的音訊時間軸直接跳進同步範圍，而非以 2000ms 上限慢慢追。
+        if let preferredDelta {
+            let preferredTimedelta = preferredDelta * 1000
+            // Compressed audio packets carry a fixed media duration. Ignore
+            // small source-time jitter, but keep the existing large-jump
+            // resync path for audio that has fallen far behind video.
+            if allowJump && preferredTimedelta + 500 < sourceTimedelta {
+                timedelta = sourceTimedelta
+            } else {
+                timedelta = preferredTimedelta
+            }
+        }
         if timedelta < 0 {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
             timedelta = lastNormalDelta

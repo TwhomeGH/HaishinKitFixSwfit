@@ -4,6 +4,30 @@
 
 ---
 
+## 32. 修正 AAC 音訊 RTMP timestamp cadence 抖動
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`, `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`
+
+**診斷**：
+- SRS 推流診斷頁顯示 AAC payload 本身合規：sequence header 為 `AF 00 12 10`（AAC-LC / 44.1k / stereo），raw packet 為 `AF 01`
+- 但 FLV audio tag timestamp 間距出現 `20ms` 與 `36/37ms` 交錯
+- 44.1k AAC 每包 1024 samples 的 media duration 應約 `23.22ms`，因此異常集中在 RTMP/FLV timestamp cadence，而非 AAC frame bytes
+
+**修正**：
+- `RTMPTimestamp.update` 新增 `preferredDelta`，讓 compressed audio 可用「該包音訊實際代表的 media duration」推進 wire timestamp
+- `RTMPStream` audio raw packet 發送改用 `AVAudioCompressedBuffer.packetDuration`
+  - 優先讀 packet description 的 `mVariableFramesInPacket`
+  - 無 packet description 時 fallback 到 ASBD `mFramesPerPacket`
+- 保留既有 A/V resync 安全網：小抖動用 packet duration 平滑；若 audio source time 真的落後超過約 500ms，仍允許一次大跳追到 video 附近
+- 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC 仍輸出 `23/23/24ms` 的 RTMP delta
+
+**效果**：
+- 不改 AAC payload、不改 sequence header
+- FLV/RTMP audio timestamp 依壓縮音訊 media duration 單調平滑前進
+- 診斷頁 audio 間距應由 `20/36/37ms` 改為接近 `23/23/24ms`，降低播放器將合法 AAC 誤排程成斷續音訊的機率
+
+---
+
 ## 1. VBR (Variable BitRate) 支援修正與 Bug 修復
 
 **檔案**: `Sources/Codec/VTSessionOptionKey.swift` `Sources/Codec/VideoCodecSettings.swift`
@@ -1322,4 +1346,3 @@ private func didAudioSessionRouteChange(_ notification: Notification) {
 |------|---------|
 | `HaishinKit/Sources/Mixer/MediaMixer.swift` | 新增 `didAudioSessionRouteChange()`、route 通知註冊、`deinit` 清理 |
 | `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift` | 新增 audio stall 檢測分支，啟用 `restartAudioPipeline()` |
-
