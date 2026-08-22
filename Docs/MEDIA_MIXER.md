@@ -172,3 +172,11 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 - AudioMixerSettings.swift：音訊設定管理
 - StreamOutput.swift：串流輸出協定
 - CaptureSession.swift：擷取 Session 處理
+
+## 多軌音訊跨軌對齊
+
+`isMultiTrackAudioMixingEnabled` 模式（ReplayKit `.appAudio` / `.audioMic` 分軌）下，
+兩軌混音必須以**來源端 PTS 派生**的位置對齊，否則「先到先混」會把兩軌的起始相位差
+與積壓以錯誤的相對位置混入 → 回音/撕裂。實作於 `AudioRingBuffer.align(to:)` +
+`AudioMixerByMultiTrack.render()`，詳細說明與問題區別見
+[AUDIO_MULTITRACK_ALIGNMENT.md](AUDIO_MULTITRACK_ALIGNMENT.md)。

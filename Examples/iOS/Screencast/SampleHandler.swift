@@ -15,8 +15,6 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private var mixer = MediaMixer(captureSessionMode: .manual, multiTrackAudioMixingEnabled: true)
     private var needVideoConfiguration = true
     private var isAppendingVideo = false
-    private var isAppendingAudioMic = false
-    private var isAppendingAudioApp = false
 
     override init() {
         Task {
@@ -84,10 +82,12 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                 await mixer.append(sampleBuffer)
             }
         case .audioMic:
-            guard sampleBuffer.dataReadiness == .ready, !isAppendingAudioMic else { return }
-            isAppendingAudioMic = true
+            // 不可用 guard 丟音訊幀來節流：actor 忙碌時靜默丟幀會讓 mic/app
+            // 非相關性掉幀，混音出現 silence 缺口（撕裂）。audio append 在
+            // AudioMixerByMultiTrack 自己的 serial queue 上處理，actor hop 很
+            // 輕量，排隊 append（保留 PTS 位置）比丟幀正確。
+            guard sampleBuffer.dataReadiness == .ready else { return }
             Task {
-                defer { isAppendingAudioMic = false }
                 await mixer.append(sampleBuffer, track: 0)
             }
         case .audioApp:
@@ -99,10 +99,8 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                     await mixer.setAudioMixerSettings(audioMixerSettings)
                 }
             }
-            guard sampleBuffer.dataReadiness == .ready, !isAppendingAudioApp else { return }
-            isAppendingAudioApp = true
+            guard sampleBuffer.dataReadiness == .ready else { return }
             Task {
-                defer { isAppendingAudioApp = false }
                 await mixer.append(sampleBuffer, track: 1)
             }
         @unknown default:

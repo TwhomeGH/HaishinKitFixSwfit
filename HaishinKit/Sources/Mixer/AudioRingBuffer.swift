@@ -15,6 +15,10 @@ final class AudioRingBuffer {
     var counts: Int {
         lock()
         defer { unlock() }
+        return calculateCounts()
+    }
+
+    private func calculateCounts() -> Int {
         if tail <= head {
             return head - tail + skip
         }
@@ -125,6 +129,48 @@ final class AudioRingBuffer {
         defer { unlock() }
         return renderInternal(inNumberFrames, ioData: ioData, offset: offset)
     }
+
+    /// 跨軌時間對齊（ReplayKit .audioApp / .audioMic 分軌交付，共用同一來源時鐘）。
+    /// render 前以 main track 的 sampleTime 為基準，把本緩衝區的消耗前端對齊到
+    /// `position`。兩軌的 `when.sampleTime` 都是來源端 PTS 派生（anchor 設在來源
+    /// PTS 上、frame 間距由來源 PTS 推進），本質上落在同一條軸上 —— 這裡把「先到
+    /// 先混」忽略掉的這個關係重新建立，來源 PTS 不再被丟棄：
+    /// - 前端早於 `position` → 過期樣本（capture 時間早於目前混音位置）直接丟棄，
+    ///   避免舊音訊以錯誤的相對位置混入，正是回音/梳狀濾波的來源。
+    /// - 前端晚於 `position` → 前方補 silence，靜音到對齊點再開始輸出。
+    /// 呼叫端（AudioMixerByMultiTrack.render）在 serial queue 上，本方法持鎖與
+    /// append/render 互斥。
+    func align(to position: Int64) {
+        lock()
+        defer { unlock() }
+        let current = sampleTime - Int64(calculateCounts())
+        if current < position {
+            let stale = position - current
+            var toDrop = min(stale, Int64(calculateCounts()))
+            // 先消耗 pending silence（skip），再消耗資料。
+            let skipToDrop = min(Int64(skip), toDrop)
+            skip -= Int(skipToDrop)
+            toDrop -= skipToDrop
+            while 0 < toDrop {
+                let numSamples = min(Int(toDrop), Int(outputBuffer.frameCapacity) - tail)
+                tail = (tail + numSamples) % Int(outputBuffer.frameCapacity)
+                toDrop -= Int64(numSamples)
+            }
+            if Self.alignLogThreshold <= stale, logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: dropped \(stale) stale samples to align at \(position)")
+            }
+        } else if position < current {
+            let lead = current - position
+            skip += Int(lead)
+            if Self.alignLogThreshold <= lead, logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: inserted \(lead) silence to align at \(position)")
+            }
+        }
+    }
+
+    /// align 僅在調整量 ≥ 此值（約 93ms @44.1k）時記錄 trace，
+    /// 避免熱路徑上的 per-frame 日誌寫入。
+    private static let alignLogThreshold: Int64 = 4096
 
     private func renderInternal(_ inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?, offset: Int = 0) -> OSStatus {
         if 0 < skip {

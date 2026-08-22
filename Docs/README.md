@@ -100,6 +100,7 @@ try await session.stream.publish("streamKey")
 | [架構](ARCHITECTURE.md) | 系統架構與資料流 |
 | [RTMP 通訊協定](RTMP_PROTOCOL.md) | RTMP 實作細節 |
 | [Media Mixer](MEDIA_MIXER.md) | 影音混合與特效 |
+| [多軌音訊對齊](AUDIO_MULTITRACK_ALIGNMENT.md) | ReplayKit 多軌混音跨軌對齊（回音/撕裂修復） |
 | [Session 管理](SESSION_MANAGEMENT.md) | StreamSession 生命週期 |
 | [編解碼器設定](CODEC_CONFIGURATION.md) | 影音編碼設定 |
 | [網路層](NETWORK_LAYER.md) | 網路傳輸與監控 |

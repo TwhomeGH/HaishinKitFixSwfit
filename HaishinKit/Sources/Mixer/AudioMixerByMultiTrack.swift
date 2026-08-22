@@ -181,6 +181,14 @@ final class AudioMixerByMultiTrack: AudioMixer {
         guard let buffer = buffers[track] else {
             return noErr
         }
+        // 跨軌對齊（ReplayKit .audioApp / .audioMic）：兩軌的 `when.sampleTime`
+        // 都是來源端 PTS 派生、共用同一來源時鐘，混音時非 main track 要以 main
+        // track 的 sampleTime 對齊；否則「先到先混」會把兩軌的起始相位差與
+        // 積壓以錯誤的相對位置混入 → 回音/撕裂。main track 是時鐘本身，不可
+        // 對齊（對齊它會吃掉其內部來源 gap 的 silence 推進）。
+        if track != _settings.mainTrack {
+            buffer.align(to: sampleTime)
+        }
         if buffer.counts == 0 {
             guard let bufferList = UnsafeMutableAudioBufferListPointer(ioData) else {
                 return noErr

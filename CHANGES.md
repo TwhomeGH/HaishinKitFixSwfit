@@ -4,6 +4,31 @@
 
 ---
 
+## 33. 修正 ReplayKit 多軌音訊跨軌對齊（回音 / 撕裂）
+
+**檔案**: `HaishinKit/Sources/Mixer/AudioRingBuffer.swift`, `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`, `Examples/iOS/Screencast/SampleHandler.swift`, `HaishinKit/Tests/Mixer/AudioRingBufferTests.swift`
+
+**診斷**：
+- ReplayKit 廣播同時推流 `.appAudio`（track 1）與 `.audioMic`（track 0），下游出現回音、撕裂（梳狀濾波）與偶發斷音
+- 來源端兩軌**共用同一來源時鐘**（host-time PTS），`when.sampleTime` 本質上落在同一條輸出樣本軸上——「時間戳應該一致」的前提正確
+- 混音端是**先到先混**：`AudioRingBuffer` append 把來源 PTS 算完 gap 後就丟棄（純 FIFO），`AudioMixerByMultiTrack.render` 依抵達順序消耗各軌，兩軌的起始相位差與動態漂移以錯誤的相對位置混入 → 相關內容（mic 收到外放）即回音
+- 另：`SampleHandler` 的 `isAppendingAudioMic/App` guard 在 actor 忙碌時靜默丟音訊幀，mic/app 非相關性掉幀在混音造成 silence 缺口（撕裂）
+
+**修正**：
+- `AudioRingBuffer` 新增 `align(to:)`：以 main track 的 sampleTime 為基準把消耗前端對齊到正確位置軸——前端早於混音位置 → 丟棄過期樣本（消除相位差回音）；晚於 → 前方補 silence。對齊點 = `sampleTime - counts`（含 pending skip），持鎖運算，trace 日誌只在調整 ≥ 4096 samples 時記錄
+- `AudioMixerByMultiTrack.render()`：非 main track render 前 `align(to: sampleTime)`；main track 是時鐘本身，不可對齊
+- `SampleHandler`：移除 `isAppendingAudioMic/App` guard 與旗標（保留 `dataReadiness == .ready`）。audio append 在 mixer 自己的 serial queue 上處理，排隊 append（保留 PTS）比丟幀正確；`isAppendingVideo` 保留
+- 驗證：`.cortexkit/verify-align.swift`（純整數鏡像，7 情境全過）+ `AudioRingBufferTests` 新增 4 個 align 單元測試
+
+**效果**：
+- 兩軌混音以來源 PTS 對齊（來源 PTS 不再被丟棄），起始相位差與積壓不再混入錯誤位置
+- 回音/撕裂消除；actor 忙碌時音訊改為排隊而非靜默丟幀，不再有非相關性 silence 缺口
+- 混音時鐘維持連續式（main 停滯時兩軌保持鎖定）；處理層回音已解，物理回音（喇叭外放被 mic 收音）仍須 AEC/耳機
+
+詳細說明見 [Docs/AUDIO_MULTITRACK_ALIGNMENT.md](Docs/AUDIO_MULTITRACK_ALIGNMENT.md)
+
+---
+
 ## 32. 修正 AAC 音訊 RTMP timestamp cadence 抖動
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`, `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`
