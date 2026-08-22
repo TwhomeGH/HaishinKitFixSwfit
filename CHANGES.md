@@ -4,6 +4,70 @@
 
 ---
 
+## 38. 修正系統卡住後 audio 時間基準永久錯位（消耗軸 clock）
+
+**檔案**：`HaishinKit/Sources/Util/AudioTime.swift`、`HaishinKit/Sources/Codec/AudioCodec.swift`、
+`HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、`AudioMixerBySingleTrack.swift`
+
+**診斷**：推流一段時間後若系統/音訊管線卡住（SRS HLS muxer 出現 `got N msgs,
+age=40668307` 的大量時間戳落差），audio 時間基準打亂、音訊持續錯位。根因是
+**混音輸出 `when` 是「消耗軸」**：`extrapolateTime(fromAnchor:)` 用 anchor +
+累積 sampleTime 映射 hostTime，系統卡住時消耗軸凍結，恢復後 audio 的
+`when.seconds` **永久落後真實時間**（幅度 = 卡住時長）。RTMPStream 的
+`resyncedAudioTime` 只能把 wire 夾在 video-0.5s（**永久 0.5s 錯位**）+ 每包觸發
+resync（時間基準持續被打亂）。
+
+**修正**：audio 輸出 `when` 改為**真實時間（hostTime = 目前 wall-clock）**：
+- `AudioTime.realTimeAt`：hostTime 用 `mach_absolute_time()`（`sampleTime` 保留，
+  ring buffer 對齊不受影響）
+- `AudioCodec` 壓縮輸出改用 `realTimeAt`
+- `AudioMixerByMultiTrack.mix()` / `AudioMixerBySingleTrack` 輸出 `when` 改真實時間
+  （移除 anchor 依賴）
+
+**效果**：audio 時間基準與 video（來源 PTS hostTime）一致。系統卡住恢復後：
+wire 經 `allowJump` 一次跳進正確位置（卡住區間音訊由上游 ring buffer 溢位丟棄，
+~0.55s 內清乾淨），**不再有永久錯位、不再反覆 resync**。
+
+## 37. 路由感知自動 AEC：耳機無回音時自動停用
+
+**檔案**: `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`
+
+**動機**：AEC（NLMS）約 94–188M ops/s，且在熱受限裝置上可能推高整體發熱而間接
+影響 video fps（量測 AEC on/off 約差 ~10fps，但受畫面內容/散熱混淆）。而物理回音
+**只在 App 聲音從喇叭/外部輸出外放時才存在**——主播戴耳機監聽（常見）時根本沒有
+回音可消，AEC 純粹浪費 CPU 且徒增 artifacts 風險。
+
+**修正**：
+- `AudioMixerByMultiTrack` 監聽 `AVAudioSession.routeChangeNotification`
+- `routeHasEchoPath()`：耳機（`.headphones`/`.headsetMic`）、聽筒（`.builtInReceiver`）、
+  藍牙耳機（`.bluetoothHFP`/`.bluetoothA2DP`）→ 無回音 → **自動停用 AEC**
+  （mic 直通、零計算）；喇叭/外部輸出 → 才啟用 AEC
+- 路由切回喇叭時重設濾波器（聲學路徑已變，重新收斂 + 淡入）
+- 路由資訊缺失時保守預設啟用（保留 AEC）
+
+**效果**：戴耳機推流 → 0 AEC 成本 + 0 artifacts；喇叭外放 → 才負擔 AEC 成本。
+串流中途拔插耳機即時反應，無需重啟。
+
+## 36. 修正 AEC 過度自適應造成的電磁音（爆音/斷層）
+
+**檔案**: `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`
+
+**診斷**：NLMS AEC 開啟時，真實音樂/人聲（高度相關、週期性內容）會讓
+`updateStep = 0.2` 的濾波器**獵振（overshoot/oscillate）**，殘差出現樣本斷層
+（解碼後測得 30s 內 39 個 jump > 8× 局部斜率的爆音，呈 burst 分佈）；關閉 AEC
+即消失，確認是 AEC 所致。合成測試（正弦+雜訊 reference）無法複現，因真實內容
+的相關性更高。
+
+**修正**：
+- `updateStep` 0.2 → 0.05（保守步長，大幅降低獵振）
+- 新增 `maxTapStep = 0.02`：單次單 tap 更新幅度上限——即便雙講偵測漏判、
+  濾波器誤追人聲，也壓住單次跳動，不會造成可聽爆音
+- 新增收斂淡入（`fadeFrames = 23`，~0.5s）：前 0.5s 相消強度從 0 漸增，
+  避免濾波器**半收斂期的錯位相消**殘差（電磁音的另一個來源）
+
+**效果**：合成驗證仍達 17.9dB 回音衰減、人聲保留、無新增不連續。收斂速度略降
+（前 ~1s 回音衰減較少，之後穩定）。
+
 ## 35. 修正 packetDuration nil 時 audio wire 退回 source-time cadence
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`

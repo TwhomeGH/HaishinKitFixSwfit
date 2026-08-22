@@ -12,6 +12,14 @@ final class AudioTime {
         return now.extrapolateTime(fromAnchor: anchorTime) ?? now
     }
 
+    /// 真實時間版本的 `at`：hostTime 用目前 wall-clock（`mach_absolute_time`）。
+    /// 消耗軸（`at`）在系統卡住/停滯後會永久落後真實時間，導致 RTMPStream 的
+    /// resync 反覆觸發、audio wire 永久錯位；改用真實時間後，audio 時間基準與
+    /// video（來源 PTS hostTime）一致，卡住恢復後自然回到正確位置。
+    var realTimeAt: AVAudioTime {
+        AVAudioTime(hostTime: mach_absolute_time(), sampleTime: sampleTime, atRate: sampleRate)
+    }
+
     var hasAnchor: Bool {
         return anchorTime != nil
     }

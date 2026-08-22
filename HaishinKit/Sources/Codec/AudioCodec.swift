@@ -207,9 +207,9 @@ final class AudioCodec {
             case .haveData:
                 if audioTime.hasAnchor {
                     audioTime.advanced(AVAudioFramePosition(audioConverter.outputFormat.streamDescription.pointee.mFramesPerPacket))
-                    continuation?.yield((outputBuffer, audioTime.at))
+                    continuation?.yield((outputBuffer, audioTime.realTimeAt))
                 } else {
-                    continuation?.yield((outputBuffer, audioTime.at))
+                    continuation?.yield((outputBuffer, audioTime.realTimeAt))
                 }
                 inputBuffersCursor += 1
                 if inputBuffersCursor == inputBuffers.count {

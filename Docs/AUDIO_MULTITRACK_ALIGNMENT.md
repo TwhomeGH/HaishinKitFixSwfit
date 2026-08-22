@@ -132,7 +132,7 @@ target，在混音前對 mic 幀做 NLMS（normalized least mean squares）自�
 
 | 欄位 | 說明 |
 |------|------|
-| `isEchoCancellationEnabled` | 開啟 AEC（預設 false） |
+| `isEchoCancellationEnabled` | 開啟 AEC（預設 false）。**路由感知**：耳機/聽筒/藍牙耳機時自動停用（無物理回音，省 CPU 零 artifacts），喇叭/外部輸出才啟用 |
 | `echoCancellationReferenceTrack` | **必填**：指向你的 app 音訊軌（預設 `UInt8.max` = 未設定 → AEC 停用） |
 | target（mic） | **自動推導**：兩軌情境下取「非 reference 的軌」，**與 mainTrack 無關** |
 

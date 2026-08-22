@@ -58,7 +58,10 @@ extension AudioMixerBySingleTrack: AudioMixerTrackDelegate {
     // MARK: AudioMixerTrackDelegate
     func track(_ track: AudioMixerTrack<AudioMixerBySingleTrack>, didOutput buffer: AVAudioPCMBuffer, when: AVAudioTime) {
         delegate?.audioMixer(self, track: track.id, didInput: buffer, when: when)
-        delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)
+        // 輸出 when 改真實時間（hostTime=現在）：消耗軸在系統卡住後會永久落後
+        // 真實時間，導致 RTMPStream resync 反覆觸發、audio wire 永久錯位。
+        let realTimeWhen = AVAudioTime(hostTime: mach_absolute_time(), sampleTime: when.sampleTime, atRate: when.sampleRate)
+        delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: realTimeWhen)
     }
 
     func track(_ rtrack: AudioMixerTrack<AudioMixerBySingleTrack>, errorOccurred error: AudioMixerError) {

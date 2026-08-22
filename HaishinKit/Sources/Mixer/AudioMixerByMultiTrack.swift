@@ -81,7 +81,6 @@ final class AudioMixerByMultiTrack: AudioMixer {
             tryToSetupAudioNodes()
         }
     }
-    private var anchor: AVAudioTime?
     private var buffers: [UInt8: AudioRingBuffer] = [:] {
         didSet {
             if logger.isEnabledFor(level: .trace) {
@@ -96,10 +95,15 @@ final class AudioMixerByMultiTrack: AudioMixer {
     // 用於 main 軌靜默時由其他軌推進混音時間軸。
     private var lastOutputPosition: [UInt8: Int64] = [:]
     // 物理回音消除（NLMS AEC）：以 echoCancellationReferenceTrack（App 軌）為
-    // reference、main track（mic）為 target，混音前對 mic 幀相消（喇叭外放被
-    // mic 收音造成的雙重重疊）。每 channel 一個 canceler；僅在 serial queue 上使用。
+    // reference、非 reference 軌（mic）為 target，混音前對 mic 幀相消（喇叭外放
+    // 被 mic 收音造成的雙重重疊）。每 channel 一個 canceler；僅在 serial queue 上使用。
     private var echoCancelers: [AudioEchoCanceler] = []
     private var echoScratchBuffer: AVAudioPCMBuffer?
+    // 路由感知：物理回音只在 App 聲音從「喇叭/外部輸出」外放時存在。耳機/聽筒
+    // 路由 → 聲音在耳內、mic 收不到 → 自動停用 AEC（省 CPU 且零 artifacts）。
+    // 只在 serial queue 上讀寫；初始保守預設 true（有回音）。
+    private var isEchoCancellationActive = true
+    private var routeChangeObserver: NSObjectProtocol?
 
     private let inputRenderCallback: AURenderCallback = { (inRefCon: UnsafeMutableRawPointer, _: UnsafeMutablePointer<AudioUnitRenderActionFlags>, _: UnsafePointer<AudioTimeStamp>, inBusNumber: UInt32, inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?) in
         let audioMixer = Unmanaged<AudioMixerByMultiTrack>.fromOpaque(inRefCon).takeUnretainedValue()
@@ -112,6 +116,9 @@ final class AudioMixerByMultiTrack: AudioMixer {
     }
 
     deinit {
+        if let routeChangeObserver {
+            NotificationCenter.default.removeObserver(routeChangeObserver)
+        }
         if let mixerNode = mixerNode {
             AudioOutputUnitStop(mixerNode.audioUnit)
         }
@@ -187,9 +194,56 @@ final class AudioMixerByMultiTrack: AudioMixer {
         try outputNode.initializeAudioUnit()
         self.mixerNode = mixerNode
         self.outputNode = outputNode
+        registerRouteObservation()
         if logger.isEnabledFor(level: .info) {
             logger.info("mixerAudioUnit: \(mixerNode)")
         }
+    }
+
+    /// 註冊音訊路由變化觀察：耳機拔插/藍牙連線等切換會改變「物理回音是否存在」，
+    /// 動態啟停 AEC。串流中途拔插耳機也能即時反應。
+    private func registerRouteObservation() {
+        if routeChangeObserver != nil {
+            return  // 已註冊，避免重複
+        }
+        isEchoCancellationActive = Self.routeHasEchoPath()
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            let hasEchoPath = Self.routeHasEchoPath()
+            self.queue.async {
+                let wasActive = self.isEchoCancellationActive
+                self.isEchoCancellationActive = hasEchoPath
+                if hasEchoPath && !wasActive {
+                    // 路由切回喇叭：聲學路徑可能已變，重收斂（濾波器重設 + 淡入）。
+                    self.echoCancelers.forEach { $0.reset() }
+                }
+            }
+        }
+    }
+
+    /// 判斷目前音訊輸出路由是否「可能有物理回音」（App 聲音外放到 mic 可收音處）。
+    /// 耳機/聽筒/藍牙耳機 → false（聲音在耳內，mic 收不到）；喇叭/外部輸出 →
+    /// true。路由資訊缺失時保守預設 true（保留 AEC）。
+    private static func routeHasEchoPath() -> Bool {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        guard !outputs.isEmpty else {
+            return true
+        }
+        for output in outputs {
+            switch output.portType {
+            case .builtInReceiver, .headphones, .headsetMic, .bluetoothHFP, .bluetoothA2DP:
+                return false
+            default:
+                continue
+            }
+        }
+        return true
     }
 
     private func render(_ track: UInt8, inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?) -> OSStatus {
@@ -222,11 +276,15 @@ final class AudioMixerByMultiTrack: AudioMixer {
         }
         do {
             let buffer = try outputNode.render(numberOfFrames: numberOfFrames, sampleTime: sampleTime)
-            let time = AVAudioTime(sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
-            if let anchor, let when = time.extrapolateTime(fromAnchor: anchor) {
-                delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)
-                sampleTime += Int64(numberOfFrames)
-            }
+            // 輸出 when 用真實時間（hostTime = 目前 wall-clock）+ 混音位置 sampleTime：
+            // mix 時間軸（消耗軸）在系統卡住/停滯後會永久落後真實時間，RTMPStream 的
+            // resyncedAudioTime 只能把 wire 夾在 video-0.5s，造成永久 A/V 錯位 + resync
+            // 反覆觸發（時間基準打亂）。改真實時間後，audio 時間基準與 video（來源 PTS
+            // hostTime）一致，卡住恢復自然回到正確位置；停滯區間的音訊由上游 ring buffer
+            // 溢位丟棄（capacity ~0.55s），不會被當成「現時」內容送出。
+            let when = AVAudioTime(hostTime: mach_absolute_time(), sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
+            delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)
+            sampleTime += Int64(numberOfFrames)
         } catch {
             delegate?.audioMixer(self, errorOccurred: .failedToMix(error: error))
         }
@@ -256,7 +314,7 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         delegate?.audioMixer(self, track: track.id, didInput: audioPCMBuffer, when: when)
         let settings = _settings
         var bufferToAppend = audioPCMBuffer
-        if settings.isEchoCancellationEnabled, let echo = resolveEchoTracks(settings) {
+        if settings.isEchoCancellationEnabled, isEchoCancellationActive, let echo = resolveEchoTracks(settings) {
             if track.id == echo.reference {
                 // reference（App 軌）：逐 channel 餵入回音參考歷史。
                 let channelCount = min(Int(audioPCMBuffer.format.channelCount), echoCancelers.count)
@@ -298,7 +356,6 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         let endPosition = position + Int64(numberOfFrames)
         if sampleTime == Self.defaultSampleTime {
             sampleTime = position
-            anchor = when
         }
         guard endPosition > sampleTime else {
             return  // 此幀位置已被其他軌渲染過，避免重複混音。

@@ -16,6 +16,38 @@ struct VerifyAEC {
         return p / Float(max(samples.count, 1))
     }
 
+    // 計算不連續（爆音）數：|x[i+1]-x[i]| > 8× 局部微分 RMS 即為不連續。
+    static func discontinuityCount(_ samples: [Float]) -> Int {
+        let n = samples.count
+        guard n > 200 else { return 0 }
+        var diff = [Float](repeating: 0, count: n - 1)
+        for i in 0..<(n - 1) { diff[i] = abs(samples[i + 1] - samples[i]) }
+        // 預先算每個位置的局部微分 RMS（滑動和，O(n)）
+        let win = 2400
+        var localRms = [Float](repeating: 0, count: n - 1)
+        var acc: Double = 0
+        for i in 0..<(n - 1) {
+            let d = diff[i]
+            let d2 = Double(d * d)
+            if i < win {
+                acc += d2
+            } else {
+                acc += d2 - Double(diff[i - win] * diff[i - win])
+            }
+            localRms[i] = Float((acc / Double(min(i + 1, win))).squareRoot())
+        }
+        var count = 0
+        var i = 1
+        while i < n - 1 {
+            if diff[i] > 8 * localRms[i] {
+                count += 1
+                i += 150
+            }
+            i += 1
+        }
+        return count
+    }
+
     static func main() {
         let sampleCount = 48000          // 1 秒 @48k
         let frameSize = 1024
@@ -87,6 +119,28 @@ struct VerifyAEC {
             let beforeVoice = power(out[3000..<16000])
             print("    before=\(String(format: "%.5f", beforeVoice)) afterVoice=\(String(format: "%.5f", afterVoice))")
             expect(afterVoice < beforeVoice * 3 || afterVoice < 1e-4, "filter did not diverge after double-talk")
+        }
+
+        print("== 不連續性：人聲能量 ≈ 回音能量（gate 臨界）==")
+        do {
+            // 人聲音量調到與回音同級（echo = 0.5×0.3 = 0.15，voice ≈ 0.12），
+            // 位於 double-talk gate (2.0 ratio) 的邊界——最容易讓濾波器追人聲。
+            var voice2: [Float] = [Float](repeating: 0, count: sampleCount)
+            for i in 20000..<24000 { voice2[i] = sin(Float(i - 20000) * 0.3) * 0.12 }
+            var mic2: [Float] = voice2
+            for i in delay..<sampleCount { mic2[i] += app[i - delay] * echoGain }
+            let aec2 = AudioEchoCanceler()
+            var out2 = [Float](repeating: 0, count: sampleCount)
+            for start in stride(from: 0, to: sampleCount, by: frameSize) {
+                let end = min(start + frameSize, sampleCount)
+                aec2.pushReference(Array(app[start..<end]), at: Int64(start))
+                out2.replaceSubrange(start..<end, with: aec2.process(Array(mic2[start..<end]), at: Int64(start)))
+            }
+            let inputDis = discontinuityCount(mic2)
+            let outputDis = discontinuityCount(out2)
+            print("    input discontinuities=\(inputDis) AEC output=\(outputDis)")
+            // AEC 不應新增明顯的不連續（允許少許誤差；input 本身也可能有）
+            expect(outputDis <= inputDis + 3, "AEC does not introduce discontinuities (output \(outputDis) vs input \(inputDis))")
         }
 
         print("")

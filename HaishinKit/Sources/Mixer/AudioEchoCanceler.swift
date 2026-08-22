@@ -26,11 +26,21 @@ final class AudioEchoCanceler {
     private var referenceBase: Int64 = 0
     private let maxReferenceLength: Int
 
-    private let updateStep: Float = 0.2
+    /// NLMS 步長。0.05 遠比常見的 0.2 保守：真實音樂/人聲高度相關，過大步長
+    /// 會讓濾波器獵振（oscillate）→ 殘差出現斷層（電磁音）。保守步長換收斂
+    /// 速度，但幾乎不會製造 artifacts。
+    private let updateStep: Float = 0.05
+    /// 每次更新單一 tap 的幅度上限。即便雙講偵測漏判、濾波器誤追人聲，步長
+    /// 也被壓住，不會一次跳動造成可聽的爆音。
+    private let maxTapStep: Float = 0.02
     private let regularization: Float = 1e-4
     /// 雙講偵測：micPower > ratio × refPower → 判定有人聲，凍結更新。
     private let doubleTalkRatio: Float = 2.0
     private let referencePowerFloor: Float = 1e-6
+    /// 收斂淡入：前 ~0.5s 逐步把回音消除疊上去，避免濾波器半收斂期的
+    /// 「錯位相消」殘差（那是電磁音的另一個來源）。
+    private let fadeFrames: Int = 23          // ~0.5s @46.9fps
+    private var processedFrames = 0
 
     /// 最近一幀的能量（除錯用）。
     private(set) var lastTargetPower: Float = 0
@@ -48,6 +58,7 @@ final class AudioEchoCanceler {
         referenceBase = 0
         lastTargetPower = 0
         lastReferencePower = 0
+        processedFrames = 0
     }
 
     /// 推送 reference（App 軌）樣本，必須依位置連續（`AudioMixerTrack` 的
@@ -100,6 +111,9 @@ final class AudioEchoCanceler {
         refPower = refPower * Float(sampleStride) / Float(frame)
         let isDoubleTalk = micPower > doubleTalkRatio * refPower
         let shouldUpdate = !isDoubleTalk && refPower >= referencePowerFloor
+        // 收斂淡入：前 ~0.5s 相消強度從 0 漸增，避免半收斂期的錯位殘差。
+        processedFrames += 1
+        let fade = min(1, Float(processedFrames) / Float(fadeFrames))
 
         for n in 0..<frame {
             let micPos = position + Int64(n)
@@ -113,9 +127,9 @@ final class AudioEchoCanceler {
                 norm += x * x
             }
             let residual = samples[n] - estimate
-            output[n] = residual
+            output[n] = samples[n] - estimate * fade
             if shouldUpdate {
-                let step = updateStep * residual / (norm + regularization * Float(filterLength))
+                let step = min(updateStep * residual / (norm + regularization * Float(filterLength)), maxTapStep)
                 for k in 0..<filterLength {
                     let idx = (micPos - Int64(k)) - referenceBase
                     guard idx >= 0 && idx < Int64(reference.count) else { continue }
