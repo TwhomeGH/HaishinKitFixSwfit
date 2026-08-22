@@ -4,6 +4,29 @@
 
 ---
 
+## 34. 新增雙軌物理回音消除（簡易 NLMS AEC）
+
+**檔案**: `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`（新增）, `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`, `HaishinKit/Sources/Mixer/AudioMixerSettings.swift`, `Examples/iOS/Screencast/SampleHandler.swift`
+
+**診斷**：
+- 跨軌 PTS 對齊（第 33 條）解決處理層回音，但**喇叭外放被 mic 收音**的物理回音仍讓同一段聲音出現兩次
+- AEC 兩大前提已滿足：reference 訊號可用（App 軌就是被收音的原聲）、兩軌時間已對齊
+
+**修正**：
+- 新增 `AudioEchoCanceler`：NLMS 自適應濾波器（1024 tap ≈ 21ms @48k），以 App 軌為 reference、mic 為 target，`ŷ[n] = Σ w[k]·ref[n-k]` 相減後輸出乾淨人聲；雙講偵測（`micPower > 2×refPower`）凍結更新防發散
+- `AudioMixerByMultiTrack`：每 channel 一個 canceler，reference 逐幀餵入、mic 幀進混音 buffer 前先消除（serial queue 上，非執行緒安全）
+- `AudioMixerSettings`：新增 `isEchoCancellationEnabled`（預設 false）與 `echoCancellationReferenceTrack`（必填，指向 app 音訊軌；預設 `UInt8.max` = 未設定 → AEC 停用）。**AEC target（mic）自動取「非 reference 的軌」，與 mainTrack 完全脫鉤**——修正舊設計缺陷（mainTrack 若是 app 軌會把 app 誤當消除目標）。自訂 Codable 向後相容（decodeIfPresent）
+- `SampleHandler`：廣播啟動時啟用（此 app 接線 app→track 1、mic→track 0，reference 顯式 = 1）
+- `AudioMixerByMultiTrack`：**混音時鐘 fallback**——main track 靜默（落後或從未輸出）時，其他軌的輸出接手推進時間軸，mix 不再停滯（例如 main=app 而 app 沒有播放聲音時 mic 仍持續輸出）；正常情形仍由 main track 驅動（避免其他軌搶先觸發造成內容被 align 丟棄）
+
+**效果**：
+- 合成 echo path（延遲 50 samples、增益 0.5）實測：收斂後回音衰減約 18dB、雙講人聲保留、雙講後濾波器不發散（`.cortexkit/verify-aec.swift` 3 情境全過）
+- 為**衰減**非完全消除；戴耳機則無此問題
+
+詳細說明見 [Docs/AUDIO_MULTITRACK_ALIGNMENT.md](Docs/AUDIO_MULTITRACK_ALIGNMENT.md)
+
+---
+
 ## 33. 修正 ReplayKit 多軌音訊跨軌對齊（回音 / 撕裂）
 
 **檔案**: `HaishinKit/Sources/Mixer/AudioRingBuffer.swift`, `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`, `Examples/iOS/Screencast/SampleHandler.swift`, `HaishinKit/Tests/Mixer/AudioRingBufferTests.swift`

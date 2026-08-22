@@ -37,11 +37,19 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
             do {
                 session = try await StreamSessionBuilderFactory.shared.make(Preference.default.makeURL()).build()
                 // ReplayKit is sensitive to memory, so we limit the queue to a maximum of five items.
-                var videoSetting = await mixer.videoMixerSettings
-                videoSetting.mode = .passthrough
-                await session?.stream.setVideoInputBufferCounts(5)
-                await mixer.setVideoMixerSettings(videoSetting)
-                await mixer.startRunning()
+            var videoSetting = await mixer.videoMixerSettings
+            videoSetting.mode = .passthrough
+            await session?.stream.setVideoInputBufferCounts(5)
+            await mixer.setVideoMixerSettings(videoSetting)
+            // 物理回音消除：喇叭外放被 mic 收音時，以 app 軌為 reference、另一軌
+            // （mic）為 target，在混音前對 mic 做 NLMS 回音消除，避免與 App 原聲
+            // 雙重重疊。此 app 的接線：.audioApp → track 1、.audioMic → track 0。
+            // reference 必填（指向 app 軌）；target 自動取「非 reference 的軌」。
+            var audioMixerSettings = await mixer.audioMixerSettings
+            audioMixerSettings.isEchoCancellationEnabled = true
+            audioMixerSettings.echoCancellationReferenceTrack = 1
+            await mixer.setAudioMixerSettings(audioMixerSettings)
+            await mixer.startRunning()
                 if let session {
                     await mixer.addOutput(session.stream)
                     try? await session.connect {

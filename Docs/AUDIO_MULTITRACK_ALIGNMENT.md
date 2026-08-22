@@ -1,4 +1,8 @@
-# 多軌音訊跨軌對齊（ReplayKit .appAudio / .audioMic）
+# 多軌音訊品質：跨軌對齊與物理回音消除（ReplayKit .appAudio / .audioMic）
+
+本文件涵蓋 ReplayKit 雙軌混音的兩個獨立音訊問題與其修復：
+**跨軌時間對齊**（處理層相位差回音）與 **NLMS 物理回音消除**（喇叭外放被 mic 收音）。
+兩者互補：對齊是 AEC 正確工作的前提（reference 與 target 必須在同一時間軸上）。
 
 ## 問題描述
 
@@ -33,9 +37,10 @@ ReplayKit 把 mic 與 app 拆成**兩軌**，但兩軌共用**同一來源時鐘
 
 ### 2. 處理層回音 vs 物理回音
 
-- **處理層回音**：由混音相位差造成。**本次修復可消除**。
+- **處理層回音**：由混音相位差造成。**由本文件的跨軌對齊修復消除**。
 - **物理回音（acoustic echo）**：App 聲音從喇叭外放、被 mic 收音。這是實體路徑，
-  **任何 PTS 對齊都無法消除**——需要 AEC（acoustic echo cancellation）或改用耳機。
+  **任何 PTS 對齊都無法消除**。本專案另實作了簡易 NLMS AEC（見下方「物理回音消除」）
+  做**衰減**；戴耳機則完全沒有此問題。
 
 ### 3. 消耗軸 vs 來源 PTS —— 為何不能用「frame 計數」對齊
 
@@ -94,6 +99,63 @@ main track 是時鐘本身，**不可對齊**（對齊它會吃掉其內部來�
 serial queue 上處理，actor hop 極輕量；排隊 append（保留 PTS 位置）比丟幀正確。
 `isAppendingVideo` 保留（視訊大幀對記憶體敏感，且視訊掉幀不明顯）。
 
+## 混音時鐘：main 靜默不停止
+
+混音時間軸由 **main track** 的輸出驅動（`sampleTime`/anchor 由它錨定，其他軌 PTS
+對齊到它）。若 main track 長時間靜默（例如 `mainTrack` 設為 app 軌、而 app 完全
+沒有在播放聲音），時間軸會停滯 → 整個混音無輸出（mic 也沒聲音）。
+
+**Fallback**：當 main track 落後（最近輸出位置早於其他軌的目前位置，或從未輸出）時，
+其他軌的輸出會接手推進時間軸，**不會停滯**。
+
+**注意**：fallback 解決「不停止」，但若 main=app 且 app 先於 mic 送達，app 觸發的
+block 會在 mic 內容送達前就被渲染 → mic 內容被 `align` 當過期丟棄。因此：
+
+- **ReplayKit 情境建議 `mainTrack` 指向 mic 軌**（mic 持續產生，驅動時鐘；app 內容
+  先進 ring buffer 等待，被正確拉取）。這與 AEC 無關（AEC 的 reference/target 已
+  脫離 mainTrack）。
+- 驗證：`.cortexkit/verify-mixer-clock.swift` 4 情境全過（正規接線雙軌保留、
+  main=app 且 app 從未播放時 mic 持續輸出、app 靜默→恢復、純 mic 串流）。
+
+## 物理回音消除（簡易 NLMS AEC）
+
+跨軌對齊解決「處理層」回音，但**喇叭外放被 mic 收音**的物理回音仍會讓同一段
+聲音出現兩次。`AudioEchoCanceler` 以 App 軌為 reference、mic（main track）為
+target，在混音前對 mic 幀做 NLMS（normalized least mean squares）自適應回音消除：
+
+- 估計 mic 收到的回音 `ŷ[n] = Σ w[k]·ref[n-k]`，相減後輸出乾淨人聲
+- w 逐幀自適應，追蹤喇叭→mic 聲學路徑（含延遲）；雙講（人聲+音樂同時）時
+  `micPower > 2×refPower` 凍結更新避免發散
+- 1024 tap @48k ≈ 21ms，涵蓋手持裝置聲學延遲 + mic 擷取延遲
+
+**設定**（`AudioMixerSettings`，皆可選、向後相容 Codable）：
+
+| 欄位 | 說明 |
+|------|------|
+| `isEchoCancellationEnabled` | 開啟 AEC（預設 false） |
+| `echoCancellationReferenceTrack` | **必填**：指向你的 app 音訊軌（預設 `UInt8.max` = 未設定 → AEC 停用） |
+| target（mic） | **自動推導**：兩軌情境下取「非 reference 的軌」，**與 mainTrack 無關** |
+
+> **Track 編號是呼叫端自訂的**：`MediaMixer.append(_:track:)` 的參數沒有內建
+> 0=mic/1=app 的意義。AEC 的 reference 必須**顯式**指向 app 軌：
+> - 框架範例 `SampleHandler` 接線 `.audioApp`→track 1 → reference = 1
+> - 你的 app 接線 app→track 0、mic→track 1 → reference = 0
+>
+> AEC target 不再綁定 mainTrack（舊設計的缺陷：mainTrack 若是 app 軌，會把 app
+> 誤當消除目標、用 mic 當 reference，造成有害相減）。target 恆為「非 reference
+> 的軌」，mainTrack 純粹是混音時鐘/格式來源。
+
+**整合**：`AudioMixerByMultiTrack` 的 serial queue 上，每 channel 一個 canceler；
+reference（App 軌）逐幀餵入、mic（main track）幀在進混音 buffer 前先消除。
+`Examples/iOS/Screencast/SampleHandler.swift` 已啟用（reference = 1、mic = main 0）。
+
+**限制**：線性模型只做**衰減**（實測合成 echo path 收斂後約 18dB），非完全消除；
+雙講與喇叭音量劇變是弱點（靠凍結防發散）；換耳機可完全避免此問題。
+
+**驗證**：`.cortexkit/verify-aec.swift`（編譯 `AudioEchoCanceler.swift` + harness，
+純 Swift 無 AVFoundation），3 情境全過：收斂後回音衰減 >12dB、雙講人聲保留、雙講後
+濾波器不發散。
+
 ## 驗證
 
 - **獨立腳本** `.cortexkit/verify-align.swift`：純整數鏡像 `align` 數學，7 個情境全過
@@ -120,6 +182,9 @@ gap 化為 silence 幀）。這讓：
 
 - `HaishinKit/Sources/Mixer/AudioRingBuffer.swift`
 - `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`
+- `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`（物理回音消除 NLMS AEC）
+- `HaishinKit/Sources/Mixer/AudioMixerSettings.swift`（AEC 設定欄位）
 - `HaishinKit/Tests/Mixer/AudioRingBufferTests.swift`
 - `Examples/iOS/Screencast/SampleHandler.swift`
-- `.cortexkit/verify-align.swift`（驗證腳本）
+- `.cortexkit/verify-align.swift`（對齊驗證腳本）
+- `.cortexkit/verify-aec.swift`（AEC 驗證腳本）
