@@ -81,6 +81,7 @@ final class AudioMixerByMultiTrack: AudioMixer {
             tryToSetupAudioNodes()
         }
     }
+    private var anchor: AVAudioTime?
     private var buffers: [UInt8: AudioRingBuffer] = [:] {
         didSet {
             if logger.isEnabledFor(level: .trace) {
@@ -276,15 +277,11 @@ final class AudioMixerByMultiTrack: AudioMixer {
         }
         do {
             let buffer = try outputNode.render(numberOfFrames: numberOfFrames, sampleTime: sampleTime)
-            // 輸出 when 用真實時間（hostTime = 目前 wall-clock）+ 混音位置 sampleTime：
-            // mix 時間軸（消耗軸）在系統卡住/停滯後會永久落後真實時間，RTMPStream 的
-            // resyncedAudioTime 只能把 wire 夾在 video-0.5s，造成永久 A/V 錯位 + resync
-            // 反覆觸發（時間基準打亂）。改真實時間後，audio 時間基準與 video（來源 PTS
-            // hostTime）一致，卡住恢復自然回到正確位置；停滯區間的音訊由上游 ring buffer
-            // 溢位丟棄（capacity ~0.55s），不會被當成「現時」內容送出。
-            let when = AVAudioTime(hostTime: mach_absolute_time(), sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
-            delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)
-            sampleTime += Int64(numberOfFrames)
+            let time = AVAudioTime(sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
+            if let anchor, let when = time.extrapolateTime(fromAnchor: anchor) {
+                delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)
+                sampleTime += Int64(numberOfFrames)
+            }
         } catch {
             delegate?.audioMixer(self, errorOccurred: .failedToMix(error: error))
         }
@@ -356,6 +353,7 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         let endPosition = position + Int64(numberOfFrames)
         if sampleTime == Self.defaultSampleTime {
             sampleTime = position
+            anchor = when
         }
         guard endPosition > sampleTime else {
             return  // 此幀位置已被其他軌渲染過，避免重複混音。

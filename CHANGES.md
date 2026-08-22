@@ -4,30 +4,6 @@
 
 ---
 
-## 38. 修正系統卡住後 audio 時間基準永久錯位（消耗軸 clock）
-
-**檔案**：`HaishinKit/Sources/Util/AudioTime.swift`、`HaishinKit/Sources/Codec/AudioCodec.swift`、
-`HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、`AudioMixerBySingleTrack.swift`
-
-**診斷**：推流一段時間後若系統/音訊管線卡住（SRS HLS muxer 出現 `got N msgs,
-age=40668307` 的大量時間戳落差），audio 時間基準打亂、音訊持續錯位。根因是
-**混音輸出 `when` 是「消耗軸」**：`extrapolateTime(fromAnchor:)` 用 anchor +
-累積 sampleTime 映射 hostTime，系統卡住時消耗軸凍結，恢復後 audio 的
-`when.seconds` **永久落後真實時間**（幅度 = 卡住時長）。RTMPStream 的
-`resyncedAudioTime` 只能把 wire 夾在 video-0.5s（**永久 0.5s 錯位**）+ 每包觸發
-resync（時間基準持續被打亂）。
-
-**修正**：audio 輸出 `when` 改為**真實時間（hostTime = 目前 wall-clock）**：
-- `AudioTime.realTimeAt`：hostTime 用 `mach_absolute_time()`（`sampleTime` 保留，
-  ring buffer 對齊不受影響）
-- `AudioCodec` 壓縮輸出改用 `realTimeAt`
-- `AudioMixerByMultiTrack.mix()` / `AudioMixerBySingleTrack` 輸出 `when` 改真實時間
-  （移除 anchor 依賴）
-
-**效果**：audio 時間基準與 video（來源 PTS hostTime）一致。系統卡住恢復後：
-wire 經 `allowJump` 一次跳進正確位置（卡住區間音訊由上游 ring buffer 溢位丟棄，
-~0.55s 內清乾淨），**不再有永久錯位、不再反覆 resync**。
-
 ## 37. 路由感知自動 AEC：耳機無回音時自動停用
 
 **檔案**: `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`
