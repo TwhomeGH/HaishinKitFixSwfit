@@ -31,6 +31,14 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             guard inSourceFormat != oldValue else {
                 return
             }
+            if logger.isEnabledFor(level: .info) {
+                // 診斷：印出每軌來源格式（sampleRate/channels），確認 ReplayKit
+                // mic/app 各是幾聲道，避免「輸出是 mono」到底是來源 mono 還是
+                // 管線誤 downmix 的誤判。
+                if let format = AVAudioUtil.makeAudioFormat(inSourceFormat) {
+                    logger.info("audio track \(id) source format: \(format.sampleRate)Hz \(format.channelCount)ch interleaved=\(format.isInterleaved)")
+                }
+            }
             setUp(inSourceFormat)
         }
     }
