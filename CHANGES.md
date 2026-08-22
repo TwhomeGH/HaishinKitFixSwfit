@@ -4,6 +4,30 @@
 
 ---
 
+## 35. 修正 packetDuration nil 時 audio wire 退回 source-time cadence
+
+**檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：
+- 實際 stream（app 已跑 current HEAD）audio wire delta 出現 `20/20/37ms`（mean ~26ms），
+  正確應為 AAC 48k 的 `21/21/22ms`。ffprobe 抓 live FLV 為 ground truth；
+  mpegts.js 每 ~360ms 偵測到 audio-ahead gap、插 silence → 斷續音 + 累積 A/V 錯位
+- `.cortexkit/verify-ts.swift` 複現：preferredDelta 路徑永不產生 20/37；source-time
+  路徑（preferredDelta nil）產生 `20/20/37`、mean 25.86ms 與實測 26.08ms 吻合
+- 根因：`AVAudioCompressedBuffer.packetDuration` 對無法判定的格式**回傳 nil** →
+  `RTMPTimestamp.update` 的 `preferredDelta` 為 nil → wire 退回 source-time cadence
+
+**修正**：
+- `packetDuration` **永不回傳 nil**：packet description → ASBD mFramesPerPacket →
+  codec 標稱幀長（AAC 1024 / Opus 960）三層 fallback，compressed audio 的 wire 永遠
+  依封包 duration 前進、不再追隨來源時間節奏
+- 呼叫端：`packetDuration` 異常（僅 sampleRate <= 0）時記錄一次 warn，可診斷
+
+**效果**：
+- audio wire 穩定為 21/21/22ms，斷續音與累積 A/V 錯位消除
+
+---
+
 ## 34. 新增雙軌物理回音消除（簡易 NLMS AEC）
 
 **檔案**: `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`（新增）, `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`, `HaishinKit/Sources/Mixer/AudioMixerSettings.swift`, `Examples/iOS/Screencast/SampleHandler.swift`

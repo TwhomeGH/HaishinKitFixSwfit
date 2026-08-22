@@ -231,6 +231,7 @@ public actor RTMPStream {
     /// 避免 player 因長期 A/V 偏移而棄音/靜音。健康時偏移 < 門檻不觸發。
     static let maxAudioBehindVideoSeconds: TimeInterval = 0.5
     private var audioResyncCount = 0
+    private var warnedNilPacketDuration = false
     private let inflowLock = NSLock()
     /// Congestion signal owned by RTMPConnection. Read from the nonisolated
     /// mixer path to drop raw frames *before* encoding when the network can't
@@ -1025,7 +1026,14 @@ extension RTMPStream: _Stream {
             // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
             // 區間的音訊內容被跳過（丟棄舊資料），player 重新對齊而非靜音。
             let resyncedWhen = resyncedAudioTime(original: when)
-            let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true, preferredDelta: audioBuffer.packetDuration)
+            let preferredDelta = audioBuffer.packetDuration
+            if preferredDelta == nil, !warnedNilPacketDuration {
+                // sampleRate <= 0 的異常格式才會走到這：packetDuration 對應的
+                // codec 標稱值計算不出來。記錄一次即可，避免 per-frame 日誌。
+                warnedNilPacketDuration = true
+                Task { await connection?.log(.warn, "audio: packetDuration nil (sampleRate=\(audioBuffer.format.sampleRate)), wire follows source-time cadence") }
+            }
+            let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true, preferredDelta: preferredDelta)
             guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                 return
@@ -1294,12 +1302,19 @@ extension RTMPStream: MediaMixerOutput {
 }
 
 private extension AVAudioCompressedBuffer {
+    /// 每包壓縮音訊的 media duration（秒），**永不回傳 nil**：
+    /// - packet description 的實際幀數最準（encoder 會填 mVariableFramesInPacket）
+    /// - 其次 ASBD 的 mFramesPerPacket
+    /// - 最後用 codec 標稱幀長（AAC 1024 / Opus 960）當保險
+    ///
+    /// 為何不能 nil：wire delta 在 `preferredDelta` 為 nil 時會退回 source-time
+    /// cadence（`when.seconds`），把來源的 20/37 節奏直接漏上 wire —— 正是
+    /// 「斷續音 + 累積 A/V 錯位」的來源。必須讓 compressed audio 的 wire 永遠
+    /// 依封包 duration 前進，而不是依抵達/來源時間。
     var packetDuration: TimeInterval? {
         let sampleRate = format.sampleRate
-        guard sampleRate > 0 else {
-            return nil
-        }
         let packetCount = max(Int(self.packetCount), 1)
+        let asbd = format.streamDescription.pointee
         if let packetDescriptions {
             var frames: UInt32 = 0
             for index in 0..<packetCount {
@@ -1310,19 +1325,25 @@ private extension AVAudioCompressedBuffer {
                 }
                 frames += packetFrames
             }
-            if frames > 0 {
+            if frames > 0, sampleRate > 0 {
                 return TimeInterval(frames) / sampleRate
             }
         }
-        let framesPerPacket = format.streamDescription.pointee.mFramesPerPacket
-        if framesPerPacket > 0 {
-            return TimeInterval(framesPerPacket * UInt32(packetCount)) / sampleRate
+        if asbd.mFramesPerPacket > 0, sampleRate > 0 {
+            return TimeInterval(asbd.mFramesPerPacket * UInt32(packetCount)) / sampleRate
         }
-        switch format.streamDescription.pointee.mFormatID {
+        let nominalFramesPerPacket: UInt32
+        switch asbd.mFormatID {
         case kAudioFormatMPEG4AAC, kAudioFormatMPEG4AAC_HE, kAudioFormatMPEG4AAC_HE_V2:
-            return TimeInterval(1024 * packetCount) / sampleRate
+            nominalFramesPerPacket = 1024
+        case kAudioFormatOpus:
+            nominalFramesPerPacket = 960
         default:
+            nominalFramesPerPacket = 1024
+        }
+        guard sampleRate > 0 else {
             return nil
         }
+        return TimeInterval(nominalFramesPerPacket * UInt32(packetCount)) / sampleRate
     }
 }
