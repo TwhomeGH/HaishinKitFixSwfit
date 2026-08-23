@@ -37,3 +37,15 @@ public struct RTMPLogEvent: Sendable {
         self.line = line
     }
 }
+
+extension LogLevel {
+    var rtmpLevel: RTMPLogLevel {
+        switch self {
+        case .trace: return .trace
+        case .debug: return .debug
+        case .info: return .info
+        case .warn: return .warn
+        case .error: return .error
+        }
+    }
+}

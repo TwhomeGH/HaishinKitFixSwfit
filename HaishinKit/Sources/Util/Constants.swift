@@ -49,4 +49,4 @@ public struct HaishinKitLogger {
     }
 }
 
-nonisolated(unsafe) let logger = HaishinKitLogger(osLog: OSLog(subsystem: kHaishinKitIdentifier, category: "HaishinKit"))
+nonisolated(unsafe) public let logger = HaishinKitLogger(osLog: OSLog(subsystem: kHaishinKitIdentifier, category: "HaishinKit"))

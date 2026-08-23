@@ -464,6 +464,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
         networkMonitor = await socket?.makeNetworkMonitor()
         log(.info, "HaishinKit revision", detail: kHaishinKitRevision)
+        // 把 HaishinKit logger（os_log 之外的 module logger）輸出轉送到
+        // connection.onLog，讓 app 不需 Xcode 就能把 framework 內部日誌（如
+        // 音訊軌來源格式、resync、stall 偵測）送到伺服器。close() 時解除。
+        registerLoggerForwarding()
         // Fresh socket/monitor: clear liveness watchdog state so a brand-new
         // connection isn't flagged for a stall inherited from the previous one.
         silentIntervals = 0
@@ -592,6 +596,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             throw Error.invalidState
         }
 
+        unregisterLoggerForwarding()
         log(.info, "Close requested, state=\(state)")
         reconnectionTask?.cancel()
         reconnectionTask = nil
@@ -965,6 +970,24 @@ extension RTMPConnection {
         }
         let event = RTMPLogEvent(level: level, message: message, detail: detail, file: file, line: line)
         onLog?(event)
+    }
+
+    /// 註冊 HaishinKit module logger（`logger`）輸出轉送：所有 framework 內部
+    /// 日誌（AudioMixerTrack 的來源格式、AEC、resync、stall 等）流經本
+    /// connection 的 `onLog`，app 可不下 Xcode 直接送到伺服器。
+    private func registerLoggerForwarding() {
+        logger.onLog = { [weak self] level, message in
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+                await self.log(level.rtmpLevel, message)
+            }
+        }
+    }
+
+    private func unregisterLoggerForwarding() {
+        logger.onLog = nil
     }
 
     private var chunkSizeC: Int {
