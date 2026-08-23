@@ -1,4 +1,5 @@
 import Foundation
+import HaishinKit
 
 public enum RTMPLogLevel: Sendable {
     case trace
