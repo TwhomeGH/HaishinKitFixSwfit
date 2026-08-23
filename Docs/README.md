@@ -107,6 +107,7 @@ try await session.stream.publish("streamKey")
 | [開發指南](DEVELOPMENT_GUIDE.md) | 貢獻與開發環境設定 |
 | [測試](TESTING.md) | 測試結構與執行 |
 | [故障排除](TROUBLESHOOTING.md) | 常見問題與解決方案 |
+| [日誌架構](LOGGING.md) | 遠端日誌：logger 多 handler 並存 + connection.onLog 轉送 |
 
 ## 相依性
 

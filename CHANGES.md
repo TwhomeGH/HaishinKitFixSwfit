@@ -4,33 +4,46 @@
 
 ---
 
-## 39. logger 輸出轉送到 connection.onLog（不需 Xcode 看內部日誌）
+## 39. logger 多 handler 並存 + 輸出轉送到 connection.onLog（不需 Xcode 看內部日誌）
 
 **檔案**：`HaishinKit/Sources/Util/Constants.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、`RTMPLogEvent.swift`
 
 **動機**：framework 內部日誌（AudioMixerTrack 來源格式、AEC、resync、stall 等）
 走 `logger`（HaishinKit module，os_log 之外），app 要看不方便（需 Xcode）。
 RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器），但 logger
-與它互不相通。
+與它互不相通。此外 `logger.onLog` 原本只有**單一插槽**，connection 轉送與 app
+自設 handler 會互相覆蓋。
 
 **修正**：
-- `logger` 改為 `public`（`nonisolated(unsafe) public let`）
-- `RTMPConnection.performConnect()` 註冊 `logger.onLog` → 轉送 `connection.log()`
-  （經 `await` hop 到 actor），`close()` 時解除
+- `logger` 改為 `public`（`nonisolated(unsafe) public var`）
+- `HaishinKitLogger` 新增**多 handler 並存**：`addLogHandler` / `removeLogHandler`
+  （thread-safe 列表），與主 `onLog` 插槽並存、互不覆蓋
+- `RTMPConnection` 在 `init`（最早，catch 啟動期日誌）與 `performConnect` 註冊
+  `logger.onLog` → 轉送 `connection.log()`（經 `await` hop 到 actor）；
+  `close()`/`deinit` 解除
 - 新增 `LogLevel → RTMPLogLevel` 對應
 
-**效果**：connect 後，framework 內部所有 `logger.*` 輸出流經 connection 的
-`onLog`。app 只需：
+**使用方式**：
+- **主要**：`connection.setOnLog`（單一插槽，未改變）——connect 後 framework
+  內部所有 `logger.*` 輸出都會被轉送進來：
 
-```swift
-await connection.setOnLog { event in
-    // 送你的伺服器（sendlog）
-}
-```
+  ```swift
+  await connection.setOnLog { event in
+      // 送你的伺服器（sendlog）
+  }
+  ```
+- **額外（有需要才用）**：`logger.addLogHandler`——不依賴 connection 時序，
+  直接收 HaishinKit logger 日誌（例如 mixer 比 connection 早啟動時要收啟動期
+  的 track 格式日誌），與 connection 轉送並存：
 
-`minimumLogLevel`（預設過濾 trace/debug）照常生效。注意：connection 會接管
-`logger.onLog`（單一註冊），app 請改用 `connection.setOnLog` 而非直接設
-`logger.onLog`。
+  ```swift
+  HaishinKit.logger.addLogHandler { level, message in
+      // 送你的伺服器
+  }
+  ```
+
+`minimumLogLevel`（預設過濾 trace/debug）照常生效。connect 後會先印一條
+`HaishinKit.logger forwarding to onLog is active` 確認轉送入口。
 
 ## 37. 路由感知自動 AEC：耳機無回音時自動停用
 
