@@ -972,11 +972,13 @@ extension RTMPConnection {
         onLog?(event)
     }
 
-    /// 註冊 HaishinKit module logger（`logger`）輸出轉送：所有 framework 內部
-    /// 日誌（AudioMixerTrack 的來源格式、AEC、resync、stall 等）流經本
-    /// connection 的 `onLog`，app 可不下 Xcode 直接送到伺服器。
+    /// 註冊 HaishinKit module logger（`HaishinKit.logger`）輸出轉送：所有
+    /// framework 內部日誌（AudioMixerTrack 的來源格式、AEC、resync、stall 等）
+    /// 流經本 connection 的 `onLog`，app 可不下 Xcode 直接送到伺服器。
+    /// 注意：需顯式 `HaishinKit.logger`——RTMP module 有自己的 `logger` 全域
+    /// （`let`），裸 `logger` 會被 shadow 導致無法賦值。
     private func registerLoggerForwarding() {
-        logger.onLog = { [weak self] level, message in
+        HaishinKit.logger.onLog = { [weak self] level, message in
             Task { [weak self] in
                 guard let self else {
                     return
@@ -987,7 +989,7 @@ extension RTMPConnection {
     }
 
     private func unregisterLoggerForwarding() {
-        logger.onLog = nil
+        HaishinKit.logger.onLog = nil
     }
 
     private var chunkSizeC: Int {
