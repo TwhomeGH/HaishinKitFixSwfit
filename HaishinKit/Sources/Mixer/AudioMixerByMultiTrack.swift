@@ -45,8 +45,15 @@ final class AudioMixerByMultiTrack: AudioMixer {
             || newValue.echoCancellationReferenceTrack != previous.echoCancellationReferenceTrack {
             echoCancelers.forEach { $0.reset() }
         }
-        if let inSourceFormat, newValue.invalidateOutputFormat(previous) {
-            outputFormat = newValue.makeOutputFormat(inSourceFormat)
+        if newValue.invalidateOutputFormat(previous) {
+            // mainTrack 變更時，要從「新的 main track」的實際來源格式重新推導
+            // outputFormat，而不是沿用舊 inSourceFormat（可能還是舊 main track 的）。
+            // track 尚未建立/設定時退回 inSourceFormat。
+            if let format = tracks[newValue.mainTrack]?.inputFormat?.formatDescription {
+                outputFormat = newValue.makeOutputFormat(format)
+            } else if let inSourceFormat {
+                outputFormat = newValue.makeOutputFormat(inSourceFormat)
+            }
         }
         for (id, trackSettings) in newValue.tracks {
             tracks[id]?.settings = trackSettings

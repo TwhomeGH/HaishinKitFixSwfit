@@ -94,8 +94,11 @@ public struct AudioMixerSettings: Codable, Sendable {
     }
 
     func invalidateOutputFormat(_ oldValue: Self) -> Bool {
-        return !(sampleRate == oldValue.sampleRate &&
-                    channels == oldValue.channels)
+        // mainTrack 變更也要重新推導：outputFormat 依「main track 的實際來源格式」
+        // 決定（sampleRate/channels 為 0 時）。只比 sampleRate/channels 會在
+        // mainTrack 從 app(44100) 切到 mic(48000) 時沿用舊格式。
+        return mainTrack != oldValue.mainTrack
+            || !(sampleRate == oldValue.sampleRate && channels == oldValue.channels)
     }
 
     func makeOutputFormat(_ formatDescription: CMFormatDescription?) -> AVAudioFormat? {
