@@ -979,11 +979,15 @@ extension RTMPConnection {
     /// （`let`），裸 `logger` 會被 shadow 導致無法賦值。
     private func registerLoggerForwarding() {
         HaishinKit.logger.onLog = { [weak self] level, message in
-            Task { [weak self] in
-                guard let self else {
-                    return
-                }
-                await self.log(level.rtmpLevel, message)
+            guard let connection = self else {
+                return
+            }
+            let rtmpLevel = level.rtmpLevel
+            // Task closure 只捕獲 connection（強引用 actor，Sendable），不捕獲
+            // 外層的 self——避免 Swift 6.2 的 sending 檢查判定與外層 closure
+            // 共用 self 造成資料競爭風險。
+            Task {
+                await connection.log(rtmpLevel, message)
             }
         }
     }
