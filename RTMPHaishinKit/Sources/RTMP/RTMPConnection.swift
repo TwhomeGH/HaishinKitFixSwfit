@@ -360,10 +360,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     deinit {
+        // Swift 6 strict：actor 的 deinit 是 nonisolated，不能存取 actor-isolated
+        // 屬性（outputContinuation/reconnectionTask/streams 的清理已由 close() 完成）。
+        // 這裡只做 nonisolated 的全域 logger 解除。
         unregisterLoggerForwarding()
-        outputContinuation?.finish()
-        reconnectionTask?.cancel()
-        streams.removeAll()
     }
 
     /// Calls a command or method on RTMP Server.
