@@ -354,9 +354,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.reconnectBaseDelay = reconnectBaseDelay
         self.reconnectMaxDelay = reconnectMaxDelay
         self.minimumLogLevel = minimumLogLevel
+        // 最早註冊 logger 轉送：catch mixer/codec 的啟動期一發性日誌
+        // （例如音訊軌來源格式），不必等 connect。
+        registerLoggerForwarding()
     }
 
     deinit {
+        unregisterLoggerForwarding()
         outputContinuation?.finish()
         reconnectionTask?.cancel()
         streams.removeAll()
@@ -468,6 +472,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         // connection.onLog，讓 app 不需 Xcode 就能把 framework 內部日誌（如
         // 音訊軌來源格式、resync、stall 偵測）送到伺服器。close() 時解除。
         registerLoggerForwarding()
+        // 確認 log：connect 之後 framework 內部 `logger.*` 都會流經 onLog。
+        log(.info, "HaishinKit.logger forwarding to onLog is active")
         // Fresh socket/monitor: clear liveness watchdog state so a brand-new
         // connection isn't flagged for a stall inherited from the previous one.
         silentIntervals = 0
@@ -976,8 +982,9 @@ extension RTMPConnection {
     /// framework 內部日誌（AudioMixerTrack 的來源格式、AEC、resync、stall 等）
     /// 流經本 connection 的 `onLog`，app 可不下 Xcode 直接送到伺服器。
     /// 注意：需顯式 `HaishinKit.logger`——RTMP module 有自己的 `logger` 全域
-    /// （`let`），裸 `logger` 會被 shadow 導致無法賦值。
-    private func registerLoggerForwarding() {
+    /// （`let`），裸 `logger` 會被 shadow 導致無法賦值。`nonisolated` 以便在
+    /// actor init/deinit 呼叫（只碰全域 logger，不碰 actor 狀態）。
+    nonisolated private func registerLoggerForwarding() {
         HaishinKit.logger.onLog = { [weak self] level, message in
             guard let connection = self else {
                 return
@@ -992,7 +999,7 @@ extension RTMPConnection {
         }
     }
 
-    private func unregisterLoggerForwarding() {
+    nonisolated private func unregisterLoggerForwarding() {
         HaishinKit.logger.onLog = nil
     }
 
