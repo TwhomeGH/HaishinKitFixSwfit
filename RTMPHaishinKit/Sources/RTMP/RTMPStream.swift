@@ -278,6 +278,14 @@ public actor RTMPStream {
     // outgoing（stop/startRunning 重啟兩個 codec），若誤判連發或重入，只允許
     // 一次在跑，避免重複建立 publish tasks / 丟幀窗口疊加。
     private var isRestartingPipelines = false
+    // A/V 對齊自動補償（video wire）：ReplayKit screen capture 的 PTS 通常比
+    // mic/app audio 落後固定量（實測 ~0.28s），造成 video wire 恆定落後 audio
+    // wire（avOffset 負）→ 玩家聽得到 lip-sync 偏差甚至觸發 A/V 自動修正。
+    // 啟動後前幾個 status 量測 avOffset，之後把 video 幀 PTS 加上補償讓 wire
+    // 對齊（audio 為同步基準，人聲為準，補 video）。
+    private var avOffsetCompensation: TimeInterval = 0
+    private var avOffsetSamples: [TimeInterval] = []
+    private var avOffsetMeasured = false
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
@@ -958,7 +966,14 @@ extension RTMPStream: _Stream {
                 // the previous frame; the following type-1 frame then adds its
                 // own delta once instead of double-counting it.
                 videoFormat = sampleBuffer.formatDescription
-                let timedelta = videoTimestamp.update(decodeTimeStamp, source: "video")
+                // A/V 對齊補償：量測到的 video wire 落後 audio 的固定 offset，
+                // 對 video 幀 PTS 加上補償（audio 為基準，補 video）。補償在
+                // 啟動 ~3s 後生效，wire 一次向前跳動對齊（<2000ms clamp 內）。
+                var frameTime = decodeTimeStamp
+                if avOffsetCompensation != 0 {
+                    frameTime = CMTimeAdd(decodeTimeStamp, CMTime(seconds: avOffsetCompensation, preferredTimescale: 1000))
+                }
+                let timedelta = videoTimestamp.update(frameTime, source: "video")
                 frameCount += 1
                 let compositionTime: Int32
                 if sampleBuffer.decodeTimeStamp.isValid {
@@ -1095,6 +1110,10 @@ extension RTMPStream: _Stream {
         case .reset:
             stopPublishTasks()
             outgoing.stopRunning()
+            // 重推時重新量測 A/V offset 補償（來源 offset 每次連線可能不同）。
+            avOffsetCompensation = 0
+            avOffsetSamples.removeAll()
+            avOffsetMeasured = false
             id = RTMPStream.defaultID
             readyState = .idle
             videoInputFrames = 0
@@ -1122,17 +1141,32 @@ extension RTMPStream: _Stream {
                 await connection?.log(.warn, "publish status gap", detail: "interval=\(interval) videoInputFrames=\(videoInputFrames) frameCount=\(frameCount) inputPTS=\(inputPTS)")
             }
             if audioSentFrames > 0 || audioInputFrames > 0 || videoSentBytes > 0 || videoInputFrames > 0 {
+                // videoPTS / audioPTS = 各自「最後一幀」的原始 capture 時間（host time）。
+                // 兩者不會逐幀相等：1) 取樣時刻不同（video/audio 幀交錯）2) 兩子系統
+                // 時鐘基座可能有固定 offset。要看的是 avOffset 是否「固定」還是「增長」：
+                // 固定 = 健康；持續增大 = 兩時鐘漂移（player 可能因此棄音/凍結畫面）。
+                let videoPTS = videoTimestamp.updatedAt
+                let audioPTS = audioTimestamp.updatedAt
+                let avOffset = videoPTS - audioPTS
+                // A/V 對齊自動補償量測：啟動後前幾個 status 累積 avOffset 樣本，
+                // 取中位數設為 video wire 補償（見 append(sampleBuffer:)）。audio 為
+                // 同步基準。只有在「尚未量測」時累積，設完就停（固定來源 offset）。
+                if !avOffsetMeasured, 0 < audioPTS, 0 < videoPTS {
+                    avOffsetSamples.append(avOffset)
+                    if 3 <= avOffsetSamples.count {
+                        let sorted = avOffsetSamples.sorted()
+                        let median = sorted[sorted.count / 2]
+                        avOffsetCompensation = -median
+                        avOffsetMeasured = true
+                        avOffsetSamples.removeAll()
+                        await connection?.log(.info, "A/V offset compensated",
+                            detail: "measured=\(String(format: "%.3f", median))s compensation=\(String(format: "%.3f", avOffsetCompensation))s")
+                    }
+                }
                 // 節流：每 10 個 .status（≈10s）印一筆。計數器在每次 status 結尾
                 // 重置，所以印的是「最後 1 秒」的快照——足以監測 avOffset/速率。
                 publishThroughputLogCount += 1
                 if publishThroughputLogCount % 10 == 0 {
-                    // videoPTS / audioPTS = 各自「最後一幀」的原始 capture 時間（host time）。
-                    // 兩者不會逐幀相等：1) 取樣時刻不同（video/audio 幀交錯）2) 兩子系統
-                    // 時鐘基座可能有固定 offset。要看的是 avOffset 是否「固定」還是「增長」：
-                    // 固定 = 健康；持續增大 = 兩時鐘漂移（player 可能因此棄音/凍結畫面）。
-                    let videoPTS = videoTimestamp.updatedAt
-                    let audioPTS = audioTimestamp.updatedAt
-                    let avOffset = videoPTS - audioPTS
                     await connection?.log(.debug, "publish throughput",
                         detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes) videoPTS=\(String(format: "%.3f", videoPTS))s audioPTS=\(String(format: "%.3f", audioPTS))s avOffset=\(String(format: "%.3f", avOffset))s")
                 }

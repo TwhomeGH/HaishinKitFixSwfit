@@ -4,6 +4,27 @@
 
 ---
 
+## 42. A/V offset 自動測量補償（video wire 對齊 audio）
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：ReplayKit 混音流的 `avOffset`（videoPTS - audioPTS）恆定 **-0.28s**
+（video wire 落後 audio），長時間穩定不漂移。這是固定 lip-sync 偏差——來源
+（screen capture PTS 比 mic/app audio 落後固定量）或 video 管線延遲造成。玩家
+端偵測到 280ms 偏差會觸發 A/V 自動修正（棄音/插 silence）→ 聽到的「斷序/短暫
+沒聲音」。
+
+**修正**：
+- 啟動後前 3 個 `.status`（~3s）量測 `avOffset`，取中位數，設
+  `avOffsetCompensation = -median`
+- video append 時對幀 PTS 加補償（`CMTimeAdd`），讓 video wire 一次向前跳動
+  對齊 audio（<2000ms clamp 內）。audio 為同步基準（人聲為準），補 video
+- `.reset`（重推）時重置量測，重新測量（每次連線 offset 可能不同）
+
+**效果**：`[RTMP] info A/V offset compensated` log 顯示量測值與補償值；補償後
+video wire 與 audio wire 對齊，玩家不再觸發 A/V 修正 → 斷序/短暫無聲消失。
+代價：補償生效時 video wire 一次跳 ~0.28s（啟動期一次性跳動）。
+
 ## 41. 管線重啟防重入保險（避免誤判連發/重複建管線）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
