@@ -274,6 +274,10 @@ public actor RTMPStream {
     // `publish throughput` log 節流：NetworkMonitor 每 1s 發 .status，改為每 10
     // 個 status（≈10s）才印一筆，避免每秒 log 增加發熱/CPU 與伺服器流量。
     private var publishThroughputLogCount = 0
+    // 管線重啟防重入：restartVideoPipeline / restartAudioPipeline 共用同一個
+    // outgoing（stop/startRunning 重啟兩個 codec），若誤判連發或重入，只允許
+    // 一次在跑，避免重複建立 publish tasks / 丟幀窗口疊加。
+    private var isRestartingPipelines = false
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
@@ -1233,6 +1237,17 @@ extension RTMPStream: _Stream {
             videoStallCount = 0
             return
         }
+        guard !isRestartingPipelines else {
+            // 已有一個 restart 在跑（video/audio 共用同一個 outgoing）——跳過並
+            // 重置計數器，避免重入造成重複建 publish tasks 或丟幀窗口疊加。
+            await connection?.log(.warn, "skip restartVideoPipeline: already restarting", detail: reason)
+            videoStallCount = 0
+            audioStallCount = 0
+            videoSourceStallCount = 0
+            return
+        }
+        isRestartingPipelines = true
+        defer { isRestartingPipelines = false }
         await connection?.log(.warn, "Restarting video pipeline", detail: reason)
         await connection?.log(.info, "restartVideoPipeline: stopping publish tasks")
         stopPublishTasks()
@@ -1254,6 +1269,14 @@ extension RTMPStream: _Stream {
             audioStallCount = 0
             return
         }
+        guard !isRestartingPipelines else {
+            await connection?.log(.warn, "skip restartAudioPipeline: already restarting", detail: reason)
+            audioStallCount = 0
+            videoStallCount = 0
+            return
+        }
+        isRestartingPipelines = true
+        defer { isRestartingPipelines = false }
         await connection?.log(.warn, "Restarting audio pipeline", detail: reason)
         stopPublishTasks()
         outgoing.stopRunning()

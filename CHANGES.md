@@ -4,6 +4,20 @@
 
 ---
 
+## 41. 管線重啟防重入保險（避免誤判連發/重複建管線）
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**動機**：stall 偵測若誤判連發，`restartVideoPipeline`/`restartAudioPipeline` 可能
+重入或連續觸發。兩者共用同一個 `outgoing`（`stopRunning`/`startRunning` 重啟
+video+audio 兩個 codec），若重入可能重複建 publish tasks、或丟幀窗口疊加
+（restart 期間 video input / audio bridge 的 continuation 為 nil → 幀被丟）。
+
+**修正**：`isRestartingPipelines` 旗標——兩個 restart 入口共用，已有一個在跑時
+跳過並重置 stall 計數器（`defer` 確保結束後清除）。
+
+**效果**：就算誤判，也只重啟一次，不會疊加。
+
 ## 40. `publish throughput` log 節流為每 10 秒一筆
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
