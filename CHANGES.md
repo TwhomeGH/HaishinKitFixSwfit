@@ -4,6 +4,18 @@
 
 ---
 
+## 40. `publish throughput` log 節流為每 10 秒一筆
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**動機**：`NetworkMonitor` 每 1s 發 `.status`，RTMPStream 每 1s 印一筆
+`publish throughput`（含 avOffset/速率）。在熱受限裝置上，每秒 log（尤其經
+#39 轉送到伺服器）增加發熱/CPU 與伺服器流量。
+
+**修正**：`.status` 處理內節流——每 10 個 status（≈10s）才印一筆。計數器在
+每次 status 結尾重置，印的是最後 1 秒快照，仍足以監測 avOffset 是否漂移。
+stall 偵測/bitrate 策略仍維持 1Hz（不受影響，只 throttle log 輸出）。
+
 ## 39. logger 多 handler 並存 + 輸出轉送到 connection.onLog（不需 Xcode 看內部日誌）
 
 **檔案**：`HaishinKit/Sources/Util/Constants.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、`RTMPLogEvent.swift`
