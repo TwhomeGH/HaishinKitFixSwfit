@@ -232,6 +232,9 @@ public actor RTMPStream {
     static let maxAudioBehindVideoSeconds: TimeInterval = 0.5
     private var audioResyncCount = 0
     private var warnedNilPacketDuration = false
+    // 上一次有效的 packetDuration：`packetDuration` 異常回 nil（sampleRate<=0）時
+    // 用它當 fallback，讓 wire 永不退回 source-time cadence（斷續音來源）。
+    private var lastAudioPacketDuration: TimeInterval?
     private let inflowLock = NSLock()
     /// Congestion signal owned by RTMPConnection. Read from the nonisolated
     /// mixer path to drop raw frames *before* encoding when the network can't
@@ -1048,13 +1051,21 @@ extension RTMPStream: _Stream {
             // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
             // 區間的音訊內容被跳過（丟棄舊資料），player 重新對齊而非靜音。
             let resyncedWhen = resyncedAudioTime(original: when)
-            let preferredDelta = audioBuffer.packetDuration
-            if preferredDelta == nil, !warnedNilPacketDuration {
-                // sampleRate <= 0 的異常格式才會走到這：packetDuration 對應的
-                // codec 標稱值計算不出來。記錄一次即可，避免 per-frame 日誌。
+            let computedPacketDuration = audioBuffer.packetDuration
+            if computedPacketDuration == nil, !warnedNilPacketDuration {
+                // packetDuration 異常（sampleRate<=0）：記錄一次，並用 fallback 維持
+                // wire 依封包 duration 前進，而非退回 source-time cadence。
                 warnedNilPacketDuration = true
-                Task { await connection?.log(.warn, "audio: packetDuration nil (sampleRate=\(audioBuffer.format.sampleRate)), wire follows source-time cadence") }
+                Task { await connection?.log(.warn, "audio: packetDuration nil (sampleRate=\(audioBuffer.format.sampleRate)), using fallback AAC duration") }
             }
+            if let computedPacketDuration {
+                lastAudioPacketDuration = computedPacketDuration
+            }
+            // 防禦：packetDuration nil → 用上次有效值；仍無 → 用標稱 AAC 1024/rate
+            // （rate 未知時 48000）。wire 永不退回 source-time（那是斷續音來源）。
+            let preferredDelta = computedPacketDuration
+                ?? lastAudioPacketDuration
+                ?? 1024.0 / (audioBuffer.format.sampleRate > 0 ? audioBuffer.format.sampleRate : 48000)
             let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true, preferredDelta: preferredDelta)
             guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }

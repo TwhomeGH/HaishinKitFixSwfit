@@ -4,6 +4,23 @@
 
 ---
 
+## 43. `packetDuration` nil 防禦 fallback（wire 永不退回 source-time）
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：確認 app 跑最新 build（829b510）後，audio wire 仍時而出現 20/37
+（source-time 特徵，mean ~26.8ms）——代表 `packetDuration` 在 runtime 回傳 nil
+（`AVAudioCompressedBuffer.format.sampleRate <= 0` 的異常格式），wire 退回
+source-time cadence → 斷續音。
+
+**修正**：compressed audio append 改用非 nil 的 fallback 鏈：
+`packetDuration` → 上次有效值 → 標稱 AAC `1024/rate`（rate 未知用 48000）。
+**wire 永不退回 source-time**。nil 時印一次 warn（`using fallback AAC duration`）
+供診斷。
+
+**效果**：就算 runtime 格式異常，wire 也依封包 duration 前進（23/24ms @44100），
+斷續音來源消失。
+
 ## 42. A/V offset 自動測量補償（video wire 對齊 audio）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
