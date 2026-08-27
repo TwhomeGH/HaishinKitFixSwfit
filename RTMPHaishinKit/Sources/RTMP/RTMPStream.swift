@@ -766,6 +766,10 @@ public actor RTMPStream {
         // 且不能清除 lastPublishName（resumePublishing 需要它）。
         stopPublishTasks()
         outgoing.stopRunning()
+        // 清理 publish/play 等待中的 pending continuation，
+        // 讓 withCheckedThrowingContinuation 正常結束（避免 task 洩漏 + 重連後 invalidState）。
+        continuation?.resume(throwing: Error.invalidState)
+        continuation = nil
         if let fcPublishName, readyState == .publishing {
             async let _ = try? connection?.call("FCUnpublish", arguments: fcPublishName)
             async let _ = try? connection?.call("deleteStream", arguments: id)

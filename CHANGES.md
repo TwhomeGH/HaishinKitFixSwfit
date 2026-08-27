@@ -4,6 +4,27 @@
 
 ---
 
+## 44. `deleteStream()` 清理 pending continuation（修復重連後 `invalidState`）
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：當 socket recv 結束自動觸發 `close()` → reconnect 時，`deleteStream()` 被
+呼叫但**不清理 `self.continuation`**。導致：
+1. 第一次 publish 的 `withCheckedThrowingContinuation` 永遠掛著（task 洩漏）
+2. 重連後第二次 publish 呼叫時，`self.continuation?.resume(throwing: Error.invalidState)`
+   試圖清理舊 continuation → 產生 `invalidState` 錯誤
+3. 若 `readyState` 未被重置，`resumePublishing()` 的 guard 會跳過 → republish 不發生
+
+**徵兆**：RTMP log 顯示 `publish: failed with invalidState` + 重連循環
+
+**修正**：`deleteStream()` 在 `stopPublishTasks()` 後增加 `continuation?.resume(throwing:)`
++ `continuation = nil`，確保 pending 的 `withCheckedThrowingContinuation` 正常結束。
+
+**效果**：重連流程中 `resumePublishing()` → `publish()` 可正常建立新的 continuation，
+不再因舊 continuation 殘留而 `invalidState`。
+
+---
+
 ## 43. `packetDuration` nil 防禦 fallback（wire 永不退回 source-time）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
