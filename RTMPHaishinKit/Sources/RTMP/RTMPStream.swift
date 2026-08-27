@@ -32,6 +32,8 @@ public actor RTMPStream {
         case requestFailed(response: RTMPResponse)
         /// An unsupported codec.
         case unsupportedCodec
+        /// Connection was lost unexpectedly; carries the underlying socket/receive error.
+        case connectionLost(Swift.Error?)
     }
 
     /// NetStatusEvent#info.code for NetStream
@@ -761,14 +763,16 @@ public actor RTMPStream {
         throw lastError
     }
 
-    func deleteStream() async {
+    func deleteStream(underlyingError: (any Swift.Error)? = nil) async {
         // 不要求 fcPublishName：重連 teardown 時也要停止管線，
         // 且不能清除 lastPublishName（resumePublishing 需要它）。
         stopPublishTasks()
         outgoing.stopRunning()
         // 清理 publish/play 等待中的 pending continuation，
         // 讓 withCheckedThrowingContinuation 正常結束（避免 task 洩漏 + 重連後 invalidState）。
-        continuation?.resume(throwing: Error.invalidState)
+        // 傳遞底層錯誤（如 ENOSR），不只丟 .invalidState。
+        let rtmpError: RTMPStream.Error = underlyingError.map { .connectionLost($0) } ?? .invalidState
+        continuation?.resume(throwing: rtmpError)
         continuation = nil
         if let fcPublishName, readyState == .publishing {
             async let _ = try? connection?.call("FCUnpublish", arguments: fcPublishName)

@@ -4,6 +4,27 @@
 
 ---
 
+## 45. Error propagation: `connectionLost(Error?)` 保留底層錯誤原文
+
+**檔案**：`RTMPStream.swift`、`RTMPSocket.swift`、`RTMPConnection.swift`
+
+**診斷**：當 socket recv 遇到底層錯誤（如 ENOSR POSIX 96）導致連線中斷時，error
+在 RTMPSocket.didReceive 被 log 徎就丟失。上層 `deleteStream()` 只拋出
+`.invalidState`，用戶看到「publish: failed with invalidState」但看不到真正原因。
+
+**修正**：
+- `RTMPStream.Error` 新增 `.connectionLost(Swift.Error?)`，攜帶底層錯誤
+- `RTMPSocket` 新增 `lastRecvError` 屬性，記錄最后一次 recv error
+- `RTMPStream.deleteStream(underlyingError:)` 接受底層錯誤，拋出 `.connectionLost(error)`
+  而非 `.invalidState`
+- `RTMPConnection.close()` 將 `socket.lastRecvError` 傳給 `deleteStream()`
+- `performConnect` 的 catch block 新增 log 記錄 recv loop 結束的真正錯誤
+
+**效果**：用戶現在看到 `publish: failed with connectionLost(Posix error 96: ...)` 
+而非 `invalidState`，可直接定位底層網路問題。
+
+---
+
 ## 44. `deleteStream()` 清理 pending continuation（修復重連後 `invalidState`）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`

@@ -511,6 +511,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                             try? await close()
                         }
                     } catch {
+                        log(.error, "Socket recv loop ended with error", detail: "\(error)")
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
                             try? await close()
                             await startReconnection()
@@ -610,9 +611,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         for stream in streams {
             // publishing 一律用 deleteStream（保留 lastPublishName 供重連 resumePublishing）。
             // stream.close() 會清掉 lastPublishName，導致重連後無法自動 republish。
+            // 傳遞 socket 的 recv error，讓 stream 拋出 connectionLost(底層錯誤) 而非 .invalidState。
             switch await stream.readyState {
             case .publishing:
-                await stream.deleteStream()
+                await stream.deleteStream(underlyingError: socket?.lastRecvError)
             default:
                 _ = try? await stream.close()
             }

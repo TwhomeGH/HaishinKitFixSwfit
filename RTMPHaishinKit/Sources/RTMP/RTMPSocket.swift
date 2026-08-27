@@ -16,6 +16,9 @@ final actor RTMPSocket {
     }
 
     var onLog: (@Sendable (RTMPLogEvent) -> Void)?
+    /// The most recent recv error that caused the receive loop to stop.
+    /// Exposed so RTMPConnection can propagate the real error to streams.
+    private(set) var lastRecvError: NWError?
     private var timeout: UInt64 = 15
     private var connected = false
     private var windowSizeC = RTMPSocket.defaultWindowSizeC
@@ -239,6 +242,7 @@ final actor RTMPSocket {
         if let error {
             // 這裡就是所有 recv error 的集中點
             isReceiveStopped = true
+            lastRecvError = error
             logger.error("recv error:", error)
             onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
             receiveContinuation?.finish()
