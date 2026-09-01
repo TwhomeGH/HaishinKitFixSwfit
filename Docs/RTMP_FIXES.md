@@ -376,6 +376,38 @@ outputContinuation.yield(data)
 
 ---
 
+### 7.4 onMetaData 發送時序過早導致 HTTP-FLV 顯示 `1/1000` fps (P1)
+**文件**: `RTMPStream.swift`
+**日期**: 2026-09-01
+
+**問題**: `publish()` 原本在送出 RTMP `publish` command 前就先呼叫
+`send("@setDataFrame", arguments: "onMetaData", metadata)`。部分 RTMP server 只在
+`NetStream.Publish.Start` 之後接受並轉發 stream data，因此這筆 metadata 會被丟棄。
+實測拉取 live HTTP-FLV 樣本時，video tag timestamp delta 主要為 `16/17/20ms`
+（實際 fps 正常），但 FLV 內找不到 `onMetaData`、`framerate` 或 `@setDataFrame`。
+
+**影響**:
+- 下游 demuxer/player 無法從 metadata 得到 `framerate`
+- 診斷頁或播放器可能退回顯示 FLV timestamp timebase（毫秒，`1/1000`），看起來像
+  異常 fps
+- 這個現象容易誤導排查方向：實際 video timestamp 並沒有被寫成 1000 倍慢，而是
+  metadata 缺失造成顯示/推斷錯誤
+
+**修復**:
+- `onMetaData` 改為等 `publishStart` 回應後才送出
+- 第一筆 metadata 使用 timestamp `0`
+- 若 publish 成功時 video format 尚未可用，第一個 encoded video frame 到達時，
+  在 video sequence header 前補送一次含 video 欄位的 metadata
+- `framerate` 優先使用 `expectedFrameRate`，否則使用 `1 / frameInterval`
+- reset/reconnect 時清除 metadata 發送狀態，確保每次重新 publish 都會重新送出
+
+**驗證方式**:
+1. 拉取 HTTP-FLV 樣本，確認包含 `onMetaData` 與 `framerate`
+2. 解析 FLV video tag timestamp delta，應維持在實際幀間距（例如 16/17/20/33ms）
+3. 若播放器仍顯示 `1/1000`，先確認 metadata 是否被 server 轉發，再檢查下游 parser
+
+---
+
 ## 6. 已知限制
 
 1. **自動重連**: ✅ 已實現（指數退避 1s→30s，最多 5 次）

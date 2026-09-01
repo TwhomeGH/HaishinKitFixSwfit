@@ -95,6 +95,27 @@
 - 檢查 `onLog` 是否有 `audio stall detected` 或 `Restarting audio pipeline` 日誌
 - 比對 `audioInputFrames`（PCM 輸入）與 `audioSentFrames`（壓縮輸出）是否一致
 
+### HTTP-FLV 顯示 `1/1000` fps
+
+**問題**: 拉取 HTTP-FLV 或查看 SRS/Oryx/播放器診斷時，fps 顯示為 `1/1000`，
+但畫面實際播放節奏看起來不是每 1000 秒一幀。
+
+**判斷方式**:
+- 直接解析 FLV video tag timestamp delta；若主要為 `16/17/20/33ms`，代表實際
+  video cadence 正常
+- 搜尋 FLV payload 是否含 `onMetaData`、`framerate` 或 `@setDataFrame`
+- 若沒有 metadata，`1/1000` 通常是下游把 FLV 的毫秒 timebase 當成 fps 資訊顯示，
+  不是 RTMP video timestamp 被寫壞
+
+**修復方向**:
+- 確保 `onMetaData` 在 `NetStream.Publish.Start` 後送出，而不是在 `publish`
+  command 前送出
+- 第一筆 metadata timestamp 應為 `0`
+- metadata 應包含 `framerate`；優先使用 `expectedFrameRate`，未設定時可由
+  `frameInterval` 推算
+- 若 publish 成功時 video format 尚未建立，第一個 encoded video frame 到達時要在
+  video sequence header 前補送含 video 欄位的 metadata
+
 ### 記憶體問題
 
 **問題**: 長時間串流後記憶體不斷增長。

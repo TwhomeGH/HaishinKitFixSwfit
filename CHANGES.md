@@ -4,6 +4,39 @@
 
 ---
 
+## 46. 修正 RTMP onMetaData 發送時序（避免 HTTP-FLV 顯示 `1/1000` fps）
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：拉取 live HTTP-FLV（`/live/livestream.flv`）解析 tag 後確認：
+- video tag timestamp delta 正常，主要為 `16/17/20ms`，實際約 50~60fps
+- FLV 內沒有 `onMetaData` / `framerate` script tag
+
+因此 `1/1000` 並不是實際幀率異常，而是 downstream demuxer/player 在缺少
+`framerate` metadata 時，退回顯示 FLV timestamp timebase（毫秒，`1/1000`）
+造成的誤導性現象。
+
+**根因**：`publish()` 在送出 RTMP `publish` command 前，先呼叫
+`send("@setDataFrame", "onMetaData", metadata)`。多數 server 只會在
+`NetStream.Publish.Start` 後接受/轉發 stream data，導致這筆 metadata 可能被
+server 丟棄；同時 metadata 建構太早，video format 尚未成熟時可能缺少
+width/height/framerate。
+
+**修正**：
+- `onMetaData` 改為等 `publishStart` 回應後才送，避免 publish 前資料被 server 吃掉
+- 第一筆 metadata timestamp 固定為 `0`
+- 若 publish 成功時 video metadata 尚不完整，第一個 encoded video frame 到達時，
+  在 video sequence header 前補送一次含 video 欄位的 `onMetaData`
+- `framerate` 優先使用 `expectedFrameRate`；若未設定但有 `frameInterval`，以
+  `1 / frameInterval` 補上
+- reset/reconnect 時清除 metadata 發送狀態，確保重推會重新送 metadata
+
+**影響**：HTTP-FLV、SRS/Oryx 診斷頁、ffmpeg/播放器等依賴 `onMetaData`
+推斷串流資訊的下游，不再因 metadata 缺失把 timebase `1/1000` 誤顯為 fps；
+也降低平台端誤判解析資訊不完整的機率。
+
+---
+
 ## 45. Error propagation: `connectionLost(Error?)` 保留底層錯誤原文
 
 **檔案**：`RTMPStream.swift`、`RTMPSocket.swift`、`RTMPConnection.swift`

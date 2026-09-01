@@ -275,6 +275,8 @@ public actor RTMPStream {
     private var audioSentBytes: Int = 0
     private var videoSentBytes: Int = 0
     private var hasSentVideoFrame = false
+    private var hasSentMetadata = false
+    private var metadataIncludesVideo = false
     private var lastStatusTime = Date.distantPast
     // `publish throughput` log 節流：NetworkMonitor 每 1s 發 .status，改為每 10
     // 個 status（≈10s）才印一筆，避免每秒 log 增加發熱/CPU 與伺服器流量。
@@ -483,10 +485,10 @@ public actor RTMPStream {
             lastPublishName = name
             lastPublishType = type
             startedAt = .init()
-            metadata = makeMetadata()
+            hasSentMetadata = false
+            metadataIncludesVideo = false
             outgoing.startRunning()
             readyState = .publishing
-        try? send("@setDataFrame", arguments: "onMetaData", metadata)
             let response = try await withCheckedThrowingContinuation { continuation in
                 expectedResponse = Code.publishStart
                 self.continuation?.resume(throwing: Error.invalidState)
@@ -509,6 +511,7 @@ public actor RTMPStream {
                 Task { await connection?.log(.debug, "publish: command sent, waiting for response") }
             }
             await connection?.log(.debug, "publish: response received, starting publish tasks")
+            sendMetadataIfNeeded()
             startPublishTasks()
             return response
         } catch {
@@ -899,17 +902,59 @@ public actor RTMPStream {
         info.byteCount += length
     }
 
+    private func sendMetadataIfNeeded(videoFormat: CMFormatDescription? = nil) {
+        let includesVideo = videoFormat != nil || outgoing.videoInputFormat != nil || hasDeclaredVideoMetadata
+        guard !hasSentMetadata || includesVideo && !metadataIncludesVideo else {
+            return
+        }
+        metadata = makeMetadata(videoFormat: videoFormat)
+        let handlerName = "@setDataFrame"
+        let now = Date()
+        let timestamp: UInt32
+        if let lastSentAt = dataTimestamps[handlerName] {
+            timestamp = UInt32(now.timeIntervalSince(lastSentAt) * 1000)
+        } else {
+            timestamp = 0
+        }
+        doOutput(
+            hasSentMetadata ? .one : .zero,
+            chunkStreamId: .data,
+            message: RTMPDataMessage(
+                streamId: id,
+                objectEncoding: objectEncoding,
+                timestamp: timestamp,
+                handlerName: handlerName,
+                arguments: ["onMetaData", metadata]
+            )
+        )
+        dataTimestamps[handlerName] = now
+        hasSentMetadata = true
+        metadataIncludesVideo = includesVideo
+    }
+
+    private var hasDeclaredVideoMetadata: Bool {
+        outgoing.videoSettings.expectedFrameRate != nil || 0 < outgoing.videoSettings.frameInterval
+    }
+
     /// Creates flv metadata for a stream.
-    private func makeMetadata() -> AMFArray {
+    private func makeMetadata(videoFormat: CMFormatDescription? = nil) -> AMFArray {
         // https://github.com/shogo4405/HaishinKit.swift/issues/1410
         var metadata: AMFObject = ["duration": 0]
-        if outgoing.videoInputFormat != nil {
-            metadata["width"] = outgoing.videoSettings.videoSize.width
-            metadata["height"] = outgoing.videoSettings.videoSize.height
+        if videoFormat != nil || outgoing.videoInputFormat != nil || hasDeclaredVideoMetadata {
+            if let videoFormat {
+                let dimensions = CMVideoFormatDescriptionGetDimensions(videoFormat)
+                metadata["width"] = dimensions.width
+                metadata["height"] = dimensions.height
+            } else {
+                metadata["width"] = outgoing.videoSettings.videoSize.width
+                metadata["height"] = outgoing.videoSettings.videoSize.height
+            }
             metadata["videocodecid"] = outgoing.videoSettings.format.codecid
             metadata["videodatarate"] = outgoing.videoSettings.bitRate / 1000
             if let expectedFrameRate = outgoing.videoSettings.expectedFrameRate {
                 metadata["framerate"] = expectedFrameRate
+            } else if 0 < outgoing.videoSettings.frameInterval {
+                metadata["framerate"] = 1.0 / outgoing.videoSettings.frameInterval
             }
         }
         metadata["audiocodecid"] = outgoing.audioSettings.format.codecid
@@ -972,6 +1017,7 @@ extension RTMPStream: _Stream {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
                 let decodeTimeStamp = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
+                sendMetadataIfNeeded(videoFormat: sampleBuffer.formatDescription)
                 // Emit the sequence header (if the format changed) BEFORE the
                 // timestamp advances, so a type-0 header carries the position of
                 // the previous frame; the following type-1 frame then adds its
@@ -1141,6 +1187,8 @@ extension RTMPStream: _Stream {
             audioInputFrames = 0
             audioStallCount = 0
             hasSentVideoFrame = false
+            hasSentMetadata = false
+            metadataIncludesVideo = false
             lastStatusVideoInputPTSSeconds = -1
             lastStatusVideoOutputPTSSeconds = -1
         case .status(let report):
