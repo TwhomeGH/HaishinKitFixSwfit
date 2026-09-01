@@ -836,7 +836,10 @@ public actor RTMPStream {
     private func startPublishTasks() {
         publishTask?.cancel()
 
-        let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
+        let (audioStream, audioContinuation) = AsyncStream.makeStream(
+            of: (AVAudioPCMBuffer, AVAudioTime).self,
+            bufferingPolicy: .bufferingNewest(16)
+        )
         mixerOutputBridge.setAudioContinuation(audioContinuation)
         outgoing.setVideoCodecLogHandler { [weak self] message in
             Task { await self?.connection?.log(.info, "VideoCodec: \(message)") }
@@ -883,7 +886,10 @@ public actor RTMPStream {
     }
 
     private func startOutputConsumer() {
-        let (stream, continuation) = AsyncStream.makeStream(of: RTMPOutputItem.self)
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: RTMPOutputItem.self,
+            bufferingPolicy: .bufferingOldest(256)
+        )
         outputContinuation = continuation
         Task { [weak self] in
             for await item in stream {

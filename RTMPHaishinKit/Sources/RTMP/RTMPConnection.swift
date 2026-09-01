@@ -266,6 +266,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// streams (raw-frame intake readers). Owned here so it survives socket
     /// recreation across reconnects.
     nonisolated let backpressureSignal = SocketBackpressure()
+    nonisolated(unsafe) private var loggerHandlerId: HaishinKitLogger.HandlerID?
     private var chunks: [UInt16: RTMPChunkMessageHeader] = [:]
     private var streams: [RTMPStream] = []
     private var sequence: Int64 = 0
@@ -356,7 +357,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.minimumLogLevel = minimumLogLevel
         // 最早註冊 logger 轉送：catch mixer/codec 的啟動期一發性日誌
         // （例如音訊軌來源格式），不必等 connect。
-        registerLoggerForwarding()
+        registerLoggerForwarding(minimumLogLevel)
     }
 
     deinit {
@@ -460,9 +461,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         currentTransactionId = Self.connectTransactionId
         socket = RTMPSocket(qualityOfService: qualityOfService, securityLevel: secure ? .negotiatedSSL : .none)
         await socket?.setBackpressureSignal(backpressureSignal)
-        await socket?.setOnLog { [weak self] event in
+        let logLevel = minimumLogLevel
+        await socket?.setOnLog { [weak self, logLevel] event in
+            guard event.level.severity >= logLevel.severity else {
+                return
+            }
             Task { [weak self] in
-                guard let self, event.level.severity >= self.minimumLogLevel.severity else { return }
+                guard let self else { return }
                 await self.onLog?(event)
             }
         }
@@ -471,7 +476,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         // 把 HaishinKit logger（os_log 之外的 module logger）輸出轉送到
         // connection.onLog，讓 app 不需 Xcode 就能把 framework 內部日誌（如
         // 音訊軌來源格式、resync、stall 偵測）送到伺服器。close() 時解除。
-        registerLoggerForwarding()
+        registerLoggerForwarding(logLevel)
         // 確認 log：connect 之後 framework 內部 `logger.*` 都會流經 onLog。
         log(.info, "HaishinKit.logger forwarding to onLog is active")
         // Fresh socket/monitor: clear liveness watchdog state so a brand-new
@@ -689,7 +694,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private func startOutputConsumer(_ socket: RTMPSocket) {
         outputContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: Data.self,
+            bufferingPolicy: .bufferingOldest(256)
+        )
         outputContinuation = continuation
         outputConsumerTask = Task {
             for await data in stream {
@@ -983,18 +991,19 @@ extension RTMPConnection {
     /// 註冊 HaishinKit module logger（`HaishinKit.logger`）輸出轉送：所有
     /// framework 內部日誌（AudioMixerTrack 的來源格式、AEC、resync、stall 等）
     /// 流經本 connection 的 `onLog`，app 可不下 Xcode 直接送到伺服器。
-    /// 注意：需顯式 `HaishinKit.logger`——RTMP module 有自己的 `logger` 全域
-    /// （`let`），裸 `logger` 會被 shadow 導致無法賦值。`nonisolated` 以便在
-    /// actor init/deinit 呼叫（只碰全域 logger，不碰 actor 狀態）。
-    nonisolated private func registerLoggerForwarding() {
-        HaishinKit.logger.onLog = { [weak self] level, message in
+    /// 使用 token-based 額外 handler，避免多個 RTMPConnection 互相覆蓋全域
+    /// logger handler。level filter 必須在 Task 建立前完成，避免 trace/debug
+    /// hot path 只為了稍後被丟棄而產生大量 Task。
+    nonisolated private func registerLoggerForwarding(_ minimumLogLevel: RTMPLogLevel) {
+        unregisterLoggerForwarding()
+        loggerHandlerId = HaishinKit.logger.installLogHandler { [weak self, minimumLogLevel] level, message in
             guard let connection = self else {
                 return
             }
             let rtmpLevel = level.rtmpLevel
-            // Task closure 只捕獲 connection（強引用 actor，Sendable），不捕獲
-            // 外層的 self——避免 Swift 6.2 的 sending 檢查判定與外層 closure
-            // 共用 self 造成資料競爭風險。
+            guard rtmpLevel.severity >= minimumLogLevel.severity else {
+                return
+            }
             Task {
                 await connection.log(rtmpLevel, message)
             }
@@ -1002,7 +1011,11 @@ extension RTMPConnection {
     }
 
     nonisolated private func unregisterLoggerForwarding() {
-        HaishinKit.logger.onLog = nil
+        guard let loggerHandlerId else {
+            return
+        }
+        HaishinKit.logger.removeLogHandler(id: loggerHandlerId)
+        self.loggerHandlerId = nil
     }
 
     private var chunkSizeC: Int {

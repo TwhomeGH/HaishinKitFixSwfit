@@ -4,6 +4,40 @@
 
 ---
 
+## 47. 降低 onLog hot path 成本並補上 RTMP queue 保護上限
+
+**檔案**：`HaishinKit/Sources/Util/Constants.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：
+- `RTMPSocket` 的 trace/debug log 先建立 `Task` 進 `RTMPConnection` actor 後才
+  檢查 `minimumLogLevel`；即使預設 `.info` 會丟掉 trace/debug，hot path 仍已
+  付出 Task allocation / actor hop 成本。
+- `HaishinKit.logger.onLog` 是全域單槽。多個 `RTMPConnection` 會互相覆蓋；
+  任一 connection close 時也可能把別人的 forwarding 清掉。
+- RTMPStream → RTMPConnection 的 output `AsyncStream` 使用預設 unbounded，
+  socket/backpressure 失效或 actor 暫時追不上時，encoded RTMP message 仍可能堆積。
+
+**修正**：
+- socket log forwarding 在建立 Task 前先用 captured `minimumLogLevel` 過濾，
+  被丟棄的 trace/debug 不再產生 Task。
+- `HaishinKitLogger` 新增 token-based `installLogHandler` /
+  `removeLogHandler(id:)`，RTMPConnection 改用額外 handler，不再覆蓋全域
+  `logger.onLog`。
+- `HaishinKit` module logger forwarding 同樣在 Task 建立前做 level filter。
+- RTMPStream audio bridge 改為 `.bufferingNewest(16)`，壅塞時優先保最新 audio
+  buffer、降低延遲累積。
+- RTMPStream output queue 與 RTMPConnection output queue 補上
+  `.bufferingOldest(256)` emergency cap；正常節流仍靠 socket backpressure 在 raw
+  frame 入口處丟棄，避免 encoded GOP 中途任意丟包。
+
+**效果**：高 fps / 遊戲推流 / trace 診斷場景下，log 管線不再為預設會被過濾的
+事件製造大量 Task；多 connection logging 不再互相踩線；RTMP output queue 有最後
+保護線，避免異常壅塞時無界成長。
+
+---
+
 ## 46. 修正 RTMP onMetaData 發送時序（避免 HTTP-FLV 顯示 `1/1000` fps）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
