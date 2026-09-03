@@ -23,6 +23,12 @@ public protocol StreamConvertible: Actor, MediaMixerOutput {
     /// Sets the video compression properties.
     func setVideoSettings(_ videoSettings: VideoCodecSettings) throws
 
+    /// Restarts the video encoder without relying on a settings diff.
+    func restartVideoEncoding(reason: String) async
+
+    /// Restarts the audio encoder without relying on a settings diff.
+    func restartAudioEncoding(reason: String) async
+
     /// Sets the sound transform value control.
     func setSoundTransform(_ soundTransfrom: SoundTransform) async
 
@@ -64,6 +70,14 @@ package protocol _Stream: StreamConvertible {
     var bitRateStrategy: (any StreamBitRateStrategy)? { get set }
 }
 
+public extension StreamConvertible {
+    func restartVideoEncoding(reason: String = "manual recovery") async {
+    }
+
+    func restartAudioEncoding(reason: String = "manual recovery") async {
+    }
+}
+
 extension _Stream {
     public var soundTransform: SoundTransform? {
         get async {
@@ -85,6 +99,14 @@ extension _Stream {
 
     public func setVideoInputBufferCounts(_ videoInputBufferCounts: Int) {
         outgoing.setVideoInputBufferCounts(videoInputBufferCounts > 0 ? videoInputBufferCounts : nil)
+    }
+
+    public func restartVideoEncoding(reason: String = "manual recovery") async {
+        outgoing.restartVideoCodec()
+    }
+
+    public func restartAudioEncoding(reason: String = "manual recovery") async {
+        outgoing.restartAudioCodec()
     }
 
     public var maxVideoBufferBytes: Int {

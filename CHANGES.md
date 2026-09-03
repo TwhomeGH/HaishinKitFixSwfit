@@ -4,6 +4,33 @@
 
 ---
 
+## 48. 新增明確的編碼恢復 API（供 ReplayKit pause/resume 使用）
+
+**檔案**：`HaishinKit/Sources/Stream/StreamConvertible.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+**診斷**：
+- 上層在 `broadcastResumed()` 後用「讀取目前 `videoSettings` 再原樣
+  `setVideoSettings(settings)`」嘗試重建 encoder，但底層只有在 settings diff
+  需要 invalidate session 時才會重建；相同 settings 不會重建 VT session。
+- RTMP 的 video codec 重啟會換掉 codec output `AsyncStream`。若只重啟 codec、
+  沒有同步重接 publish consumer，可能形成「encoder 已重啟但沒人收輸出」。
+
+**修正**：
+- `StreamConvertible` 新增 `restartVideoEncoding(reason:)` 與
+  `restartAudioEncoding(reason:)`，讓上層以明確語意做 pause/resume recovery，
+  不再依賴 settings setter 的副作用。
+- `StreamConvertible` extension 提供 no-op fallback，避免外部自訂 stream conformer
+  因新增 API 立即破壞編譯。
+- `_Stream` 預設實作會重啟對應 codec。
+- `RTMPStream` 覆寫為完整重啟 publish pipeline：停止 publish tasks、重啟
+  outgoing codecs、重新建立 publish tasks，確保 consumer 接到新的 codec stream。
+
+**效果**：ReplyKit 等 ReplayKit 上層可在 broadcast resume 或來源停滯恢復時呼叫
+`await rtmpStream.restartVideoEncoding(reason: "...")`，真正重建 video 發送管線。
+
+---
+
 ## 47. 降低 onLog hot path 成本並補上 RTMP queue 保護上限
 
 **檔案**：`HaishinKit/Sources/Util/Constants.swift`、

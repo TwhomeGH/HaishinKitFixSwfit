@@ -1154,6 +1154,28 @@ extension RTMPStream: _Stream {
         }
     }
 
+    /// Restarts RTMP video publishing internals after an external source pause
+    /// or platform resume. This reconnects the publish tasks to the new codec
+    /// output stream; using `setVideoSettings(videoSettings)` with unchanged
+    /// values is intentionally not a recovery mechanism.
+    public func restartVideoEncoding(reason: String = "manual recovery") async {
+        guard readyState == .publishing else {
+            await connection?.log(.warn, "restartVideoEncoding skipped", detail: "readyState=\(readyState) reason=\(reason)")
+            return
+        }
+        await restartVideoPipeline(reason: reason)
+    }
+
+    /// Restarts RTMP audio publishing internals after an external source pause
+    /// or platform resume.
+    public func restartAudioEncoding(reason: String = "manual recovery") async {
+        guard readyState == .publishing else {
+            await connection?.log(.warn, "restartAudioEncoding skipped", detail: "readyState=\(readyState) reason=\(reason)")
+            return
+        }
+        await restartAudioPipeline(reason: reason)
+    }
+
     /// A/V resync helper：audio wire 時間落後 video playhead 超過
     /// `maxAudioBehindVideoSeconds` 時，把音訊時間戳 clamp 到 video 附近並回傳
     /// （由呼叫端以 `allowJump: true` 讓時間軸一次跳進）。健康時（偏移 < 門檻）
@@ -1361,7 +1383,10 @@ extension RTMPStream: _Stream {
         await connection?.log(.info, "restartVideoPipeline: restart outgoing")
         outgoing.stopRunning()
         outgoing.startRunning()
-        // 銝?蝵?videoFormat/audioFormat嚗 encoder session ?Ｗ?詨??澆???        // didSet 銝孛????銝?seq header ??timeline 銝葉?瑯?        await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
+        // Keep videoFormat/audioFormat: a new encoder session producing the
+        // same format should not reset the RTMP timeline by resending headers
+        // at timestamp zero.
+        await connection?.log(.info, "restartVideoPipeline: starting publish tasks")
         startPublishTasks()
         await connection?.log(.info, "restartVideoPipeline: done")
         hasSentVideoFrame = false
