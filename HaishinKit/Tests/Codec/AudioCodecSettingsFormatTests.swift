@@ -17,4 +17,9 @@ import Testing
         #expect(AudioCodecSettings.Format.aac.makeSampleRate(44100, output: 0) == 44100.0)
         #expect(AudioCodecSettings.Format.aac.makeSampleRate(20000, output: 0) == 20000.0)
     }
+
+    @Test func recommendedRtmpAacSettings() {
+        #expect(AudioCodecSettings.recommendedRtmpFormat == .aac)
+        #expect(AudioCodecSettings.recommendedRtmpBitrate == 128_000)
+    }
 }

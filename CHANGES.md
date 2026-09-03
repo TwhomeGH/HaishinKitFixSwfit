@@ -7,6 +7,7 @@
 ## 48. 新增明確的編碼恢復 API（供 ReplayKit pause/resume 使用）
 
 **檔案**：`HaishinKit/Sources/Stream/StreamConvertible.swift`、
+`HaishinKit/Sources/Codec/AudioCodecSettings.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **診斷**：
@@ -25,9 +26,17 @@
 - `_Stream` 預設實作會重啟對應 codec。
 - `RTMPStream` 覆寫為完整重啟 publish pipeline：停止 publish tasks、重啟
   outgoing codecs、重新建立 publish tasks，確保 consumer 接到新的 codec stream。
+- RTMP public recovery 入口加入 3 秒 cooldown。高頻 app lifecycle/socket 事件會被
+  節流並記錄 `restartVideoEncoding throttled` / `restartAudioEncoding throttled`；
+  內部 stall detector 仍可依實際健康狀態呼叫 private pipeline restart，不被外部
+  cooldown 誤擋。
+- `AudioCodecSettings` 新增 RTMP/FLV 相容性優先的
+  `recommendedRtmpFormat = .aac` 與 `recommendedRtmpBitrate = 128_000`。保留
+  `bestAacFormat` / `bestAacBitrate` 作為低碼率效率優先策略，避免上層混淆。
 
 **效果**：ReplyKit 等 ReplayKit 上層可在 broadcast resume 或來源停滯恢復時呼叫
 `await rtmpStream.restartVideoEncoding(reason: "...")`，真正重建 video 發送管線。
+完整設計說明見 `Docs/RTMP_RECOVERY_LIFECYCLE.md`。
 
 ---
 

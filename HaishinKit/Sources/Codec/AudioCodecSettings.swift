@@ -257,6 +257,16 @@ public struct AudioCodecSettings: Codable, Sendable {
         }
     }
 
+    /// The recommended AAC format for RTMP/FLV publishing compatibility.
+    ///
+    /// This intentionally prefers AAC LC over HE-AAC variants. HE-AAC is more
+    /// bitrate-efficient, but AAC LC is the safest default across RTMP servers,
+    /// FLV demuxers, replay recorders, and browser/player pipelines.
+    public static let recommendedRtmpFormat: Format = .aac
+
+    /// The recommended audio bitrate for RTMP/FLV publishing compatibility.
+    public static let recommendedRtmpBitrate: Int = 128_000
+
     /// Checks whether a specific AAC format ID is supported on the current device.
     package static func isAacFormatSupported(_ formatID: AudioFormatID) -> Bool {
         var inDesc = AudioStreamBasicDescription(

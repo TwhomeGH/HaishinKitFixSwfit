@@ -285,6 +285,12 @@ public actor RTMPStream {
     // outgoing（stop/startRunning 重啟兩個 codec），若誤判連發或重入，只允許
     // 一次在跑，避免重複建立 publish tasks / 丟幀窗口疊加。
     private var isRestartingPipelines = false
+    // Public recovery calls may be driven by noisy app lifecycle/socket events.
+    // Keep the cooldown at the public edge so internal stall recovery can still
+    // retry based on real pipeline health.
+    private static let externalEncodingRestartCooldown: TimeInterval = 3
+    private var lastExternalVideoEncodingRestartAt: Date = .distantPast
+    private var lastExternalAudioEncodingRestartAt: Date = .distantPast
     // A/V 對齊自動補償（video wire）：ReplayKit screen capture 的 PTS 通常比
     // mic/app audio 落後固定量（實測 ~0.28s），造成 video wire 恆定落後 audio
     // wire（avOffset 負）→ 玩家聽得到 lip-sync 偏差甚至觸發 A/V 自動修正。
@@ -1163,6 +1169,13 @@ extension RTMPStream: _Stream {
             await connection?.log(.warn, "restartVideoEncoding skipped", detail: "readyState=\(readyState) reason=\(reason)")
             return
         }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastExternalVideoEncodingRestartAt)
+        guard Self.externalEncodingRestartCooldown <= elapsed else {
+            await connection?.log(.warn, "restartVideoEncoding throttled", detail: "elapsed=\(String(format: "%.2f", elapsed))s cooldown=\(Self.externalEncodingRestartCooldown)s reason=\(reason)")
+            return
+        }
+        lastExternalVideoEncodingRestartAt = now
         await restartVideoPipeline(reason: reason)
     }
 
@@ -1173,6 +1186,13 @@ extension RTMPStream: _Stream {
             await connection?.log(.warn, "restartAudioEncoding skipped", detail: "readyState=\(readyState) reason=\(reason)")
             return
         }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastExternalAudioEncodingRestartAt)
+        guard Self.externalEncodingRestartCooldown <= elapsed else {
+            await connection?.log(.warn, "restartAudioEncoding throttled", detail: "elapsed=\(String(format: "%.2f", elapsed))s cooldown=\(Self.externalEncodingRestartCooldown)s reason=\(reason)")
+            return
+        }
+        lastExternalAudioEncodingRestartAt = now
         await restartAudioPipeline(reason: reason)
     }
 

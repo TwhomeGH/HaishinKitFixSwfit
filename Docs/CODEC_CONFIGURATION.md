@@ -94,6 +94,27 @@ public enum BitRateMode: String {
 | `bitRateMode` | average | 控制模式 |
 | `isLowLatencyRateControlEnabled` | false | 低延遲模式 |
 
+### 設定生效與重啟
+
+`setVideoSettings(_:)` 只代表更新 video 設定，不等於手動恢復或強制重建整條發送管線。
+底層會依設定差異決定是否 invalidate encoder session；相同設定不會被當成 recovery。
+
+若上層是在直播中更正解析度、profile、reordering、codec fallback 等需要新 encoder session
+才可靠生效的配置，建議模式是：
+
+```swift
+var settings = await stream.videoSettings
+settings.videoSize = CGSize(width: 1280, height: 720)
+settings.profileLevel = kVTProfileLevel_H264_High_AutoLevel as String
+try await stream.setVideoSettings(settings)
+
+await stream.restartVideoEncoding(reason: "video settings updated")
+```
+
+bitrate 類調整通常可由現有 session 動態套用，不應高頻搭配 `restartVideoEncoding(reason:)`。
+RTMP 發布時，`restartVideoEncoding(reason:)` 會重接 publish tasks 與 codec output stream；
+完整 lifecycle 設計見 [RTMP 恢復生命週期](RTMP_RECOVERY_LIFECYCLE.md)。
+
 ### 音訊設定
 
 | 參數 | 預設值 | 說明 |
@@ -101,6 +122,32 @@ public enum BitRateMode: String {
 | `sampleRate` | 44100.0 | 音訊取樣率 |
 | `bitRate` | 128000 | 位元率（bps） |
 | `isLowLatencyRateControlEnabled` | false | 低延遲模式 |
+
+### AAC 推薦策略
+
+`AudioCodecSettings` 提供兩組 AAC 推薦值，語意不同：
+
+| API | 取向 | 格式 | Bitrate | 適用情境 |
+|-----|------|------|---------|----------|
+| `bestAacFormat` / `bestAacBitrate` | 裝置支援與低碼率效率優先 | HE-AAC v2 → HE-AAC v1 → AAC LC | 48k / 72k / 128k | 明確想省頻寬、且下游確認支援 HE-AAC 的情境 |
+| `recommendedRtmpFormat` / `recommendedRtmpBitrate` | RTMP/FLV 相容性優先 | AAC LC | 128k | RTMP 推流、回放錄檔、需要廣泛播放器相容的預設 |
+
+RTMP/FLV 的保守預設建議：
+
+```swift
+var audioSettings = await stream.audioSettings
+audioSettings.format = AudioCodecSettings.recommendedRtmpFormat
+audioSettings.bitRate = AudioCodecSettings.recommendedRtmpBitrate
+try await stream.setAudioSettings(audioSettings)
+```
+
+若只是調整 audio bitrate，通常可動態套用，不需要重啟 audio pipeline。若改的是
+`format`、`channelMap` 或需要重建 converter 的配置，且目前正在發布，應在
+`setAudioSettings(_:)` 後搭配：
+
+```swift
+await stream.restartAudioEncoding(reason: "audio settings updated")
+```
 
 ## 編解碼器特定設定
 
