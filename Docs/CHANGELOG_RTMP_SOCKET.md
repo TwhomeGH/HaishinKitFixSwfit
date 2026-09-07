@@ -2,13 +2,21 @@
 
 ## 最新
 
+### 28. AAC compressed audio timestamp 固定幀長優先（2026-09）
+
+- **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+- **診斷：** live FLV audio payload 為 legacy AAC（`af00` / `af01`），不是 E-RTMP audio exheader；timestamp 沒有倒退、0 delta 或大跳，但 delta 又回到 `20/36/37ms`。
+- **根因推定：** `AVAudioCompressedBuffer.packetDuration` 優先採用 `packetDescriptions.mVariableFramesInPacket`，在 AAC 固定幀長情境可能讀到 input callback cadence，而非 AAC access unit 的 1024 samples duration。
+- **修正：** AAC / HE-AAC / Opus 優先使用 ASBD `mFramesPerPacket` 或 codec 標稱幀長；未知 codec 才信任 packet descriptions。
+- **效果：** compressed audio wire timestamp 回到 codec media duration，避免來源 callback 抖動污染 FLV/RTMP audio cadence。
+
 ### 27. AAC/Opus compressed audio timestamp 改用 packet media duration（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、`RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`
 - **診斷：** SRS 推流診斷頁確認 AAC payload 本身合規（sequence header `AF 00 12 10`、raw frame `AF 01`），但 FLV audio tag timestamp 間距出現 `20ms` 與 `36/37ms` 交錯。44.1k AAC 每個 1024-sample packet 的 media duration 應約 `23.22ms`，因此問題不是 AAC frame bytes，而是 wire timestamp cadence 被上游 callback / resample 排程抖動污染。
 - **修正：**
   - `RTMPTimestamp.update` 新增 `preferredDelta`，可讓呼叫端指定「媒體包本身代表的時間長度」。
-  - `RTMPStream` compressed audio append 改用 `AVAudioCompressedBuffer.packetDuration` 作為 audio RTMP delta：優先讀 packet description 的 `mVariableFramesInPacket`，無資料時 fallback 到 ASBD `mFramesPerPacket`；AAC 類格式若 ASBD 仍為 0，固定 fallback 到 `1024 / sampleRate`。
+  - `RTMPStream` compressed audio append 改用 `AVAudioCompressedBuffer.packetDuration` 作為 audio RTMP delta。後續 v28 已修正 AAC/Opus 固定幀長 codec 的優先順序：先用 ASBD / codec 標稱幀長，未知 codec 才信任 packet description。
   - `preferredDelta` 路徑的 `updatedAt` / `cumulativeTime` 改為累加實際送出的整數 RTMP ms，避免內部時間軸與 wire timestamp 分裂。
   - 保留既有 audio A/V resync 守衛：小抖動一律忽略，但若 source time 真的落後超過約 500ms，仍允許一次大跳追到 video 附近。
   - 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC packet 仍輸出約 `23/23/23/23/24ms` 的 RTMP delta。

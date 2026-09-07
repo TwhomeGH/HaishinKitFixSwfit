@@ -4,6 +4,35 @@
 
 ---
 
+## 50. AAC compressed audio timestamp 不再信任 packet description cadence
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
+`Docs/CHANGELOG_RTMP_SOCKET.md`
+
+**診斷**：拉取 `http://localhost:882/live/livestream.flv` 約 8 秒片段後解析 FLV tag：
+- audio payload 為 legacy AAC（sequence header `af001210`、raw packet `af01`），
+  不是 E-RTMP audio exheader。
+- audio tag timestamp 單調，沒有倒退、沒有 0 delta、沒有 >200ms 大跳。
+- 但 audio delta 分佈為 `20ms x226`、`37ms x105`、`36ms x52`，平均約
+  `26.8ms`，明顯不是 AAC LC 44.1k 每包 1024 samples 應有的約 `23.22ms`
+  cadence。
+
+**根因推定**：`AVAudioCompressedBuffer.packetDuration` 優先信任
+`packetDescriptions[index].mVariableFramesInPacket`。對 AAC 這類固定幀長 codec，
+部分 encoder / AudioConverter 輸出的 packet description 可能反映輸入 callback 區塊
+節奏，而不是 AAC access unit 固定 duration，導致 source/callback cadence 再次污染
+RTMP/FLV wire timestamp。
+
+**修正**：
+- AAC / HE-AAC / HE-AAC v2 / Opus 先使用 ASBD `mFramesPerPacket`，缺失時退回
+  codec 標稱值（AAC 1024、Opus 960）。
+- 只有未知 codec 才優先使用 packet description 的 `mVariableFramesInPacket`。
+
+**效果**：compressed audio timestamp 應回到 codec media duration 推進，避免合法 AAC
+payload 被 `20/36/37ms` wire cadence 排程成斷續音訊或累積 A/V 偏差。
+
+---
+
 ## 49. Audio session 恢復改為狀態感知 + 串接 restartAudioEncoding
 
 **檔案**：`HaishinKit/Sources/Mixer/MediaMixer.swift`、

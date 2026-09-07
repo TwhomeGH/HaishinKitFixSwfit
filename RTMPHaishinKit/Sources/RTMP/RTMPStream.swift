@@ -1490,8 +1490,8 @@ extension RTMPStream: MediaMixerOutput {
 
 private extension AVAudioCompressedBuffer {
     /// 每包壓縮音訊的 media duration（秒），**永不回傳 nil**：
-    /// - packet description 的實際幀數最準（encoder 會填 mVariableFramesInPacket）
-    /// - 其次 ASBD 的 mFramesPerPacket
+    /// - AAC/Opus 這類固定幀長 codec 優先使用 codec/ASBD 標稱幀數
+    /// - 其他未知 codec 才信任 packet description 的實際幀數
     /// - 最後用 codec 標稱幀長（AAC 1024 / Opus 960）當保險
     ///
     /// 為何不能 nil：wire delta 在 `preferredDelta` 為 nil 時會退回 source-time
@@ -1500,8 +1500,14 @@ private extension AVAudioCompressedBuffer {
     /// 依封包 duration 前進，而不是依抵達/來源時間。
     var packetDuration: TimeInterval? {
         let sampleRate = format.sampleRate
+        guard sampleRate > 0 else {
+            return nil
+        }
         let packetCount = max(Int(self.packetCount), 1)
         let asbd = format.streamDescription.pointee
+        if let fixedFramesPerPacket = asbd.fixedFramesPerPacket {
+            return TimeInterval(fixedFramesPerPacket * UInt32(packetCount)) / sampleRate
+        }
         if let packetDescriptions {
             var frames: UInt32 = 0
             for index in 0..<packetCount {
@@ -1528,9 +1534,19 @@ private extension AVAudioCompressedBuffer {
         default:
             nominalFramesPerPacket = 1024
         }
-        guard sampleRate > 0 else {
+        return TimeInterval(nominalFramesPerPacket * UInt32(packetCount)) / sampleRate
+    }
+}
+
+private extension AudioStreamBasicDescription {
+    var fixedFramesPerPacket: UInt32? {
+        switch mFormatID {
+        case kAudioFormatMPEG4AAC, kAudioFormatMPEG4AAC_HE, kAudioFormatMPEG4AAC_HE_V2:
+            return mFramesPerPacket > 0 ? mFramesPerPacket : 1024
+        case kAudioFormatOpus:
+            return mFramesPerPacket > 0 ? mFramesPerPacket : 960
+        default:
             return nil
         }
-        return TimeInterval(nominalFramesPerPacket * UInt32(packetCount)) / sampleRate
     }
 }
