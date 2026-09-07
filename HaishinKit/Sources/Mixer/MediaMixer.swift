@@ -126,6 +126,8 @@ public final actor MediaMixer {
     private var outputs: [any MediaMixerOutput] = []
     private var subscriptions: [Task<Void, Never>] = []
     private var isInBackground = false
+    private var isAudioSessionInterrupted = false
+    private var needsAudioResetAfterInterruption = false
     private lazy var audioIO = AudioCaptureUnit(session, isMultiTrackAudioMixingEnabled: isMultiTrackAudioMixingEnabled)
     private lazy var videoIO = VideoCaptureUnit(session)
     private lazy var session: (any CaptureSessionConvertible) = captureSessionMode.makeSession()
@@ -417,17 +419,29 @@ public final actor MediaMixer {
         }
         switch type {
         case .began:
+            isAudioSessionInterrupted = true
+            needsAudioResetAfterInterruption = false
             // video capture continues even while an incoming call is ringing.
             audioIO.suspend()
             session.startRunningIfNeeded()
-            logger.info("Audio suspended due to system interruption.")
+            logger.info("Audio suspended due to system interruption.", detail: audioSessionStateDescription())
         case .ended:
             let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue ?? 0)
+            isAudioSessionInterrupted = false
             if options.contains(.shouldResume) {
-                audioIO.resume()
+                if needsAudioResetAfterInterruption {
+                    audioIO.reset()
+                    needsAudioResetAfterInterruption = false
+                } else {
+                    audioIO.resume()
+                }
+                session.startRunningIfNeeded()
+                restartAudioEncodingForOutputs(reason: "audio session interruption ended")
+            } else {
+                needsAudioResetAfterInterruption = false
             }
-            logger.info("Audio resumed after system interruption")
+            logger.info("Audio session interruption ended.", detail: audioSessionStateDescription(options: options))
         default: ()
         }
     }
@@ -442,12 +456,62 @@ public final actor MediaMixer {
         }
         switch reason {
         case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
+            guard !isAudioSessionInterrupted else {
+                needsAudioResetAfterInterruption = true
+                logger.info("Audio route change deferred during interruption.", detail: audioSessionStateDescription(reason: reason, userInfo: userInfo))
+                return
+            }
             audioIO.reset()
             session.startRunningIfNeeded()
-            logger.info("Audio pipeline reset after route change: \(reason.rawValue)")
+            restartAudioEncodingForOutputs(reason: "audio session route changed: \(reason.rawValue)")
+            logger.info("Audio pipeline reset after route change.", detail: audioSessionStateDescription(reason: reason, userInfo: userInfo))
         default:
+            logger.info("Audio route change observed.", detail: audioSessionStateDescription(reason: reason, userInfo: userInfo))
             break
         }
+    }
+
+    private func restartAudioEncodingForOutputs(reason: String) {
+        let streamOutputs = outputs.compactMap { $0 as? any StreamConvertible }
+        guard !streamOutputs.isEmpty else {
+            return
+        }
+        Task {
+            for output in streamOutputs {
+                await output.restartAudioEncoding(reason: reason)
+            }
+        }
+    }
+
+    @available(tvOS 17.0, *)
+    private func audioSessionStateDescription(
+        reason: AVAudioSession.RouteChangeReason? = nil,
+        options: AVAudioSession.InterruptionOptions? = nil,
+        userInfo: [AnyHashable: Any]? = nil
+    ) -> String {
+        let audioSession = AVAudioSession.sharedInstance()
+        var items: [String] = [
+            "interrupted=\(isAudioSessionInterrupted)",
+            "category=\(audioSession.category.rawValue)",
+            "mode=\(audioSession.mode.rawValue)",
+            "currentRoute=\(Self.audioRouteDescription(audioSession.currentRoute))"
+        ]
+        if let reason {
+            items.append("reason=\(reason.rawValue)")
+        }
+        if let options {
+            items.append("shouldResume=\(options.contains(.shouldResume))")
+        }
+        if let previousRoute = userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription {
+            items.append("previousRoute=\(Self.audioRouteDescription(previousRoute))")
+        }
+        return items.joined(separator: " ")
+    }
+
+    private static func audioRouteDescription(_ route: AVAudioSessionRouteDescription) -> String {
+        let inputs = route.inputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        let outputs = route.outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+        return "inputs=[\(inputs)] outputs=[\(outputs)]"
     }
     #endif
 
