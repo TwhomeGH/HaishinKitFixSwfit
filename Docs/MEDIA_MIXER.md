@@ -17,21 +17,44 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 ### 中斷事件（Interruption）
 
 監聽 `AVAudioSession.interruptionNotification`：
-- **Began**：`audioIO.suspend()` 卸除所有 AVCaptureDevice 音訊輸入，`session.startRunningIfNeeded()` 保持視訊運作
-- **Ended + shouldResume**：`audioIO.resume()` 重新附接音訊輸入
+- **Began**：記錄 `isAudioSessionInterrupted = true`，`audioIO.suspend()` 卸除所有 AVCaptureDevice 音訊輸入，`session.startRunningIfNeeded()` 保持視訊運作
+- **Ended + shouldResume**：依中斷期間是否收到有效 route change 決定 `audioIO.resume()` 或 `audioIO.reset()`，再呼叫輸出端 `restartAudioEncoding(reason:)`
+- **Ended without shouldResume**：不自動恢復音訊 capture，清除延後 reset 狀態，交由上層或後續 session 事件處理
 
 ### 路由變更（Route Change）
 
 監聽 `AVAudioSession.routeChangeNotification`：
 
-| 原因 | 動作 |
-|------|------|
-| `.oldDeviceUnavailable` | `audioIO.suspend()` + `audioIO.resume()` |
-| `.newDeviceAvailable` | `audioIO.suspend()` + `audioIO.resume()` |
-| `.routeConfigurationChange` | `audioIO.suspend()` + `audioIO.resume()` |
-| 其他 | 忽略 |
+| 狀態 | 原因 | 動作 |
+|------|------|------|
+| 非 interruption 中 | `.oldDeviceUnavailable` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
+| 非 interruption 中 | `.newDeviceAvailable` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
+| 非 interruption 中 | `.routeConfigurationChange` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
+| interruption 中 | 上述三種原因 | 延後 reset，等 interruption ended 且 `.shouldResume` 時處理 |
+| 任意 | 其他原因 | 僅記錄診斷狀態，不重建管線 |
 
-路由變更發生時重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後音訊管線持續運作。
+路由變更發生時會重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後音訊輸入側持續運作。完成輸入側恢復後，`MediaMixer` 會對已掛上的 `StreamConvertible` 輸出呼叫 `restartAudioEncoding(reason:)`，讓 RTMP 等輸出端用自己的 recovery API 重接 codec output stream 與 publish tasks。
+
+這裡刻意區分兩層責任：
+
+- `audioIO.reset()` / `audioIO.resume()`：恢復 capture 與 mixer 輸入側。
+- `restartAudioEncoding(reason:)`：恢復 stream/output 的 audio encoder 與發布管線。
+
+不要用單純 `audioIO.reset()` 取代輸出端 recovery；若 codec output `AsyncStream` 已更換或 publish consumer 需要重建，只重置 capture 層無法保證音訊恢復。
+
+### 診斷資訊
+
+Audio session 事件 log 會包含：
+
+- `interrupted`
+- `reason`
+- `shouldResume`
+- `category`
+- `mode`
+- `currentRoute`
+- `previousRoute`
+
+這些資訊用來確認當時系統回報的 session 狀態，避免把 `.shouldResume` 缺失、interruption 期間 route change、或非必要 route reason 誤判成同一種恢復流程。
 
 ### 清理
 

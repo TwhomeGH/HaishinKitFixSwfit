@@ -201,6 +201,15 @@ override func broadcastResumed() {
 ReplayKit manual mode 下，source samples 是由上層 `processSampleBuffer` 主動 append 進 mixer。
 若 pause/resume 只是 ReplayKit lifecycle 邊界，不應為了恢復 video encoder 而 stop mixer。
 
+Audio session route/interruption 是另一個明確 lifecycle 邊界，但責任仍然分層：
+
+- `MediaMixer` 監聽 `AVAudioSession.interruptionNotification` 與 `routeChangeNotification`，負責根據當時狀態恢復 capture/mixer 輸入側。
+- interruption 進行中收到 `.oldDeviceUnavailable`、`.newDeviceAvailable` 或 `.routeConfigurationChange` 時，`MediaMixer` 只記錄延後 reset，避免在 session 尚未穩定時重建音訊輸入。
+- interruption ended 且 options 含 `.shouldResume`，或非 interruption 中發生有效 route change 時，`MediaMixer` 會在輸入側恢復後呼叫輸出端 `restartAudioEncoding(reason:)`。
+- RTMPStream 的 `restartAudioEncoding(reason:)` 會走 RTMP audio pipeline recovery，包含重接 codec output stream 與 publish tasks；這不能只靠 `audioIO.reset()` 取代。
+
+診斷時應同時看 audio session 狀態與 RTMP recovery log。若只有 capture reset log 而沒有 `restartAudioEncoding` / `Restarting audio pipeline`，代表輸出端可能沒有接到明確 recovery。
+
 只有在確認 `mediaMixer.isRunning == false` 時，才在 resume path 呼叫 `startRunning()`。
 
 若上層 video processor 已經完成處理但 `mediaMixer.isRunning == false`，應節流記錄診斷 log，
@@ -218,9 +227,15 @@ guard await mediaMixer.isRunning else {
 建議觀察以下 log：
 
 - `restartVideoEncoding throttled`
+- `restartAudioEncoding throttled`
 - `skip restartVideoPipeline: already restarting`
+- `skip restartAudioPipeline: already restarting`
 - `Restarting video pipeline`
+- `Restarting audio pipeline`
 - `restartVideoPipeline: done`
+- `Audio route change deferred during interruption`
+- `Audio session interruption ended`
+- `Audio pipeline reset after route change`
 - `publish throughput ... videoInputFrames=... videoFrames=...`
 - `video source idle`
 - `video stall detected`

@@ -4,6 +4,44 @@
 
 ---
 
+## 49. Audio session 恢復改為狀態感知 + 串接 restartAudioEncoding
+
+**檔案**：`HaishinKit/Sources/Mixer/MediaMixer.swift`、
+`Docs/MEDIA_MIXER.md`、`Docs/RTMP_RECOVERY_LIFECYCLE.md`
+
+**診斷**：
+- `MediaMixer` 監聽 `AVAudioSession.routeChangeNotification` 時，對有效 route
+  reason 直接執行 `audioIO.reset()`。這只恢復 capture/mixer 輸入側，沒有保證
+  RTMP outgoing audio codec output stream 與 publish consumer 被重接。
+- route change 可能發生在 interruption 期間；此時 audio session 尚未穩定，立即
+  reset capture 可能打亂 interruption ended 後依 `.shouldResume` 恢復的時序。
+- 原 log 只記錄 route reason raw value，不足以確認事件發生時的 category、mode、
+  current/previous route 與 `.shouldResume` 狀態。
+
+**修正**：
+- `MediaMixer` 新增 `isAudioSessionInterrupted` 與
+  `needsAudioResetAfterInterruption`，interruption 期間收到
+  `.oldDeviceUnavailable`、`.newDeviceAvailable`、`.routeConfigurationChange`
+  時先延後 reset，等 interruption ended 且 `.shouldResume` 時再處理。
+- 非 interruption 中的有效 route change 仍會 `audioIO.reset()`，但完成輸入側恢復
+  後會對已掛上的 `StreamConvertible` output 呼叫
+  `restartAudioEncoding(reason:)`。
+- interruption ended 且 `.shouldResume` 時同樣會在 `audioIO.resume()` /
+  `audioIO.reset()` 後呼叫 `restartAudioEncoding(reason:)`，讓既有 RTMP audio
+  recovery API 負責重接 codec output stream 與 publish tasks。
+- audio session 事件 log 補上 `interrupted`、`reason`、`shouldResume`、
+  `category`、`mode`、`currentRoute`、`previousRoute`，方便確認當時狀態。
+- 更新 MediaMixer 與 RTMP recovery lifecycle 文檔，明確區分
+  `audioIO.reset()`（capture/mixer 輸入側）與 `restartAudioEncoding(reason:)`
+  （stream/output 編碼與發布管線）。
+
+**效果**：音訊會話中斷、耳機/藍牙插拔、route configuration change 後，恢復流程會
+根據當時 session 狀態決定是否立即 reset 或延後處理，並在輸入側恢復後串接既有
+audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無法正常輸出」
+的機率。
+
+---
+
 ## 48. 新增明確的編碼恢復 API（供 ReplayKit pause/resume 使用）
 
 **檔案**：`HaishinKit/Sources/Stream/StreamConvertible.swift`、
