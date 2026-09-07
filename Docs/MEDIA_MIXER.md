@@ -31,9 +31,9 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 | 非 interruption 中 | `.newDeviceAvailable` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
 | 非 interruption 中 | `.routeConfigurationChange` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
 | interruption 中 | 上述三種原因 | 延後 reset，等 interruption ended 且 `.shouldResume` 時處理 |
-| 任意 | 其他原因 | 僅記錄診斷狀態，不重建管線 |
+| 任意 | 其他原因 | 不重建管線 |
 
-路由變更發生時會重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後音訊輸入側持續運作。完成輸入側恢復後，`MediaMixer` 會對已掛上的 `StreamConvertible` 輸出呼叫 `restartAudioEncoding(reason:)`，讓 RTMP 等輸出端用自己的 recovery API 重接 codec output stream 與 publish tasks。
+路由變更發生時會重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後音訊輸入側持續運作。`MediaMixer` 會先透過 `MediaMixerOutput.mixer(_:didReceiveAudioSessionEvent:)` 將 audio session 狀態送給輸出端；RTMPStream 會把這些事件寫入 RTMP connection `onLog`。完成輸入側恢復後，`MediaMixer` 再對已掛上的 `StreamConvertible` 輸出呼叫 `restartAudioEncoding(reason:)`，讓 RTMP 等輸出端用自己的 recovery API 重接 codec output stream 與 publish tasks。
 
 這裡刻意區分兩層責任：
 
@@ -44,7 +44,7 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 
 ### 診斷資訊
 
-Audio session 事件 log 會包含：
+Audio session event 與輸出端 recovery reason 會包含：
 
 - `interrupted`
 - `reason`
@@ -54,7 +54,7 @@ Audio session 事件 log 會包含：
 - `currentRoute`
 - `previousRoute`
 
-這些資訊用來確認當時系統回報的 session 狀態，避免把 `.shouldResume` 缺失、interruption 期間 route change、或非必要 route reason 誤判成同一種恢復流程。
+這些資訊用來確認當時系統回報的 session 狀態，避免把 `.shouldResume` 缺失、interruption 期間 route change、或非必要 route reason 誤判成同一種恢復流程。發布中的 RTMP 診斷透過 `MediaMixerOutput` audio session event callback 與 `restartAudioEncoding(reason:)` 送進 `RTMPConnection.onLog`。
 
 ### 清理
 

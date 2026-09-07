@@ -29,8 +29,15 @@
 - interruption ended 且 `.shouldResume` 時同樣會在 `audioIO.resume()` /
   `audioIO.reset()` 後呼叫 `restartAudioEncoding(reason:)`，讓既有 RTMP audio
   recovery API 負責重接 codec output stream 與 publish tasks。
-- audio session 事件 log 補上 `interrupted`、`reason`、`shouldResume`、
-  `category`、`mode`、`currentRoute`、`previousRoute`，方便確認當時狀態。
+- `MediaMixerOutput` 新增預設 no-op 的
+  `mixer(_:didReceiveAudioSessionEvent:)` callback，讓 `MediaMixer` 能把 audio
+  session event 丟給輸出端上報。
+- `RTMPStream` 實作 audio session event callback，透過
+  `connection?.log(.info, "Audio session event", detail: ...)` 送進
+  `RTMPConnection.onLog`。
+- audio session 狀態也會放入 `restartAudioEncoding(reason:)` 的 reason。event /
+  reason 內含 `interrupted`、`reason`、`shouldResume`、`category`、`mode`、
+  `currentRoute`、`previousRoute`。
 - 更新 MediaMixer 與 RTMP recovery lifecycle 文檔，明確區分
   `audioIO.reset()`（capture/mixer 輸入側）與 `restartAudioEncoding(reason:)`
   （stream/output 編碼與發布管線）。

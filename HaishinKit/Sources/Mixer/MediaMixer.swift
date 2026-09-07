@@ -128,6 +128,7 @@ public final actor MediaMixer {
     private var isInBackground = false
     private var isAudioSessionInterrupted = false
     private var needsAudioResetAfterInterruption = false
+    private var deferredAudioResetReason: String?
     private lazy var audioIO = AudioCaptureUnit(session, isMultiTrackAudioMixingEnabled: isMultiTrackAudioMixingEnabled)
     private lazy var videoIO = VideoCaptureUnit(session)
     private lazy var session: (any CaptureSessionConvertible) = captureSessionMode.makeSession()
@@ -421,14 +422,21 @@ public final actor MediaMixer {
         case .began:
             isAudioSessionInterrupted = true
             needsAudioResetAfterInterruption = false
+            deferredAudioResetReason = nil
             // video capture continues even while an incoming call is ringing.
             audioIO.suspend()
             session.startRunningIfNeeded()
-            logger.info("Audio suspended due to system interruption.", detail: audioSessionStateDescription())
+            reportAudioSessionEventToOutputs(audioSessionRecoveryReason(event: "audio session interruption began"))
         case .ended:
             let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue ?? 0)
             isAudioSessionInterrupted = false
+            let recoveryReason = audioSessionRecoveryReason(
+                event: "audio session interruption ended",
+                options: options,
+                deferredReason: deferredAudioResetReason
+            )
+            reportAudioSessionEventToOutputs(recoveryReason)
             if options.contains(.shouldResume) {
                 if needsAudioResetAfterInterruption {
                     audioIO.reset()
@@ -437,11 +445,11 @@ public final actor MediaMixer {
                     audioIO.resume()
                 }
                 session.startRunningIfNeeded()
-                restartAudioEncodingForOutputs(reason: "audio session interruption ended")
+                restartAudioEncodingForOutputs(reason: recoveryReason)
             } else {
                 needsAudioResetAfterInterruption = false
             }
-            logger.info("Audio session interruption ended.", detail: audioSessionStateDescription(options: options))
+            deferredAudioResetReason = nil
         default: ()
         }
     }
@@ -458,16 +466,40 @@ public final actor MediaMixer {
         case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
             guard !isAudioSessionInterrupted else {
                 needsAudioResetAfterInterruption = true
-                logger.info("Audio route change deferred during interruption.", detail: audioSessionStateDescription(reason: reason, userInfo: userInfo))
+                deferredAudioResetReason = audioSessionRecoveryReason(
+                    event: "audio route change deferred during interruption",
+                    reason: reason,
+                    userInfo: userInfo
+                )
+                if let deferredAudioResetReason {
+                    reportAudioSessionEventToOutputs(deferredAudioResetReason)
+                }
                 return
             }
+            let recoveryReason = audioSessionRecoveryReason(
+                event: "audio session route changed",
+                reason: reason,
+                userInfo: userInfo
+            )
+            reportAudioSessionEventToOutputs(recoveryReason)
             audioIO.reset()
             session.startRunningIfNeeded()
-            restartAudioEncodingForOutputs(reason: "audio session route changed: \(reason.rawValue)")
-            logger.info("Audio pipeline reset after route change.", detail: audioSessionStateDescription(reason: reason, userInfo: userInfo))
+            restartAudioEncodingForOutputs(reason: recoveryReason)
         default:
-            logger.info("Audio route change observed.", detail: audioSessionStateDescription(reason: reason, userInfo: userInfo))
+            reportAudioSessionEventToOutputs(audioSessionRecoveryReason(event: "audio route change observed", reason: reason, userInfo: userInfo))
             break
+        }
+    }
+
+    private func reportAudioSessionEventToOutputs(_ message: String) {
+        let outputs = outputs
+        guard !outputs.isEmpty else {
+            return
+        }
+        Task {
+            for output in outputs {
+                await output.mixer(self, didReceiveAudioSessionEvent: message)
+            }
         }
     }
 
@@ -484,13 +516,16 @@ public final actor MediaMixer {
     }
 
     @available(tvOS 17.0, *)
-    private func audioSessionStateDescription(
+    private func audioSessionRecoveryReason(
+        event: String,
         reason: AVAudioSession.RouteChangeReason? = nil,
         options: AVAudioSession.InterruptionOptions? = nil,
-        userInfo: [AnyHashable: Any]? = nil
+        userInfo: [AnyHashable: Any]? = nil,
+        deferredReason: String? = nil
     ) -> String {
         let audioSession = AVAudioSession.sharedInstance()
         var items: [String] = [
+            event,
             "interrupted=\(isAudioSessionInterrupted)",
             "category=\(audioSession.category.rawValue)",
             "mode=\(audioSession.mode.rawValue)",
@@ -504,6 +539,9 @@ public final actor MediaMixer {
         }
         if let previousRoute = userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription {
             items.append("previousRoute=\(Self.audioRouteDescription(previousRoute))")
+        }
+        if let deferredReason {
+            items.append("deferred=\"\(deferredReason)\"")
         }
         return items.joined(separator: " ")
     }

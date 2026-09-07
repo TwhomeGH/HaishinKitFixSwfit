@@ -1441,6 +1441,10 @@ extension RTMPStream: _Stream {
 
 extension RTMPStream: MediaMixerOutput {
     // MARK: MediaMixerOutput
+    public func mixer(_ mixer: MediaMixer, didReceiveAudioSessionEvent message: String) async {
+        await connection?.log(.info, "Audio session event", detail: message)
+    }
+
     public func selectTrack(_ id: UInt8?, mediaType: CMFormatDescription.MediaType) {
         switch mediaType {
         case .audio:

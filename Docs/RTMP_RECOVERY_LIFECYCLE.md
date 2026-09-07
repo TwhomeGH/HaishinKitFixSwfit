@@ -205,10 +205,11 @@ Audio session route/interruption 是另一個明確 lifecycle 邊界，但責任
 
 - `MediaMixer` 監聽 `AVAudioSession.interruptionNotification` 與 `routeChangeNotification`，負責根據當時狀態恢復 capture/mixer 輸入側。
 - interruption 進行中收到 `.oldDeviceUnavailable`、`.newDeviceAvailable` 或 `.routeConfigurationChange` 時，`MediaMixer` 只記錄延後 reset，避免在 session 尚未穩定時重建音訊輸入。
-- interruption ended 且 options 含 `.shouldResume`，或非 interruption 中發生有效 route change 時，`MediaMixer` 會在輸入側恢復後呼叫輸出端 `restartAudioEncoding(reason:)`。
+- `MediaMixer` 會透過 `MediaMixerOutput.mixer(_:didReceiveAudioSessionEvent:)` 把 audio session event 送給輸出端；RTMPStream 會將事件寫入 `RTMPConnection.onLog`。
+- interruption ended 且 options 含 `.shouldResume`，或非 interruption 中發生有效 route change 時，`MediaMixer` 會在輸入側恢復後呼叫輸出端 `restartAudioEncoding(reason:)`，並把 audio session 狀態放進 reason。
 - RTMPStream 的 `restartAudioEncoding(reason:)` 會走 RTMP audio pipeline recovery，包含重接 codec output stream 與 publish tasks；這不能只靠 `audioIO.reset()` 取代。
 
-診斷時應同時看 audio session 狀態與 RTMP recovery log。若只有 capture reset log 而沒有 `restartAudioEncoding` / `Restarting audio pipeline`，代表輸出端可能沒有接到明確 recovery。
+診斷時應同時看 audio session 狀態與 RTMP recovery log。發布中的診斷應透過 `MediaMixerOutput` audio session event callback 與 `restartAudioEncoding(reason:)` 進入 `RTMPConnection.onLog`。若看不到 `Audio session event` 或 `restartAudioEncoding` / `Restarting audio pipeline`，代表輸出端可能沒有接到明確 recovery。
 
 只有在確認 `mediaMixer.isRunning == false` 時，才在 resume path 呼叫 `startRunning()`。
 
@@ -226,6 +227,7 @@ guard await mediaMixer.isRunning else {
 
 建議觀察以下 log：
 
+- `Audio session event`
 - `restartVideoEncoding throttled`
 - `restartAudioEncoding throttled`
 - `skip restartVideoPipeline: already restarting`
@@ -233,7 +235,6 @@ guard await mediaMixer.isRunning else {
 - `Restarting video pipeline`
 - `Restarting audio pipeline`
 - `restartVideoPipeline: done`
-- `Audio route change deferred during interruption`
 - `Audio session interruption ended`
 - `Audio pipeline reset after route change`
 - `publish throughput ... videoInputFrames=... videoFrames=...`
