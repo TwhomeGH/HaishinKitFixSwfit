@@ -42,6 +42,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   warnings，降低 CI log 噪音。
 - 清理 `RTMPStream` 的 `any Swift.Error` existential warning、多餘 `await` 與
   `publish` 回傳值未使用 warning。
+- 移除 `RTCHaishinKit` 中已不存在的 `HaishinKitLogger.level` 舊 API 呼叫，避免
+  package scheme 編譯 RTCHaishinKit target 時失敗。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

@@ -24,7 +24,6 @@ actor HTTPSession: StreamSession {
     private var peerConnection: RTCPeerConnection?
 
     init(uri: URL, mode: StreamSessionMode, configuration: (any StreamSessionConfiguration)?) {
-        logger.level = .debug
         self.uri = uri
         self.mode = mode
         if let configuration = configuration as? HTTPSessionConfiguration {
