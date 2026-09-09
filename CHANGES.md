@@ -59,6 +59,9 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   `opaque` / server `challenge` response，以及 Adobe auth command 生成。
 - `RTMPChunkBufferTests.writeChunkSize` 改驗 RTMP chunk header、message length 與
   128-byte chunk boundary，避免用超長硬編碼 byte array 造成難讀且易誤判的失敗。
+- `RTMPConnectionTests` 將連線失敗釋放測試改名為 `releaseWhenConnectFails`，
+  並明確記錄 localhost RTMP endpoint 在 unit tests 中應不可用，避免把預期的
+  `Connection refused` log 誤讀成 CI 異常。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 
