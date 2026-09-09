@@ -37,6 +37,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   guard；macOS 沒有 `AVAudioSession` route API，改為保守啟用 AEC 且不監聽路由。
 - 補上 `any NSObjectProtocol` / `any Decoder` / `any Encoder` / `any Error`，
   清理 Swift 6 existential warning。
+- 清理 `RTMPConnection` 的 unused URL binding、未使用回傳值與 unnecessary `try?`
+  warnings，降低 CI log 噪音。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

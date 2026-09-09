@@ -425,7 +425,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         guard state.canTransition(to: .connecting) else {
             throw Error.invalidState
         }
-        guard let uri = URL(string: command), let scheme = uri.scheme, let host = uri.host, kRTMPSupportedProtocols.contains(scheme) else {
+        guard let uri = URL(string: command), let scheme = uri.scheme, uri.host != nil, kRTMPSupportedProtocols.contains(scheme) else {
             throw Error.unsupportedCommand(command)
         }
         self.command = command
@@ -447,7 +447,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     private func performConnect(_ command: String, arguments: [(any Sendable)?]) async throws -> RTMPResponse {
-        guard let uri = URL(string: command), let scheme = uri.scheme, let host = uri.host else {
+        guard let uri = URL(string: command), let host = uri.host else {
             throw Error.unsupportedCommand(command)
         }
         self.uri = uri
@@ -587,7 +587,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 return
             }
             do {
-                try await performConnect(command, arguments: arguments)
+                _ = try await performConnect(command, arguments: arguments)
                 for stream in streams {
                     await stream.dispatch(.reset)
                     try await stream.createStream()
@@ -630,7 +630,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         // 全部送進 socket send queue，再 drain + close。若不 await，consumer 可能
         // 在 socket 關閉後才 flush → 最終訊息/尾幀被丟掉。
         await outputConsumerTask?.value
-        try? await socket?.drain()
+        await socket?.drain()
         await socket?.close()
         await networkMonitor?.stopRunning()
 
