@@ -68,7 +68,7 @@ jobs:
           : > .build/test-results/summary.md
           : > .build/test-results/failures.md
           logger_info "Building RTMPHaishinKit test bundle"
-          swift build --build-tests --target RTMPHaishinKitTests 2>&1 | tee .build/test-results/build.log
+          swift build --build-tests 2>&1 | tee .build/test-results/build.log
           build_status=${PIPESTATUS[0]}
           cat .build/test-results/build.log >> .build/test-results/rtmp-tests.log
           if [ "${build_status}" -ne 0 ]; then
