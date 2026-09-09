@@ -48,6 +48,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   在 RTC codec mapping 回傳 nil，避免 enum 新 case 造成 switch non-exhaustive。
 - 移除 iOS 16+ 才可用的 `URL.path()` 呼叫，改用 iOS 15 可用的 `.path` property，
   避免 package scheme 以 iOS 15 deployment target 編譯失敗。
+- 更新 `RTMPChunkBufferTests` 以符合 `putMessage` 現行回傳完整 `Data` 的 API，
+  不再使用舊 iterator `.next()` 測試寫法。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

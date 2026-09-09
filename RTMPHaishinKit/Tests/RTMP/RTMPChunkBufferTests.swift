@@ -106,8 +106,8 @@ import Testing
             commandObject: nil,
             arguments: []
         )
-        let iterator = buffer.putMessage(.zero, chunkStreamId: 1, message: connection)
-        #expect(iterator.next() == Data([1, 0, 0, 0, 0, 0, 18, 20, 0, 0, 0, 0, 2, 0, 5, 104, 101, 108, 108, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]))
+        let data = buffer.putMessage(.zero, chunkStreamId: 1, message: connection)
+        #expect(data == Data([1, 0, 0, 0, 0, 0, 18, 20, 0, 0, 0, 0, 2, 0, 5, 104, 101, 108, 108, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]))
     }
 
     @Test func writeChunkSize() {
@@ -120,10 +120,10 @@ import Testing
             commandObject: nil,
             arguments: []
         )
-        let iterator = buffer.putMessage(.zero, chunkStreamId: 1, message: connection)
-        #expect(iterator.next() == Data([1, 0, 0, 0, 0, 0, 197, 20, 0, 0, 0, 0, 2, 0, 184, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97]))
-        #expect(iterator.next() == Data([193, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5]))
-        #expect(iterator.next() == nil)
+        let data = buffer.putMessage(.zero, chunkStreamId: 1, message: connection)
+        let expected = Data([1, 0, 0, 0, 0, 0, 197, 20, 0, 0, 0, 0, 2, 0, 184, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97])
+            + Data([193, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5])
+        #expect(data == expected)
     }
 
     @Test func readCommandWithMultipleArguments() throws {
@@ -136,10 +136,8 @@ import Testing
             commandObject: nil,
             arguments: [1.0, "extra"]
         )
-        let iterator = buffer.putMessage(.zero, chunkStreamId: .command, message: command)
-        while let data = iterator.next() {
-            buffer.put(data)
-        }
+        let data = buffer.putMessage(.zero, chunkStreamId: RTMPChunkStreamId.command.rawValue, message: command)
+        buffer.put(data)
 
         let (chunkType, _) = try buffer.getBasicHeader()
         let header = RTMPChunkMessageHeader()
