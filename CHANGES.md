@@ -46,6 +46,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   package scheme 編譯 RTCHaishinKit target 時失敗。
 - 補齊 `RTCHaishinKit` 的 `AudioCodecSettings.Format` mapping；HE-AAC / HE-AAC v2
   在 RTC codec mapping 回傳 nil，避免 enum 新 case 造成 switch non-exhaustive。
+- 移除 iOS 16+ 才可用的 `URL.path()` 呼叫，改用 iOS 15 可用的 `.path` property，
+  避免 package scheme 以 iOS 15 deployment target 編譯失敗。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

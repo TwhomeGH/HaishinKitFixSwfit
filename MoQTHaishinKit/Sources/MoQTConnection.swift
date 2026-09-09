@@ -71,7 +71,7 @@ public actor MoQTConnection {
                     await didReceiveDataStream(data)
                 }
             }
-            guard let serverSetup = try await send(MoQTClientSetup(supportedVersions: Self.supportedVersions, role: role, path: uri.path())) as? MoQTServerSetup else {
+            guard let serverSetup = try await send(MoQTClientSetup(supportedVersions: Self.supportedVersions, role: role, path: uri.path)) as? MoQTServerSetup else {
                 throw Error.unknownResponse
             }
             return serverSetup
