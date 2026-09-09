@@ -21,6 +21,7 @@
 `HaishinKit/Tests/Stream/StreamRecorderTests.swift`、
 `Docs/PLATFORM_BOUNDARIES.md`、
 `Docs/README.md`、
+`.github/scripts/summarize-swift-testing-failures.sh`、
 `.github/workflows/swift-tests.yml`
 
 **診斷**：compressed audio wire timestamp 先前為了隔離 AAC source/callback cadence
@@ -35,6 +36,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   時鐘長期分裂。
 - audio 落後 video 的 resync 判斷改用 audio/video wire playhead 比較，不再拿
   raw `when.seconds` 跟已補償的 video timestamp 混算。
+- `RTMPTimestampTests` 移除已不會 throws 的 `timestamp.update` 呼叫前多餘 `try`，
+  避免 Swift Testing macro 在 CI 產生大量 warning。
 - 新增 GitHub Actions workflow，執行完整 RTMPHaishinKit iOS test suite，並用有顏色的
   info/error log、集中式 Actions annotation、summary 與 artifact 保存結果。
 - workflow runner 使用 `macos-26`，並改用 iOS Simulator 的 `xcodebuild test`
@@ -83,6 +86,9 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   後再驗 `outputFormat` / `inputFormats`，`MediaMixerTests` 在沒有 camera device 時
   跳過 device attach，`StreamRecorderTests` 改用明確 fixture 與 throws expectation
   驗證檔案已存在情境，避免 fatal error。
+- workflow 新增獨立 failure extraction step，集中擷取 Swift Testing 的 failed tests、
+  failed suites、recorded issues 與 compiler diagnostics，並輸出 GitHub error
+  annotations，避免在大量 passed log 中人工尋找失敗項。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

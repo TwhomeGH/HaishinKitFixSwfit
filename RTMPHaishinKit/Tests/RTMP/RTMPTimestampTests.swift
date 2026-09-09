@@ -15,12 +15,12 @@ import Testing
             CMTime(value: 286340338232723, timescale: 1000000000)
         ]
         var timestamp = RTMPTimestamp<CMTime>()
-        #expect(try timestamp.update(times[0]) == 0)
-        #expect(try timestamp.update(times[1]) == 33)
-        #expect(try timestamp.update(times[2]) == 33)
-        #expect(try timestamp.update(times[3]) == 33)
-        #expect(try timestamp.update(times[4]) == 34)
-        #expect(try timestamp.update(times[5]) == 33)
+        #expect(timestamp.update(times[0]) == 0)
+        #expect(timestamp.update(times[1]) == 33)
+        #expect(timestamp.update(times[2]) == 33)
+        #expect(timestamp.update(times[3]) == 33)
+        #expect(timestamp.update(times[4]) == 34)
+        #expect(timestamp.update(times[5]) == 33)
     }
 
     @Test func updateAVAudioTime() throws {
@@ -33,12 +33,12 @@ import Testing
             .init(hostTime: 6901297434500, sampleTime: 13802594869, atRate: 48000)
         ]
         var timestamp = RTMPTimestamp<AVAudioTime>()
-        #expect(try timestamp.update(times[0]) == 0)
-        #expect(try timestamp.update(times[1]) == 21)
-        #expect(try timestamp.update(times[2]) == 21)
-        #expect(try timestamp.update(times[3]) == 22)
-        #expect(try timestamp.update(times[4]) == 21)
-        #expect(try timestamp.update(times[5]) == 21)
+        #expect(timestamp.update(times[0]) == 0)
+        #expect(timestamp.update(times[1]) == 21)
+        #expect(timestamp.update(times[2]) == 21)
+        #expect(timestamp.update(times[3]) == 22)
+        #expect(timestamp.update(times[4]) == 21)
+        #expect(timestamp.update(times[5]) == 21)
     }
 
     @Test func updateAVAudioTimeWithPreferredDelta() throws {
@@ -52,30 +52,30 @@ import Testing
         ]
         let aacPacketDuration = 1024.0 / 44100.0
         var timestamp = RTMPTimestamp<AVAudioTime>()
-        #expect(try timestamp.update(times[0], preferredDelta: aacPacketDuration) == 0)
-        #expect(try timestamp.update(times[1], preferredDelta: aacPacketDuration) == 23)
-        #expect(try timestamp.update(times[2], preferredDelta: aacPacketDuration) == 23)
-        #expect(try timestamp.update(times[3], preferredDelta: aacPacketDuration) == 23)
-        #expect(try timestamp.update(times[4], preferredDelta: aacPacketDuration) == 23)
-        #expect(try timestamp.update(times[5], preferredDelta: aacPacketDuration) == 24)
+        #expect(timestamp.update(times[0], preferredDelta: aacPacketDuration) == 0)
+        #expect(timestamp.update(times[1], preferredDelta: aacPacketDuration) == 23)
+        #expect(timestamp.update(times[2], preferredDelta: aacPacketDuration) == 23)
+        #expect(timestamp.update(times[3], preferredDelta: aacPacketDuration) == 23)
+        #expect(timestamp.update(times[4], preferredDelta: aacPacketDuration) == 23)
+        #expect(timestamp.update(times[5], preferredDelta: aacPacketDuration) == 24)
         #expect(abs(timestamp.updatedAt - (100.0 + aacPacketDuration * 5)) < 0.001)
     }
 
     @Test func updateAVAudioTimeWithPreferredDeltaCorrectsLargeSourceDrift() throws {
         let packetDuration = 0.023
         var timestamp = RTMPTimestamp<AVAudioTime>()
-        #expect(try timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
-        #expect(try timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
-        #expect(try timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.223)), preferredDelta: packetDuration) == 28)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.223)), preferredDelta: packetDuration) == 28)
         #expect(abs(timestamp.updatedAt - 100.051) < 0.001)
     }
 
     @Test func updateAVAudioTimeWithPreferredDeltaSlowsLargeNegativeSourceDrift() throws {
         let packetDuration = 0.023
         var timestamp = RTMPTimestamp<AVAudioTime>()
-        #expect(try timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
-        #expect(try timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
-        #expect(try timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 99.923)), preferredDelta: packetDuration) == 18)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 99.923)), preferredDelta: packetDuration) == 18)
         #expect(abs(timestamp.updatedAt - 100.041) < 0.001)
     }
 }

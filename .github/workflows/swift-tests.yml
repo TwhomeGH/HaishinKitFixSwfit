@@ -146,6 +146,20 @@ jobs:
           fi
           echo "${status}" > .build/test-results/exit-code
 
+      - name: Extract RTMP failed tests
+        if: always()
+        shell: bash
+        run: |
+          status="$(cat .build/test-results/exit-code 2>/dev/null || echo 1)"
+          if [ "${status}" -eq 0 ]; then
+            echo "RTMPHaishinKit iOS tests passed; no failure extraction needed."
+          else
+            bash .github/scripts/summarize-swift-testing-failures.sh \
+              .build/test-results/ios-tests.log \
+              .build/test-results/focused-failures.md \
+              "RTMPHaishinKit iOS Tests"
+          fi
+
       - name: Summarize failed suites
         if: always()
         shell: bash
@@ -174,6 +188,11 @@ jobs:
               echo
               echo "### Failure summary"
               cat .build/test-results/failures.md
+            fi
+            if [ -s .build/test-results/focused-failures.md ]; then
+              echo
+              echo "### Focused failure diagnostics"
+              cat .build/test-results/focused-failures.md
             fi
             echo
             echo "- Final exit code: \`${status}\`"
@@ -270,6 +289,20 @@ jobs:
           fi
           echo "${status}" > .build/haishinkit-test-results/exit-code
 
+      - name: Extract HaishinKit failed tests
+        if: always()
+        shell: bash
+        run: |
+          status="$(cat .build/haishinkit-test-results/exit-code 2>/dev/null || echo 1)"
+          if [ "${status}" -eq 0 ]; then
+            echo "HaishinKit iOS tests passed; no failure extraction needed."
+          else
+            bash .github/scripts/summarize-swift-testing-failures.sh \
+              .build/haishinkit-test-results/ios-tests.log \
+              .build/haishinkit-test-results/focused-failures.md \
+              "HaishinKit iOS Tests"
+          fi
+
       - name: Summarize HaishinKit failed suites
         if: always()
         shell: bash
@@ -298,6 +331,11 @@ jobs:
               echo
               echo "### Failure summary"
               cat .build/haishinkit-test-results/failures.md
+            fi
+            if [ -s .build/haishinkit-test-results/focused-failures.md ]; then
+              echo
+              echo "### Focused failure diagnostics"
+              cat .build/haishinkit-test-results/focused-failures.md
             fi
             echo
             echo "- Final exit code: \`${status}\`"
@@ -391,6 +429,21 @@ jobs:
           fi
           echo "${status}" > "${result_dir}/exit-code"
 
+      - name: Extract HaishinKit macOS failed tests
+        if: always()
+        shell: bash
+        run: |
+          result_dir=".build/haishinkit-macos-test-results"
+          status="$(cat "${result_dir}/exit-code" 2>/dev/null || echo 1)"
+          if [ "${status}" -eq 0 ]; then
+            echo "HaishinKit macOS tests passed; no failure extraction needed."
+          else
+            bash .github/scripts/summarize-swift-testing-failures.sh \
+              "${result_dir}/macos-tests.log" \
+              "${result_dir}/focused-failures.md" \
+              "HaishinKit macOS Tests"
+          fi
+
       - name: Summarize HaishinKit macOS failed suites
         if: always()
         shell: bash
@@ -420,6 +473,11 @@ jobs:
               echo
               echo "### Failure summary"
               cat "${result_dir}/failures.md"
+            fi
+            if [ -s "${result_dir}/focused-failures.md" ]; then
+              echo
+              echo "### Focused failure diagnostics"
+              cat "${result_dir}/focused-failures.md"
             fi
             echo
             echo "- Final exit code: \`${status}\`"
