@@ -8,7 +8,7 @@ extension AudioCodecSettings.Format {
             return RTC_CODEC_OPUS
         case .aac:
             return RTC_CODEC_AAC
-        case .pcm:
+        case .heAac, .heAacV2, .pcm:
             return nil
         }
     }

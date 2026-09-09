@@ -44,6 +44,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   `publish` 回傳值未使用 warning。
 - 移除 `RTCHaishinKit` 中已不存在的 `HaishinKitLogger.level` 舊 API 呼叫，避免
   package scheme 編譯 RTCHaishinKit target 時失敗。
+- 補齊 `RTCHaishinKit` 的 `AudioCodecSettings.Format` mapping；HE-AAC / HE-AAC v2
+  在 RTC codec mapping 回傳 nil，避免 enum 新 case 造成 switch non-exhaustive。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 
