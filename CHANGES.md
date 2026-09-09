@@ -26,9 +26,10 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   raw `when.seconds` 跟已補償的 video timestamp 混算。
 - 新增 GitHub Actions workflow，執行完整 RTMPHaishinKit iOS test suite，並用有顏色的
   info/error log、集中式 Actions annotation、summary 與 artifact 保存結果。
-- workflow runner 使用 `macos-26`，並改用 iOS Simulator 的 `xcodebuild`
-  `build-for-testing` / `test` 執行 RTMPHaishinKit tests，避免 `swift test`
-  跑成 macOS host tests 而誤撞 iOS-only API。
+- workflow runner 使用 `macos-26`，並改用 iOS Simulator 的 `xcodebuild test`
+  搭配 package scheme `HaishinKit-Package` 與 `-only-testing:RTMPHaishinKitTests`
+  執行 RTMPHaishinKit tests，避免 `swift test` 跑成 macOS host tests 而誤撞
+  iOS-only API。
 - artifact upload 使用 `actions/upload-artifact@v6`，避免 Node.js 20 deprecation
   warning。
 - VBV key 改用 raw string 保存，保留使用端的 `#available(iOS 26.0, ...)`

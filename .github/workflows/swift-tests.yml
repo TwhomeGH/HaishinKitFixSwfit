@@ -107,7 +107,8 @@ jobs:
             grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find" "$1" | head -n 80 || true
           }
           mkdir -p .build/test-results
-          scheme="RTMPHaishinKit"
+          scheme="HaishinKit-Package"
+          test_target="RTMPHaishinKitTests"
           device_name="$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone[^()]*\) (.*/\1/p' | head -n 1)"
           if [ -z "${device_name}" ]; then
             device_name="iPhone 17"
@@ -119,28 +120,11 @@ jobs:
           : > .build/test-results/failures.md
           rm -rf .build/test-results/RTMPHaishinKitTests.xcresult
           logger_info "Using iOS Simulator destination: ${destination}"
-          logger_info "Building ${scheme} test bundle for iOS Simulator"
-          xcodebuild build-for-testing \
-            -scheme "${scheme}" \
-            -destination "generic/platform=iOS Simulator" \
-            2>&1 | tee .build/test-results/build.log
-          build_status=${PIPESTATUS[0]}
-          cat .build/test-results/build.log >> .build/test-results/rtmp-tests.log
-          if [ "${build_status}" -ne 0 ]; then
-            logger_error "Build failed before tests could run"
-            {
-              echo "- FAIL: build failed before test execution, exit code \`${build_status}\`"
-              echo
-              echo "#### Build errors"
-              extract_errors .build/test-results/build.log
-            } >> .build/test-results/failures.md
-            echo "${build_status}" > .build/test-results/exit-code
-            exit 0
-          fi
-          logger_info "Running full RTMPHaishinKit iOS test suite"
-          xcodebuild test-without-building \
+          logger_info "Running ${test_target} with ${scheme} on iOS Simulator"
+          xcodebuild test \
             -scheme "${scheme}" \
             -destination "${destination}" \
+            -only-testing:"${test_target}" \
             -resultBundlePath .build/test-results/RTMPHaishinKitTests.xcresult \
             2>&1 | tee .build/test-results/ios-tests.log
           status=${PIPESTATUS[0]}
