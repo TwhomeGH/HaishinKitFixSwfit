@@ -49,12 +49,20 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 120)
     }
 
-    @Test func keyFrameIntervalOptions_disabledFrameCount() {
+    @Test func keyFrameIntervalOptions_zeroDurationFallsBackToDefault() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
         let options = settings.makeKeyFrameIntervalOptions()
 
-        #expect(options.number(for: .maxKeyFrameIntervalDuration)?.int32Value == 0)
+        #expect(options.number(for: .maxKeyFrameIntervalDuration)?.int32Value == 2)
         #expect(options.value(for: .maxKeyFrameInterval) == nil)
+    }
+
+    @Test func keyFrameIntervalOptions_zeroDurationUsesFallbackForMeasuredFrameRate() {
+        let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
+        let options = settings.makeKeyFrameIntervalOptions(measuredFrameRate: 45)
+
+        #expect(options.number(for: .maxKeyFrameIntervalDuration)?.int32Value == 2)
+        #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 90)
     }
 
     @Test func makeOptions_measuredFrameRateAsExpectedFrameRateHint() {

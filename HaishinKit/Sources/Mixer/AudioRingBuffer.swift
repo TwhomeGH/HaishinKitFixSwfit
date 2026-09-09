@@ -19,15 +19,13 @@ final class AudioRingBuffer {
     }
 
     private func calculateCounts() -> Int {
-        if tail <= head {
-            return head - tail + skip
-        }
-        return Int(outputBuffer.frameCapacity) - tail + head + skip
+        storedSamples + skip
     }
 
     private var head = 0
     private var tail = 0
     private var skip = 0
+    private var storedSamples = 0
     private var sampleTime: AVAudioFramePosition = 0
     private var inputFormat: AVAudioFormat
     private var inputBuffer: AVAudioPCMBuffer
@@ -154,6 +152,7 @@ final class AudioRingBuffer {
             while 0 < toDrop {
                 let numSamples = min(Int(toDrop), Int(outputBuffer.frameCapacity) - tail)
                 tail = (tail + numSamples) % Int(outputBuffer.frameCapacity)
+                storedSamples -= numSamples
                 toDrop -= Int64(numSamples)
             }
             if Self.alignLogThreshold <= stale, logger.isEnabledFor(level: .trace) {
@@ -173,6 +172,7 @@ final class AudioRingBuffer {
     private static let alignLogThreshold: Int64 = 4096
 
     private func renderInternal(_ inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?, offset: Int = 0) -> OSStatus {
+        guard Int(inNumberFrames) <= calculateCounts() else { return -1 }
         if 0 < skip {
             let numSamples = min(Int(inNumberFrames), skip)
             guard let bufferList = UnsafeMutableAudioBufferListPointer(ioData) else {
@@ -181,12 +181,12 @@ final class AudioRingBuffer {
             zeroBuffer(bufferList, numSamples: numSamples, offset: offset)
             skip -= numSamples
             if 0 < inNumberFrames - UInt32(numSamples) {
-                return renderInternal(inNumberFrames - UInt32(numSamples), ioData: ioData, offset: numSamples)
+                return renderInternal(inNumberFrames - UInt32(numSamples), ioData: ioData, offset: offset + numSamples)
             }
             return noErr
         }
-        guard head != tail else { return -1 }
-        let numSamples = min(Int(inNumberFrames), Int(outputBuffer.frameCapacity) - tail)
+        guard 0 < storedSamples else { return -1 }
+        let numSamples = min(Int(inNumberFrames), Int(outputBuffer.frameCapacity) - tail, storedSamples)
         guard numSamples > 0 else { return -1 }
         guard let bufferList = UnsafeMutableAudioBufferListPointer(ioData) else {
             return -1
@@ -214,9 +214,10 @@ final class AudioRingBuffer {
         tail += numSamples
         if tail == Int(outputBuffer.frameCapacity) {
             tail = 0
-            if 0 < inNumberFrames - UInt32(numSamples) {
-                return renderInternal(inNumberFrames - UInt32(numSamples), ioData: ioData, offset: numSamples)
-            }
+        }
+        storedSamples -= numSamples
+        if 0 < inNumberFrames - UInt32(numSamples) {
+            return renderInternal(inNumberFrames - UInt32(numSamples), ioData: ioData, offset: offset + numSamples)
         }
         return noErr
     }
@@ -255,6 +256,7 @@ final class AudioRingBuffer {
         head = 0
         tail = 0
         skip = 0
+        storedSamples = 0
         sampleTime = 0
         unlock()
     }
@@ -264,8 +266,11 @@ final class AudioRingBuffer {
         let frameLength = Int(audioPCMBuffer.frameLength)
         guard offset < frameLength else { return }
         let capacity = Int(outputBuffer.frameCapacity)
-        let numSamples = min(frameLength - offset, capacity - head)
+        let effectiveOffset = max(offset, frameLength - capacity)
+        sampleTime += Int64(effectiveOffset - offset)
+        let numSamples = min(frameLength - effectiveOffset, capacity - head)
         guard numSamples > 0 else { return }
+        discardStoredSamples(max(0, storedSamples + numSamples - capacity))
         let channelCount = Int(inputFormat.channelCount)
         let bytesPerSample: Int
         switch inputFormat.commonFormat {
@@ -277,23 +282,35 @@ final class AudioRingBuffer {
         let copyBytes = numSamples * channelCount * bytesPerSample
         if inputFormat.isInterleaved {
             guard let dst = outputBuffer.int16ChannelData?[0].advanced(by: head * channelCount),
-                  let src = audioPCMBuffer.int16ChannelData?[0].advanced(by: offset * channelCount) else { return }
+                  let src = audioPCMBuffer.int16ChannelData?[0].advanced(by: effectiveOffset * channelCount) else { return }
             memcpy(dst, src, copyBytes)
         } else {
             for i in 0..<channelCount {
                 guard let dst = outputBuffer.int16ChannelData?[i].advanced(by: head),
-                      let src = audioPCMBuffer.int16ChannelData?[i].advanced(by: offset) else { continue }
+                      let src = audioPCMBuffer.int16ChannelData?[i].advanced(by: effectiveOffset) else { continue }
                 memcpy(dst, src, numSamples * bytesPerSample)
             }
         }
         head += numSamples
+        storedSamples += numSamples
         sampleTime += Int64(numSamples)
         if head == capacity {
             head = 0
-            let remaining = frameLength - offset - numSamples
+            let remaining = frameLength - effectiveOffset - numSamples
             if remaining > 0 {
-                appendInternal(audioPCMBuffer, offset: offset + numSamples)
+                appendInternal(audioPCMBuffer, offset: effectiveOffset + numSamples)
             }
+        }
+    }
+
+    private func discardStoredSamples(_ count: Int) {
+        var remaining = min(count, storedSamples)
+        let capacity = Int(outputBuffer.frameCapacity)
+        while 0 < remaining {
+            let numSamples = min(remaining, capacity - tail)
+            tail = (tail + numSamples) % capacity
+            storedSamples -= numSamples
+            remaining -= numSamples
         }
     }
 }

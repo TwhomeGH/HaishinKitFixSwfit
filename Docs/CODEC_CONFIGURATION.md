@@ -94,6 +94,32 @@ public enum BitRateMode: String {
 | `bitRateMode` | average | 控制模式 |
 | `isLowLatencyRateControlEnabled` | false | 低延遲模式 |
 
+### Keyframe 間隔語意
+
+`maxKeyFrameIntervalDuration` 目前採直播安全預設：大於 `0` 時使用指定秒數；
+小於或等於 `0` 時視為無效值，fallback 到 `2` 秒。這不是「完全交給系統自行決定」
+的語意。
+
+保留 `2` 秒 fallback 的原因是 RTMP / HLS / 直播 CDN 通常需要穩定 GOP：
+首屏、重連、轉碼切片與播放器恢復都仰賴可預期的 keyframe cadence。若把 `0`
+直接傳給 VideoToolbox 或省略 keyframe duration option，encoder 可能依裝置、
+OS、codec profile、bitrate 與硬體實作自行選擇，對一般錄影或離線編碼較彈性，
+但對直播推流較容易造成跨平台行為飄移。
+
+未來若要支援「完全交給 VideoToolbox / 系統自行決定」，不要再擴大 `0` 這個
+magic value 的含義。建議新增明確 API，例如：
+
+```swift
+enum KeyFrameIntervalStrategy {
+    case liveDefault
+    case duration(seconds: Int32)
+    case automatic
+}
+```
+
+其中 `automatic` 代表不設定 `maxKeyFrameIntervalDuration` / `maxKeyFrameInterval`
+相關 option，由底層 encoder 決定；`liveDefault` 則保留目前的 `2` 秒直播預設。
+
 ### 設定生效與重啟
 
 `setVideoSettings(_:)` 只代表更新 video 設定，不等於手動恢復或強制重建整條發送管線。

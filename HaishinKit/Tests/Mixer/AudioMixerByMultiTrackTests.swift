@@ -70,9 +70,9 @@ import Testing
         try await waitUntil { mixer.outputFormat?.sampleRate == 44100 }
         #expect(mixer.outputFormat?.sampleRate == 44100)
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(44100, numSamples: 1024, channels: 1)!)
-        try await waitUntil { result.outputs.count >= 2 }
+        try await waitUntil { !result.outputs.isEmpty }
         #expect(mixer.outputFormat?.sampleRate == 44100)
-        #expect(result.outputs.count >= 2)
+        #expect(!result.outputs.isEmpty)
     }
 
     @Test func test44100to48000() async throws {

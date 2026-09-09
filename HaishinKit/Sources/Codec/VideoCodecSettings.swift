@@ -467,7 +467,7 @@ public struct VideoCodecSettings: Codable, Sendable {
         } else {
             return nil
         }
-        let interval = (Double(maxKeyFrameIntervalDuration) * frameRate).rounded(.up)
+        let interval = (Double(duration) * frameRate).rounded(.up)
         return Int32(min(interval, Double(Int32.max)))
     }
 }

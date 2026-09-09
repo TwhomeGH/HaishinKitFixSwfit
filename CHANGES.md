@@ -77,6 +77,14 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   codec、ISO、screen 與 utility 測試和 RTMP transport tests 分開執行與彙總。
 - `AudioDeviceUnitTests` 在沒有 simulator audio capture device 時跳過建立 device，
   避免核心測試因 CI 環境缺少硬體裝置而誤判。
+- `AudioRingBuffer` 改用明確的 `storedSamples` 追蹤可讀資料量，避免 buffer 剛好寫滿
+  capacity 時 `head == tail` 被誤判為空；overrun 時保留容量內最新 samples。
+- `VideoCodecSettings` 在 `maxKeyFrameIntervalDuration <= 0` 時統一使用 2 秒 fallback，
+  並讓 measured frame-rate 推導出的 frame-count option 使用同一個有效 duration。
+- `Docs/CODEC_CONFIGURATION.md` 補充 keyframe interval 語意：目前 `0` 不代表交給
+  VideoToolbox 自行決定；未來若需要 automatic，應以明確 strategy API 規劃。
+- `AudioMixerByMultiTrackTests.keep44100` 改驗「至少產出一包且輸出 sample rate 保持
+  44100」，避免把非同步 mixer 在 CI 上產出的批次數誤判成核心行為失敗。
 - 新增多平台邊界設計規範，建議以 protocol/facade 集中 iOS、macOS、visionOS
   等平台專屬 API，避免核心 media pipeline 散落 platform condition。
 - `AudioMixerByMultiTrack` 的 AEC route detection 改走 `AudioEchoRouteObserving`

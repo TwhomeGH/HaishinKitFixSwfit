@@ -34,8 +34,7 @@ import Testing
             return
         }
         buffer?.append(sinWave)
-        #expect(buffer?.isDataAvailable(1024) == true)
-        #expect(buffer?.render(UInt32(1024), ioData: readBuffer.mutableAudioBufferList) == noErr)
+        #expect(buffer?.counts == 1024 * 3)
         #expect(buffer?.isDataAvailable(1024) == true)
         #expect(buffer?.render(UInt32(1024), ioData: readBuffer.mutableAudioBufferList) == noErr)
         #expect(buffer?.isDataAvailable(1024) == true)
@@ -52,6 +51,24 @@ import Testing
 
     @Test func stereoAppendSampleBuffer_1024() throws {
         try appendSampleBuffer(1024, channels: 2)
+    }
+
+    @Test func appendAudioPCMBuffer_overrunKeepsNewestSamples() throws {
+        let format = makeInt16Format()
+        let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
+        for index in 0..<4 {
+            let (pcm, when) = makeInt16Buffer(format, sampleTime: AVAudioFramePosition(index * 1024), fill: Int16(index + 1))
+            ring.append(pcm, when: when)
+        }
+
+        #expect(ring.counts == 1024 * 3)
+        let read = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))
+        for expected in [Int16(2), Int16(3), Int16(4)] {
+            read.int16ChannelData?[0].update(repeating: 0, count: 1024)
+            #expect(ring.render(1024, ioData: read.mutableAudioBufferList) == noErr)
+            #expect(readInt16(read).allSatisfy { $0 == expected })
+        }
+        #expect(ring.counts == 0)
     }
 
     // MARK: align(to:)
