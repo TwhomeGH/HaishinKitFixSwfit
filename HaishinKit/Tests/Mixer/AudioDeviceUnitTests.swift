@@ -8,7 +8,10 @@ import Testing
     @Test func release() {
         weak var weakDevice: AudioDeviceUnit?
         _ = {
-            let device = try! AudioDeviceUnit(0, device: AVCaptureDevice.default(for: .audio)!)
+            guard let audioDevice = AVCaptureDevice.default(for: .audio) else {
+                return
+            }
+            let device = try? AudioDeviceUnit(0, device: audioDevice)
             weakDevice = device
         }()
         #expect(weakDevice == nil)

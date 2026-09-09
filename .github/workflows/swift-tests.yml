@@ -195,3 +195,127 @@ jobs:
           name: rtmp-swift-test-logs
           path: .build/test-results
           if-no-files-found: error
+
+  haishinkit-tests:
+    name: HaishinKit iOS tests
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Print toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Run HaishinKit tests
+        id: haishinkit_tests
+        shell: bash
+        run: |
+          set +e
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=HaishinKit Tests::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=HaishinKit Tests::$1"
+          }
+          logger_error_line() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+          }
+          extract_errors() {
+            grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find" "$1" | head -n 80 || true
+          }
+          mkdir -p .build/haishinkit-test-results
+          scheme="HaishinKit-Package"
+          test_target="HaishinKitTests"
+          device_name="$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone[^()]*\) (.*/\1/p' | head -n 1)"
+          if [ -z "${device_name}" ]; then
+            device_name="iPhone 17"
+          fi
+          destination="platform=iOS Simulator,name=${device_name},OS=latest"
+          status=0
+          : > .build/haishinkit-test-results/haishinkit-tests.log
+          : > .build/haishinkit-test-results/summary.md
+          : > .build/haishinkit-test-results/failures.md
+          rm -rf .build/haishinkit-test-results/HaishinKitTests.xcresult
+          logger_info "Using iOS Simulator destination: ${destination}"
+          logger_info "Running ${test_target} with ${scheme} on iOS Simulator"
+          xcodebuild test \
+            -scheme "${scheme}" \
+            -destination "${destination}" \
+            -only-testing:"${test_target}" \
+            -resultBundlePath .build/haishinkit-test-results/HaishinKitTests.xcresult \
+            2>&1 | tee .build/haishinkit-test-results/ios-tests.log
+          status=${PIPESTATUS[0]}
+          cat .build/haishinkit-test-results/ios-tests.log >> .build/haishinkit-test-results/haishinkit-tests.log
+          if [ "${status}" -eq 0 ]; then
+            logger_info "HaishinKit iOS tests passed"
+            printf '\033[32m[pass]\033[0m HaishinKit iOS tests\n'
+            echo "- PASS: full HaishinKit iOS test suite" >> .build/haishinkit-test-results/summary.md
+          else
+            logger_error "HaishinKit iOS tests failed with exit code ${status}"
+            logger_error_line "Failed tests and compiler diagnostics are summarized in the next step"
+            {
+              echo "- FAIL: full HaishinKit iOS test suite, exit code \`${status}\`"
+              echo
+              echo "#### Diagnostics"
+              extract_errors .build/haishinkit-test-results/ios-tests.log
+              grep -n -E "Test Case '-\\[.*\\]' failed|failed:|Failure|Issue recorded|Test Suite .* failed|Failing tests:" .build/haishinkit-test-results/ios-tests.log | head -n 120 || true
+            } >> .build/haishinkit-test-results/failures.md
+          fi
+          echo "${status}" > .build/haishinkit-test-results/exit-code
+
+      - name: Summarize HaishinKit failed suites
+        if: always()
+        shell: bash
+        run: |
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=HaishinKit Tests::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=HaishinKit Tests::$1"
+          }
+          status="$(cat .build/haishinkit-test-results/exit-code 2>/dev/null || echo 1)"
+          if [ "${status}" -eq 0 ]; then
+            logger_info "All HaishinKit test suites passed"
+          else
+            logger_error "HaishinKit tests failed; see failed suite summary below"
+          fi
+          {
+            echo "### HaishinKit iOS test suites"
+            echo
+            if [ -s .build/haishinkit-test-results/summary.md ]; then
+              cat .build/haishinkit-test-results/summary.md
+            fi
+            if [ -s .build/haishinkit-test-results/failures.md ]; then
+              echo
+              echo "### Failure summary"
+              cat .build/haishinkit-test-results/failures.md
+            fi
+            echo
+            echo "- Final exit code: \`${status}\`"
+            echo
+            echo "<details><summary>Last 120 log lines</summary>"
+            echo
+            echo '```text'
+            tail -n 120 .build/haishinkit-test-results/haishinkit-tests.log
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+
+      - name: Upload HaishinKit test log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: haishinkit-swift-test-logs
+          path: .build/haishinkit-test-results
+          if-no-files-found: error

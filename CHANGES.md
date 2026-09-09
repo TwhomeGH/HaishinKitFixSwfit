@@ -62,6 +62,10 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
 - `RTMPConnectionTests` 將連線失敗釋放測試改名為 `releaseWhenConnectFails`，
   並明確記錄 localhost RTMP endpoint 在 unit tests 中應不可用，避免把預期的
   `Connection refused` log 誤讀成 CI 異常。
+- workflow 納入 `HaishinKitTests` iOS Simulator job，讓核心 media mixer、codec、
+  ISO、screen 與 utility 測試和 RTMP transport tests 分開執行與彙總。
+- `AudioDeviceUnitTests` 在沒有 simulator audio capture device 時跳過建立 device，
+  避免核心測試因 CI 環境缺少硬體裝置而誤判。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 
