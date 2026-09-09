@@ -33,7 +33,7 @@ public actor RTMPStream {
         /// An unsupported codec.
         case unsupportedCodec
         /// Connection was lost unexpectedly; carries the underlying socket/receive error.
-        case connectionLost(Swift.Error?)
+        case connectionLost((any Swift.Error)?)
     }
 
     /// NetStatusEvent#info.code for NetStream
@@ -748,7 +748,7 @@ public actor RTMPStream {
                 await connection?.log(.error, "createStream: FMLE preamble failed", detail: "\(error)")
             }
         }
-        var lastError: Swift.Error = Error.invalidState
+        var lastError: any Swift.Error = Error.invalidState
         for attempt in 1...retryCount {
             do {
                 let response = try await connection?.call("createStream")
@@ -877,7 +877,7 @@ public actor RTMPStream {
                 }
                 group.addTask {
                     for await video in videoInput {
-                        await self.outgoing.append(video: video)
+                        self.outgoing.append(video: video)
                     }
                 }
             }
@@ -1020,7 +1020,7 @@ extension RTMPStream: _Stream {
         default:
             return true
         }
-        try? await setVideoSettings(settings)
+        try? setVideoSettings(settings)
         return false
     }
 
@@ -1374,7 +1374,7 @@ extension RTMPStream: _Stream {
             return
         }
         do {
-            try await publish(name, type: lastPublishType)
+            _ = try await publish(name, type: lastPublishType)
         } catch {
             await connection?.log(.error, "Auto-republish failed", detail: "\(error)")
         }
