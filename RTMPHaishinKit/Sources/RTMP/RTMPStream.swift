@@ -1196,25 +1196,25 @@ extension RTMPStream: _Stream {
         await restartAudioPipeline(reason: reason)
     }
 
-    /// A/V resync helper：audio wire 時間落後 video playhead 超過
-    /// `maxAudioBehindVideoSeconds` 時，把音訊時間戳 clamp 到 video 附近並回傳
-    /// （由呼叫端以 `allowJump: true` 讓時間軸一次跳進）。健康時（偏移 < 門檻）
-    /// 原樣回傳。若兩者時鐘基座不同導致常態誤差，此守衛會把音訊釘在 video
-    /// 附近 — 這正是「丟棄落後舊資料」的等價行為，避免 player 長期棄音。
+    /// A/V resync helper：audio wire 時間落後 video wire playhead 超過
+    /// `maxAudioBehindVideoSeconds` 時，把音訊時間戳 clamp 到 video 附近並回傳。
+    /// 判斷必須使用同一條 wire timeline；不能拿 raw `when.seconds` 跟已補償的
+    /// video playhead 比，否則來源時鐘基座差會被誤判成 audio 落後。
     private func resyncedAudioTime(original when: AVAudioTime) -> AVAudioTime {
         let videoPosition = videoTimestamp.updatedAt
-        guard 0 <= videoPosition else {
+        let audioPosition = audioTimestamp.updatedAt
+        guard 0 < videoPosition, 0 < audioPosition else {
             return when
         }
-        let behind = videoPosition - when.seconds
+        let behind = videoPosition - audioPosition
         guard Self.maxAudioBehindVideoSeconds < behind else {
             return when
         }
         audioResyncCount += 1
         if audioResyncCount % 60 == 1 {
-            Task { await connection?.log(.warn, "audio resync: audio behind video, clamping to playhead", detail: "behind=\(String(format: "%.3f", behind))s video=\(String(format: "%.3f", videoPosition)) audio=\(String(format: "%.3f", when.seconds)) count=\(audioResyncCount)") }
+            Task { await connection?.log(.warn, "audio resync: audio wire behind video wire, clamping to playhead", detail: "behind=\(String(format: "%.3f", behind))s video=\(String(format: "%.3f", videoPosition)) audio=\(String(format: "%.3f", audioPosition)) rawAudio=\(String(format: "%.3f", when.seconds)) count=\(audioResyncCount)") }
         }
-        let clampedSeconds = videoPosition - Self.maxAudioBehindVideoSeconds
+        let clampedSeconds = videoPosition
         return AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: clampedSeconds))
     }
 

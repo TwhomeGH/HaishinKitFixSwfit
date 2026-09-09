@@ -12,6 +12,10 @@ private let kRTMPTimestamp_defaultTimeInterval: TimeInterval = 0
 /// delta 取代，避免巨大 timestamp 上 wire 造成下游斷流。2 秒涵蓋最低幀率
 /// （0.5fps idle），正常直播幀間距 < 100ms。
 private let kRTMPTimestamp_maxDelta: TimeInterval = 2000
+private let kRTMPTimestamp_preferredDeltaDriftTolerance: TimeInterval = 80
+private let kRTMPTimestamp_preferredDeltaMaxCorrection: TimeInterval = 5
+private let kRTMPTimestamp_preferredDeltaCorrectionRatio: TimeInterval = 0.1
+private let kRTMPTimestamp_preferredDeltaJumpThreshold: TimeInterval = 500
 
 struct RTMPTimestamp<T: RTMPTimeConvertible> {
     private var startedAt = kRTMPTimestamp_defaultTimeInterval
@@ -49,11 +53,19 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         let usesPreferredDelta = preferredDelta != nil
         if let preferredDelta {
             let preferredTimedelta = preferredDelta * 1000
-            // Compressed audio packets carry a fixed media duration. Ignore
-            // small source-time jitter, but keep the existing large-jump
-            // resync path for audio that has fallen far behind video.
-            if allowJump && preferredTimedelta + 500 < sourceTimedelta {
+            let drift = sourceTimedelta - preferredTimedelta
+            // Compressed audio packets carry a stable media duration, but the
+            // source PTS still carries real gap/drift information. Keep small
+            // capture jitter off the wire, then gently correct sustained drift
+            // so the RTMP timeline does not fork away from the original clock.
+            if allowJump && kRTMPTimestamp_preferredDeltaJumpThreshold < drift {
                 timedelta = sourceTimedelta
+            } else if kRTMPTimestamp_preferredDeltaDriftTolerance < abs(drift) {
+                let correction = max(
+                    -kRTMPTimestamp_preferredDeltaMaxCorrection,
+                    min(kRTMPTimestamp_preferredDeltaMaxCorrection, drift * kRTMPTimestamp_preferredDeltaCorrectionRatio)
+                )
+                timedelta = max(0, preferredTimedelta + correction)
             } else {
                 timedelta = preferredTimedelta
             }

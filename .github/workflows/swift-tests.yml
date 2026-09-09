@@ -1,0 +1,110 @@
+name: Swift Tests
+
+on:
+  pull_request:
+    branches:
+      - master
+      - main
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rtmp-tests:
+    name: RTMPHaishinKit tests
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Print toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Run RTMP tests
+        id: rtmp_tests
+        shell: bash
+        run: |
+          set +e
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=Swift Tests::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=Swift Tests::$1"
+          }
+          mkdir -p .build/test-results
+          suites=(
+            "MD5Tests"
+            "RTMPVideoFourCCTests"
+            "HEVCDecoderConfigurationRecordTests"
+            "AVCDecoderConfigurationRecordTests"
+            "RTMPTimestampTests"
+            "RTMPURLTests"
+            "RTMPStatusTests"
+            "RTMPChunkBufferTests"
+            "RTMPConnectionTests"
+            "FoundationExtensionTest"
+            "AMFFoundationTests"
+            "AMF0SerializerTests"
+          )
+          status=0
+          : > .build/test-results/rtmp-tests.log
+          : > .build/test-results/summary.md
+          for suite in "${suites[@]}"; do
+            log=".build/test-results/${suite}.log"
+            echo "::group::${suite}"
+            logger_info "Running ${suite}"
+            echo "## ${suite}" | tee -a .build/test-results/rtmp-tests.log
+            swift test --filter "${suite}" 2>&1 | tee "${log}"
+            suite_status=${PIPESTATUS[0]}
+            cat "${log}" >> .build/test-results/rtmp-tests.log
+            if [ "${suite_status}" -eq 0 ]; then
+              logger_info "${suite} passed"
+              printf '\033[32m[pass]\033[0m %s\n' "${suite}"
+              echo "- PASS: \`${suite}\`" >> .build/test-results/summary.md
+            else
+              logger_error "${suite} failed with exit code ${suite_status}"
+              echo "- FAIL: \`${suite}\` exit code \`${suite_status}\`" >> .build/test-results/summary.md
+              status="${suite_status}"
+            fi
+            echo "::endgroup::"
+          done
+          {
+            echo "### RTMPHaishinKit test suites"
+            echo
+            cat .build/test-results/summary.md
+            echo
+            echo "- Final exit code: \`${status}\`"
+            echo
+            echo "<details><summary>Last 120 log lines</summary>"
+            echo
+            echo '```text'
+            tail -n 120 .build/test-results/rtmp-tests.log
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtmp-swift-test-logs
+          path: .build/test-results
+          if-no-files-found: error

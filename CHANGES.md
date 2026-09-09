@@ -4,6 +4,33 @@
 
 ---
 
+## 51. RTMP audio wire timestamp 改為 drift-aware preferred delta
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
+`RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`、
+`.github/workflows/swift-tests.yml`
+
+**診斷**：compressed audio wire timestamp 先前為了隔離 AAC source/callback cadence
+抖動，使用 `packetDuration` 作為 `preferredDelta` 持續累加。這能避免 `20/37ms`
+抖動上 wire，但也代表第一包 anchor 之後沒有持續參考原始 PTS；若來源 PTS 的
+gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯估或累積偏移。
+
+**修正**：
+- `preferredDelta` 仍作為主要 cadence，保留 AAC / Opus 穩定封包 duration。
+- 每包比較 raw source PTS 與目前 wire playhead 的 drift；小於 80ms 視為 jitter
+  忽略，超過門檻時每包最多以 5ms 受控校正，避免 audio wire timeline 與來源
+  時鐘長期分裂。
+- audio 落後 video 的 resync 判斷改用 audio/video wire playhead 比較，不再拿
+  raw `when.seconds` 跟已補償的 video timestamp 混算。
+- 新增 GitHub Actions workflow，逐一執行 RTMPHaishinKit 相關 Swift test suites，
+  並用有顏色的 info/error log、Actions annotation、summary 與 artifact 保存結果。
+
+**效果**：compressed audio timestamp 不回退到 source-time cadence，同時能低頻跟隨
+真實來源 PTS drift；A/V resync 減少因時間軸混用造成的誤觸發。
+
+---
+
 ## 50. AAC compressed audio timestamp 不再信任 packet description cadence
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
