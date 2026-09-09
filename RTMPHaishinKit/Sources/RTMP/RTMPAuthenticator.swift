@@ -6,7 +6,11 @@ final class RTMPAuthenticator {
         case failedToAuth(description: String)
     }
 
-    private static func makeSanJoseAuthCommand(_ url: URL, description: String) -> String {
+    static func makeSanJoseAuthCommand(
+        _ url: URL,
+        description: String,
+        challengeValue: UInt32 = UInt32.random(in: 0...UInt32.max)
+    ) -> String {
         var command: String = url.absoluteString
 
         guard let index = description.firstIndex(of: "?") else {
@@ -14,7 +18,7 @@ final class RTMPAuthenticator {
         }
 
         let query = String(description[description.index(index, offsetBy: 1)...])
-        let challenge = String(format: "%08x", UInt32.random(in: 0...UInt32.max))
+        let challenge = String(format: "%08x", challengeValue)
         let dictionary = URL(string: "http://localhost?" + query)!.dictionaryFromQuery()
 
         var response = MD5.base64("\(url.user!)\(dictionary["salt"]!)\(url.password!)")

@@ -76,7 +76,10 @@ enum MD5 {
         }
 
         var data: Data {
-            a.data + b.data + c.data + d.data
+            MD5.littleEndianData(a) +
+                MD5.littleEndianData(b) +
+                MD5.littleEndianData(c) +
+                MD5.littleEndianData(d)
         }
     }
 
@@ -85,32 +88,23 @@ enum MD5 {
     }
 
     static func calculate(_ message: String) -> Data {
-        calculate(ByteArray().writeUTF8Bytes(message).data)
+        calculate(Data(message.utf8))
     }
 
     static func calculate(_ data: Data) -> Data {
         var context = Context()
+        var message = [UInt8](data)
+        let bitCount = UInt64(message.count) * 8
 
-        let count: Data = UInt64(data.count * 8).bigEndian.data
-        let message = ByteArray(data: data + [0x80])
-        message.length += 64 - (message.length % 64)
-        message[message.length - 8] = count[7]
-        message[message.length - 7] = count[6]
-        message[message.length - 6] = count[5]
-        message[message.length - 5] = count[4]
-        message[message.length - 4] = count[3]
-        message[message.length - 3] = count[2]
-        message[message.length - 2] = count[1]
-        message[message.length - 1] = count[0]
+        message.append(0x80)
+        while message.count % 64 != 56 {
+            message.append(0)
+        }
+        message.append(contentsOf: littleEndianBytes(bitCount))
 
         // swiftlint:disable:this closure_body_length
-        message.sequence(64) {
-            let x: [UInt32] = $0.toUInt32()
-
-            guard x.count == 16 else {
-                return
-            }
-
+        for offset in stride(from: 0, to: message.count, by: 64) {
+            let x = makeWords(message, offset: offset)
             var ctx = Context()
             ctx.a = context.a
             ctx.b = context.b
@@ -196,5 +190,40 @@ enum MD5 {
         }
 
         return context.data
+    }
+
+    private static func makeWords(_ message: [UInt8], offset: Int) -> [UInt32] {
+        var words = [UInt32](repeating: 0, count: 16)
+        for index in 0..<16 {
+            let byteIndex = offset + index * 4
+            words[index] =
+                UInt32(message[byteIndex]) |
+                UInt32(message[byteIndex + 1]) << 8 |
+                UInt32(message[byteIndex + 2]) << 16 |
+                UInt32(message[byteIndex + 3]) << 24
+        }
+        return words
+    }
+
+    private static func littleEndianData(_ value: UInt32) -> Data {
+        Data([
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24)
+        ])
+    }
+
+    private static func littleEndianBytes(_ value: UInt64) -> [UInt8] {
+        [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+            UInt8(truncatingIfNeeded: value >> 32),
+            UInt8(truncatingIfNeeded: value >> 40),
+            UInt8(truncatingIfNeeded: value >> 48),
+            UInt8(truncatingIfNeeded: value >> 56)
+        ]
     }
 }

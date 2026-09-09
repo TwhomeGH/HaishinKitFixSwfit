@@ -9,6 +9,9 @@
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
 `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPAuthenticator.swift`、
+`RTMPHaishinKit/Sources/Util/MD5.swift`、
+`RTMPHaishinKit/Tests/RTMP/RTMPAuthenticatorTests.swift`、
 `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、
 `.github/workflows/swift-tests.yml`
 
@@ -50,6 +53,12 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   避免 package scheme 以 iOS 15 deployment target 編譯失敗。
 - 更新 `RTMPChunkBufferTests` 以符合 `putMessage` 現行回傳完整 `Data` 的 API，
   不再使用舊 iterator `.next()` 測試寫法。
+- 修正 RTMP/FME auth 使用的 MD5 實作：padding、block word 解析與 digest 輸出
+  皆改為 MD5/RFC 1321 要求的 little-endian，恢復標準測試向量。
+- 新增 deterministic RTMP auth command 測試，覆蓋 San Jose/FME `salt`、
+  `opaque` / server `challenge` response，以及 Adobe auth command 生成。
+- `RTMPChunkBufferTests.writeChunkSize` 改驗 RTMP chunk header、message length 與
+  128-byte chunk boundary，避免用超長硬編碼 byte array 造成難讀且易誤判的失敗。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 
