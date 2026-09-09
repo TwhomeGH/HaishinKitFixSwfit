@@ -24,8 +24,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   時鐘長期分裂。
 - audio 落後 video 的 resync 判斷改用 audio/video wire playhead 比較，不再拿
   raw `when.seconds` 跟已補償的 video timestamp 混算。
-- 新增 GitHub Actions workflow，逐一執行 RTMPHaishinKit 相關 Swift test suites，
-  並用有顏色的 info/error log、Actions annotation、summary 與 artifact 保存結果。
+- 新增 GitHub Actions workflow，執行完整 RTMPHaishinKit iOS test suite，並用有顏色的
+  info/error log、集中式 Actions annotation、summary 與 artifact 保存結果。
 - workflow runner 使用 `macos-26`，並改用 iOS Simulator 的 `xcodebuild`
   `build-for-testing` / `test` 執行 RTMPHaishinKit tests，避免 `swift test`
   跑成 macOS host tests 而誤撞 iOS-only API。
@@ -35,6 +35,8 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   runtime guard，避免舊 SDK 因未暴露 C symbol 而在編譯期失敗。
 - `AudioMixerByMultiTrack` 的 AEC route observation 加上 iOS/tvOS/Catalyst 平台
   guard；macOS 沒有 `AVAudioSession` route API，改為保守啟用 AEC 且不監聽路由。
+- 補上 `any NSObjectProtocol` / `any Decoder` / `any Encoder` / `any Error`，
+  清理 Swift 6 existential warning。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

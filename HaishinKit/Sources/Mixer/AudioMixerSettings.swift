@@ -138,7 +138,7 @@ private enum AudioMixerSettingsCodingKeys: String, CodingKey {
 extension AudioMixerSettings {
     // 自訂 Codable：新欄位以 decodeIfPresent 提供預設值，
     // 舊版存檔（缺 AEC 欄位）仍可解碼。
-    public nonisolated init(from decoder: Decoder) throws {
+    public nonisolated init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: AudioMixerSettingsCodingKeys.self)
         sampleRate = try container.decodeIfPresent(Float64.self, forKey: .sampleRate) ?? 0
         channels = try container.decodeIfPresent(UInt32.self, forKey: .channels) ?? 0
@@ -150,7 +150,7 @@ extension AudioMixerSettings {
         echoCancellationReferenceTrack = try container.decodeIfPresent(UInt8.self, forKey: .echoCancellationReferenceTrack) ?? UInt8.max
     }
 
-    public nonisolated func encode(to encoder: Encoder) throws {
+    public nonisolated func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: AudioMixerSettingsCodingKeys.self)
         try container.encode(sampleRate, forKey: .sampleRate)
         try container.encode(channels, forKey: .channels)

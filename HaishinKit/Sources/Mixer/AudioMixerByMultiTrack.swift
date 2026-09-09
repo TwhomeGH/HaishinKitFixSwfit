@@ -111,7 +111,7 @@ final class AudioMixerByMultiTrack: AudioMixer {
     // 路由 → 聲音在耳內、mic 收不到 → 自動停用 AEC（省 CPU 且零 artifacts）。
     // 只在 serial queue 上讀寫；初始保守預設 true（有回音）。
     private var isEchoCancellationActive = true
-    private var routeChangeObserver: NSObjectProtocol?
+    private var routeChangeObserver: (any NSObjectProtocol)?
 
     private let inputRenderCallback: AURenderCallback = { (inRefCon: UnsafeMutableRawPointer, _: UnsafeMutablePointer<AudioUnitRenderActionFlags>, _: UnsafePointer<AudioTimeStamp>, inBusNumber: UInt32, inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?) in
         let audioMixer = Unmanaged<AudioMixerByMultiTrack>.fromOpaque(inRefCon).takeUnretainedValue()

@@ -51,7 +51,7 @@ enum VTSessionMode {
             } else {
                 profilesToTry = [videoCodec.settings.profileLevel]
             }
-            var lastError: Error?
+            var lastError: (any Error)?
             for profile in profilesToTry {
                 do {
                     return try makeCompressionSession(videoCodec, profileLevel: profile)

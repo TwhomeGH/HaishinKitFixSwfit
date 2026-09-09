@@ -100,6 +100,9 @@ jobs:
             printf '\033[31m[error]\033[0m %s\n' "$1"
             echo "::error title=Swift Tests::$1"
           }
+          logger_error_line() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+          }
           extract_errors() {
             grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find" "$1" | head -n 80 || true
           }
@@ -110,25 +113,11 @@ jobs:
             device_name="iPhone 17"
           fi
           destination="platform=iOS Simulator,name=${device_name},OS=latest"
-          suites=(
-            "MD5Tests"
-            "RTMPVideoFourCCTests"
-            "HEVCDecoderConfigurationRecordTests"
-            "AVCDecoderConfigurationRecordTests"
-            "RTMPTimestampTests"
-            "RTMPURLTests"
-            "RTMPStatusTests"
-            "RTMPChunkBufferTests"
-            "RTMPConnectionTests"
-            "FoundationExtensionTest"
-            "AMFFoundationTests"
-            "AMF0SerializerTests"
-          )
           status=0
-          failed_suites=()
           : > .build/test-results/rtmp-tests.log
           : > .build/test-results/summary.md
           : > .build/test-results/failures.md
+          rm -rf .build/test-results/RTMPHaishinKitTests.xcresult
           logger_info "Using iOS Simulator destination: ${destination}"
           logger_info "Building ${scheme} test bundle for iOS Simulator"
           xcodebuild build-for-testing \
@@ -148,40 +137,28 @@ jobs:
             echo "${build_status}" > .build/test-results/exit-code
             exit 0
           fi
-          for suite in "${suites[@]}"; do
-            log=".build/test-results/${suite}.log"
-            echo "::group::${suite}"
-            logger_info "Running ${suite}"
-            echo "## ${suite}" | tee -a .build/test-results/rtmp-tests.log
-            xcodebuild test \
-              -scheme "${scheme}" \
-              -destination "${destination}" \
-              -only-testing:"RTMPHaishinKitTests/${suite}" \
-              2>&1 | tee "${log}"
-            suite_status=${PIPESTATUS[0]}
-            cat "${log}" >> .build/test-results/rtmp-tests.log
-            if [ "${suite_status}" -eq 0 ]; then
-              logger_info "${suite} passed"
-              printf '\033[32m[pass]\033[0m %s\n' "${suite}"
-              echo "- PASS: \`${suite}\`" >> .build/test-results/summary.md
-            else
-              logger_error "${suite} failed with exit code ${suite_status}"
-              echo "- FAIL: \`${suite}\` exit code \`${suite_status}\`" >> .build/test-results/summary.md
-              failed_suites+=("${suite}")
-              {
-                echo
-                echo "#### ${suite}"
-                extract_errors "${log}"
-                grep -n -E "failed|Failure|Issue recorded" "${log}" | head -n 80 || true
-              } >> .build/test-results/failures.md
-              status="${suite_status}"
-            fi
-            echo "::endgroup::"
-          done
-          if [ "${#failed_suites[@]}" -gt 0 ]; then
-            printf '%s\n' "${failed_suites[@]}" > .build/test-results/failed-suites.txt
+          logger_info "Running full RTMPHaishinKit iOS test suite"
+          xcodebuild test-without-building \
+            -scheme "${scheme}" \
+            -destination "${destination}" \
+            -resultBundlePath .build/test-results/RTMPHaishinKitTests.xcresult \
+            2>&1 | tee .build/test-results/ios-tests.log
+          status=${PIPESTATUS[0]}
+          cat .build/test-results/ios-tests.log >> .build/test-results/rtmp-tests.log
+          if [ "${status}" -eq 0 ]; then
+            logger_info "RTMPHaishinKit iOS tests passed"
+            printf '\033[32m[pass]\033[0m RTMPHaishinKit iOS tests\n'
+            echo "- PASS: full RTMPHaishinKit iOS test suite" >> .build/test-results/summary.md
           else
-            : > .build/test-results/failed-suites.txt
+            logger_error "RTMPHaishinKit iOS tests failed with exit code ${status}"
+            logger_error_line "Failed tests and compiler diagnostics are summarized in the next step"
+            {
+              echo "- FAIL: full RTMPHaishinKit iOS test suite, exit code \`${status}\`"
+              echo
+              echo "#### Diagnostics"
+              extract_errors .build/test-results/ios-tests.log
+              grep -n -E "Test Case '-\\[.*\\]' failed|failed:|Failure|Issue recorded|Test Suite .* failed|Failing tests:" .build/test-results/ios-tests.log | head -n 120 || true
+            } >> .build/test-results/failures.md
           fi
           echo "${status}" > .build/test-results/exit-code
 
@@ -202,11 +179,6 @@ jobs:
             logger_info "All RTMPHaishinKit test suites passed"
           else
             logger_error "RTMPHaishinKit tests failed; see failed suite summary below"
-            if [ -s .build/test-results/failed-suites.txt ]; then
-              while IFS= read -r suite; do
-                logger_error "Failed suite: ${suite}"
-              done < .build/test-results/failed-suites.txt
-            fi
           fi
           {
             echo "### RTMPHaishinKit iOS test suites"
