@@ -102,6 +102,7 @@ try await session.stream.publish("streamKey")
 | [Media Mixer](MEDIA_MIXER.md) | 影音混合與特效 |
 | [多軌音訊對齊](AUDIO_MULTITRACK_ALIGNMENT.md) | ReplayKit 多軌混音跨軌對齊 + NLMS 物理回音消除 |
 | [RTMP 恢復生命週期](RTMP_RECOVERY_LIFECYCLE.md) | ReplayKit pause/resume、編碼重啟 API、RTMP publish pipeline recovery |
+| [多平台邊界設計](PLATFORM_BOUNDARIES.md) | protocol/facade 分離 iOS、macOS、visionOS 等平台專屬 API 的規範 |
 | [Session 管理](SESSION_MANAGEMENT.md) | StreamSession 生命週期 |
 | [編解碼器設定](CODEC_CONFIGURATION.md) | 影音編碼設定 |
 | [網路層](NETWORK_LAYER.md) | 網路傳輸與監控 |

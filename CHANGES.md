@@ -13,6 +13,12 @@
 `RTMPHaishinKit/Sources/Util/MD5.swift`、
 `RTMPHaishinKit/Tests/RTMP/RTMPAuthenticatorTests.swift`、
 `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、
+`HaishinKit/Sources/Mixer/AudioEchoRouteObserving.swift`、
+`HaishinKit/Sources/Mixer/PlatformAudioEchoRouteObserver_iOS.swift`、
+`HaishinKit/Sources/Mixer/PlatformAudioEchoRouteObserver_Default.swift`、
+`HaishinKit/Tests/Mixer/AudioMixerByMultiTrackTests.swift`、
+`Docs/PLATFORM_BOUNDARIES.md`、
+`Docs/README.md`、
 `.github/workflows/swift-tests.yml`
 
 **診斷**：compressed audio wire timestamp 先前為了隔離 AAC source/callback cadence
@@ -62,10 +68,15 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
 - `RTMPConnectionTests` 將連線失敗釋放測試改名為 `releaseWhenConnectFails`，
   並明確記錄 localhost RTMP endpoint 在 unit tests 中應不可用，避免把預期的
   `Connection refused` log 誤讀成 CI 異常。
-- workflow 納入 `HaishinKitTests` iOS Simulator job，讓核心 media mixer、codec、
-  ISO、screen 與 utility 測試和 RTMP transport tests 分開執行與彙總。
+- workflow 納入 `HaishinKitTests` iOS Simulator 與 macOS jobs，讓核心 media mixer、
+  codec、ISO、screen 與 utility 測試和 RTMP transport tests 分開執行與彙總。
 - `AudioDeviceUnitTests` 在沒有 simulator audio capture device 時跳過建立 device，
   避免核心測試因 CI 環境缺少硬體裝置而誤判。
+- 新增多平台邊界設計規範，建議以 protocol/facade 集中 iOS、macOS、visionOS
+  等平台專屬 API，避免核心 media pipeline 散落 platform condition。
+- `AudioMixerByMultiTrack` 的 AEC route detection 改走 `AudioEchoRouteObserving`
+  facade；iOS-family 實作處理 `AVAudioSession` route notification，其他平台使用
+  保守預設，讓 mixer 主流程不再直接包含 route API 的 platform condition。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

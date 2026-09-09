@@ -319,3 +319,125 @@ jobs:
           name: haishinkit-swift-test-logs
           path: .build/haishinkit-test-results
           if-no-files-found: error
+
+  haishinkit-macos-tests:
+    name: HaishinKit macOS tests
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Print toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Run HaishinKit macOS tests
+        id: haishinkit_macos_tests
+        shell: bash
+        run: |
+          set +e
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=HaishinKit macOS Tests::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=HaishinKit macOS Tests::$1"
+          }
+          logger_error_line() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+          }
+          extract_errors() {
+            grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find" "$1" | head -n 80 || true
+          }
+          result_dir=".build/haishinkit-macos-test-results"
+          mkdir -p "${result_dir}"
+          scheme="HaishinKit-Package"
+          test_target="HaishinKitTests"
+          destination="platform=macOS"
+          status=0
+          : > "${result_dir}/haishinkit-macos-tests.log"
+          : > "${result_dir}/summary.md"
+          : > "${result_dir}/failures.md"
+          rm -rf "${result_dir}/HaishinKitMacOSTests.xcresult"
+          logger_info "Using macOS destination: ${destination}"
+          logger_info "Running ${test_target} with ${scheme} on macOS"
+          xcodebuild test \
+            -scheme "${scheme}" \
+            -destination "${destination}" \
+            -only-testing:"${test_target}" \
+            -resultBundlePath "${result_dir}/HaishinKitMacOSTests.xcresult" \
+            2>&1 | tee "${result_dir}/macos-tests.log"
+          status=${PIPESTATUS[0]}
+          cat "${result_dir}/macos-tests.log" >> "${result_dir}/haishinkit-macos-tests.log"
+          if [ "${status}" -eq 0 ]; then
+            logger_info "HaishinKit macOS tests passed"
+            printf '\033[32m[pass]\033[0m HaishinKit macOS tests\n'
+            echo "- PASS: full HaishinKit macOS test suite" >> "${result_dir}/summary.md"
+          else
+            logger_error "HaishinKit macOS tests failed with exit code ${status}"
+            logger_error_line "Failed tests and compiler diagnostics are summarized in the next step"
+            {
+              echo "- FAIL: full HaishinKit macOS test suite, exit code \`${status}\`"
+              echo
+              echo "#### Diagnostics"
+              extract_errors "${result_dir}/macos-tests.log"
+              grep -n -E "Test Case '-\\[.*\\]' failed|failed:|Failure|Issue recorded|Test Suite .* failed|Failing tests:" "${result_dir}/macos-tests.log" | head -n 120 || true
+            } >> "${result_dir}/failures.md"
+          fi
+          echo "${status}" > "${result_dir}/exit-code"
+
+      - name: Summarize HaishinKit macOS failed suites
+        if: always()
+        shell: bash
+        run: |
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=HaishinKit macOS Tests::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=HaishinKit macOS Tests::$1"
+          }
+          result_dir=".build/haishinkit-macos-test-results"
+          status="$(cat "${result_dir}/exit-code" 2>/dev/null || echo 1)"
+          if [ "${status}" -eq 0 ]; then
+            logger_info "All HaishinKit macOS test suites passed"
+          else
+            logger_error "HaishinKit macOS tests failed; see failed suite summary below"
+          fi
+          {
+            echo "### HaishinKit macOS test suites"
+            echo
+            if [ -s "${result_dir}/summary.md" ]; then
+              cat "${result_dir}/summary.md"
+            fi
+            if [ -s "${result_dir}/failures.md" ]; then
+              echo
+              echo "### Failure summary"
+              cat "${result_dir}/failures.md"
+            fi
+            echo
+            echo "- Final exit code: \`${status}\`"
+            echo
+            echo "<details><summary>Last 120 log lines</summary>"
+            echo
+            echo '```text'
+            tail -n 120 "${result_dir}/haishinkit-macos-tests.log"
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+
+      - name: Upload HaishinKit macOS test log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: haishinkit-macos-swift-test-logs
+          path: .build/haishinkit-macos-test-results
+          if-no-files-found: error

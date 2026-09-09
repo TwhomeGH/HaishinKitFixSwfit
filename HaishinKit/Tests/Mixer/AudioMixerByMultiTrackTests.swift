@@ -5,6 +5,31 @@ import Testing
 @testable import HaishinKit
 
 @Suite struct AudioMixerByMultiTrackTests {
+    final class AudioEchoRouteObserverSpy: AudioEchoRouteObserving {
+        var hasEchoPath: Bool
+        private(set) var isStarted = false
+        private(set) var isStopped = false
+        private var handler: ((Bool) -> Void)?
+
+        init(hasEchoPath: Bool = true) {
+            self.hasEchoPath = hasEchoPath
+        }
+
+        func start(_ handler: @escaping (Bool) -> Void) {
+            isStarted = true
+            self.handler = handler
+        }
+
+        func stop() {
+            isStopped = true
+        }
+
+        func update(hasEchoPath: Bool) {
+            self.hasEchoPath = hasEchoPath
+            handler?(hasEchoPath)
+        }
+    }
+
     final class Result: AudioMixerDelegate {
         var outputs: [AVAudioPCMBuffer] = []
         var error: AudioMixerError?
@@ -80,5 +105,19 @@ import Testing
         let inputFormats = mixer.inputFormats
         #expect(inputFormats[0]?.sampleRate == 48000)
         #expect(inputFormats[1]?.sampleRate == 44100)
+    }
+
+    @Test func startsRouteObserverWhenAudioNodesAreReady() async throws {
+        let observer = AudioEchoRouteObserverSpy()
+        let mixer = AudioMixerByMultiTrack(routeObserver: observer)
+        mixer.settings = .init(
+            sampleRate: 44100, channels: 1
+        )
+        mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(44100, numSamples: 1024, channels: 1)!)
+
+        for _ in 0..<50 where !observer.isStarted {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(observer.isStarted)
     }
 }
