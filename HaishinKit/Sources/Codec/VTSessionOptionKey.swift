@@ -58,14 +58,12 @@ struct VTSessionOptionKey: Codable, RawRepresentable {
     // but the C symbol is only formally available from iOS 26. Use raw string to bypass availability check.
     static let variableBitRate = VTSessionOptionKey(rawValue: "VariableBitRate")
 
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
-    static let vbvMaxBitRate = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVMaxBitRate as String)
-
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
-    static let vbvBufferDuration = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVBufferDuration as String)
-
-    @available(iOS 26.0, tvOS 26.0, macOS 26.0, *)
-    static let vbvInitialDelayPercentage = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_VBVInitialDelayPercentage as String)
+    // VBV keys are documented for iOS/tvOS/macOS 26, but older SDKs do not
+    // expose the C symbols. Keep the runtime availability checks at use sites
+    // and store the raw keys here so SwiftPM can still compile on older SDKs.
+    static let vbvMaxBitRate = VTSessionOptionKey(rawValue: "VBVMaxBitRate")
+    static let vbvBufferDuration = VTSessionOptionKey(rawValue: "VBVBufferDuration")
+    static let vbvInitialDelayPercentage = VTSessionOptionKey(rawValue: "VBVInitialDelayPercentage")
 
     @available(iOS 17.0, tvOS 17.0, macOS 14.0, *)
     static let estimatedAverageBytesPerFrame = VTSessionOptionKey(rawValue: kVTCompressionPropertyKey_EstimatedAverageBytesPerFrame as String)

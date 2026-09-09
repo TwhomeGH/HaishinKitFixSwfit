@@ -25,6 +25,11 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   raw `when.seconds` 跟已補償的 video timestamp 混算。
 - 新增 GitHub Actions workflow，逐一執行 RTMPHaishinKit 相關 Swift test suites，
   並用有顏色的 info/error log、Actions annotation、summary 與 artifact 保存結果。
+- workflow runner 使用 `macos-26`，確保 CI 具備 Xcode 26 / macOS 26 SDK。
+- artifact upload 使用 `actions/upload-artifact@v6`，避免 Node.js 20 deprecation
+  warning。
+- VBV key 改用 raw string 保存，保留使用端的 `#available(iOS 26.0, ...)`
+  runtime guard，避免舊 SDK 因未暴露 C symbol 而在編譯期失敗。
 
 **效果**：compressed audio timestamp 不回退到 source-time cadence，同時能低頻跟隨
 真實來源 PTS drift；A/V resync 減少因時間軸混用造成的誤觸發。

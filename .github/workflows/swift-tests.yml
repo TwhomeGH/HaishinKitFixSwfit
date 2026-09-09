@@ -21,7 +21,7 @@ concurrency:
 jobs:
   rtmp-tests:
     name: RTMPHaishinKit tests
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
@@ -63,8 +63,25 @@ jobs:
             "AMF0SerializerTests"
           )
           status=0
+          failed_suites=()
           : > .build/test-results/rtmp-tests.log
           : > .build/test-results/summary.md
+          : > .build/test-results/failures.md
+          logger_info "Building RTMPHaishinKit test bundle"
+          swift build --build-tests --target RTMPHaishinKitTests 2>&1 | tee .build/test-results/build.log
+          build_status=${PIPESTATUS[0]}
+          cat .build/test-results/build.log >> .build/test-results/rtmp-tests.log
+          if [ "${build_status}" -ne 0 ]; then
+            logger_error "Build failed before tests could run"
+            {
+              echo "- FAIL: build failed before test execution, exit code \`${build_status}\`"
+              echo
+              echo "#### Build errors"
+              grep -n -E "error:|fatal error:|No such module|cannot find" .build/test-results/build.log | head -n 80 || true
+            } >> .build/test-results/failures.md
+            echo "${build_status}" > .build/test-results/exit-code
+            exit 0
+          fi
           for suite in "${suites[@]}"; do
             log=".build/test-results/${suite}.log"
             echo "::group::${suite}"
@@ -80,14 +97,57 @@ jobs:
             else
               logger_error "${suite} failed with exit code ${suite_status}"
               echo "- FAIL: \`${suite}\` exit code \`${suite_status}\`" >> .build/test-results/summary.md
+              failed_suites+=("${suite}")
+              {
+                echo
+                echo "#### ${suite}"
+                grep -n -E "error:|fatal error:|failed|Failure|Issue recorded" "${log}" | head -n 80 || true
+              } >> .build/test-results/failures.md
               status="${suite_status}"
             fi
             echo "::endgroup::"
           done
+          if [ "${#failed_suites[@]}" -gt 0 ]; then
+            printf '%s\n' "${failed_suites[@]}" > .build/test-results/failed-suites.txt
+          else
+            : > .build/test-results/failed-suites.txt
+          fi
+          echo "${status}" > .build/test-results/exit-code
+
+      - name: Summarize failed suites
+        if: always()
+        shell: bash
+        run: |
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=Swift Tests::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=Swift Tests::$1"
+          }
+          status="$(cat .build/test-results/exit-code 2>/dev/null || echo 1)"
+          if [ "${status}" -eq 0 ]; then
+            logger_info "All RTMPHaishinKit test suites passed"
+          else
+            logger_error "RTMPHaishinKit tests failed; see failed suite summary below"
+            if [ -s .build/test-results/failed-suites.txt ]; then
+              while IFS= read -r suite; do
+                logger_error "Failed suite: ${suite}"
+              done < .build/test-results/failed-suites.txt
+            fi
+          fi
           {
             echo "### RTMPHaishinKit test suites"
             echo
-            cat .build/test-results/summary.md
+            if [ -s .build/test-results/summary.md ]; then
+              cat .build/test-results/summary.md
+            fi
+            if [ -s .build/test-results/failures.md ]; then
+              echo
+              echo "### Failure summary"
+              cat .build/test-results/failures.md
+            fi
             echo
             echo "- Final exit code: \`${status}\`"
             echo
@@ -103,7 +163,7 @@ jobs:
 
       - name: Upload test log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rtmp-swift-test-logs
           path: .build/test-results
