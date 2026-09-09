@@ -9,6 +9,7 @@
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
 `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`、
+`HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、
 `.github/workflows/swift-tests.yml`
 
 **診斷**：compressed audio wire timestamp 先前為了隔離 AAC source/callback cadence
@@ -25,11 +26,17 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
   raw `when.seconds` 跟已補償的 video timestamp 混算。
 - 新增 GitHub Actions workflow，逐一執行 RTMPHaishinKit 相關 Swift test suites，
   並用有顏色的 info/error log、Actions annotation、summary 與 artifact 保存結果。
-- workflow runner 使用 `macos-26`，確保 CI 具備 Xcode 26 / macOS 26 SDK。
+- workflow runner 使用 `macos-26`，並改用 iOS Simulator 的 `xcodebuild`
+  `build-for-testing` / `test` 執行 RTMPHaishinKit tests，避免 `swift test`
+  跑成 macOS host tests 而誤撞 iOS-only API。
 - artifact upload 使用 `actions/upload-artifact@v6`，避免 Node.js 20 deprecation
   warning。
 - VBV key 改用 raw string 保存，保留使用端的 `#available(iOS 26.0, ...)`
   runtime guard，避免舊 SDK 因未暴露 C symbol 而在編譯期失敗。
+- `AudioMixerByMultiTrack` 的 AEC route observation 加上 iOS/tvOS/Catalyst 平台
+  guard；macOS 沒有 `AVAudioSession` route API，改為保守啟用 AEC 且不監聽路由。
+- workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
+  編譯退化。
 
 **效果**：compressed audio timestamp 不回退到 source-time cadence，同時能低頻跟隨
 真實來源 PTS drift；A/V resync 減少因時間軸混用造成的誤觸發。

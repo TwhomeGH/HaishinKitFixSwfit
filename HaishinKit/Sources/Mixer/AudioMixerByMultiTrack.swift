@@ -211,6 +211,7 @@ final class AudioMixerByMultiTrack: AudioMixer {
     /// 註冊音訊路由變化觀察：耳機拔插/藍牙連線等切換會改變「物理回音是否存在」，
     /// 動態啟停 AEC。串流中途拔插耳機也能即時反應。
     private func registerRouteObservation() {
+        #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
         if routeChangeObserver != nil {
             return  // 已註冊，避免重複
         }
@@ -233,12 +234,16 @@ final class AudioMixerByMultiTrack: AudioMixer {
                 }
             }
         }
+        #else
+        isEchoCancellationActive = true
+        #endif
     }
 
     /// 判斷目前音訊輸出路由是否「可能有物理回音」（App 聲音外放到 mic 可收音處）。
     /// 耳機/聽筒/藍牙耳機 → false（聲音在耳內，mic 收不到）；喇叭/外部輸出 →
     /// true。路由資訊缺失時保守預設 true（保留 AEC）。
     private static func routeHasEchoPath() -> Bool {
+        #if os(iOS) || os(tvOS) || targetEnvironment(macCatalyst)
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
         guard !outputs.isEmpty else {
             return true
@@ -252,6 +257,9 @@ final class AudioMixerByMultiTrack: AudioMixer {
             }
         }
         return true
+        #else
+        return true
+        #endif
     }
 
     private func render(_ track: UInt8, inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?) -> OSStatus {

@@ -19,8 +19,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  macos-build:
+    name: RTMPHaishinKit macOS compile
+    runs-on: macos-26
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build RTMPHaishinKit for macOS
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .build/test-results
+          logger_info() {
+            printf '\033[36m[info]\033[0m %s\n' "$1"
+            echo "::notice title=Swift macOS Build::$1"
+          }
+          logger_error() {
+            printf '\033[31m[error]\033[0m %s\n' "$1"
+            echo "::error title=Swift macOS Build::$1"
+          }
+          logger_info "Building RTMPHaishinKit target for macOS"
+          swift build --target RTMPHaishinKit 2>&1 | tee .build/test-results/macos-build.log
+          status=${PIPESTATUS[0]}
+          if [ "${status}" -eq 0 ]; then
+            logger_info "RTMPHaishinKit macOS compile passed"
+          else
+            logger_error "RTMPHaishinKit macOS compile failed"
+          fi
+          {
+            echo "### RTMPHaishinKit macOS compile"
+            echo
+            echo "- Exit code: \`${status}\`"
+            echo
+            echo "<details><summary>Last 120 log lines</summary>"
+            echo
+            echo '```text'
+            tail -n 120 .build/test-results/macos-build.log
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+
+      - name: Upload macOS build log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rtmp-macos-build-log
+          path: .build/test-results/macos-build.log
+          if-no-files-found: error
+
   rtmp-tests:
-    name: RTMPHaishinKit tests
+    name: RTMPHaishinKit iOS tests
     runs-on: macos-26
     timeout-minutes: 30
 
@@ -47,7 +100,16 @@ jobs:
             printf '\033[31m[error]\033[0m %s\n' "$1"
             echo "::error title=Swift Tests::$1"
           }
+          extract_errors() {
+            grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find" "$1" | head -n 80 || true
+          }
           mkdir -p .build/test-results
+          scheme="RTMPHaishinKit"
+          device_name="$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone[^()]*\) (.*/\1/p' | head -n 1)"
+          if [ -z "${device_name}" ]; then
+            device_name="iPhone 17"
+          fi
+          destination="platform=iOS Simulator,name=${device_name},OS=latest"
           suites=(
             "MD5Tests"
             "RTMPVideoFourCCTests"
@@ -67,8 +129,12 @@ jobs:
           : > .build/test-results/rtmp-tests.log
           : > .build/test-results/summary.md
           : > .build/test-results/failures.md
-          logger_info "Building RTMPHaishinKit test bundle"
-          swift build --build-tests 2>&1 | tee .build/test-results/build.log
+          logger_info "Using iOS Simulator destination: ${destination}"
+          logger_info "Building ${scheme} test bundle for iOS Simulator"
+          xcodebuild build-for-testing \
+            -scheme "${scheme}" \
+            -destination "generic/platform=iOS Simulator" \
+            2>&1 | tee .build/test-results/build.log
           build_status=${PIPESTATUS[0]}
           cat .build/test-results/build.log >> .build/test-results/rtmp-tests.log
           if [ "${build_status}" -ne 0 ]; then
@@ -77,7 +143,7 @@ jobs:
               echo "- FAIL: build failed before test execution, exit code \`${build_status}\`"
               echo
               echo "#### Build errors"
-              grep -n -E "error:|fatal error:|No such module|cannot find" .build/test-results/build.log | head -n 80 || true
+              extract_errors .build/test-results/build.log
             } >> .build/test-results/failures.md
             echo "${build_status}" > .build/test-results/exit-code
             exit 0
@@ -87,7 +153,11 @@ jobs:
             echo "::group::${suite}"
             logger_info "Running ${suite}"
             echo "## ${suite}" | tee -a .build/test-results/rtmp-tests.log
-            swift test --filter "${suite}" 2>&1 | tee "${log}"
+            xcodebuild test \
+              -scheme "${scheme}" \
+              -destination "${destination}" \
+              -only-testing:"RTMPHaishinKitTests/${suite}" \
+              2>&1 | tee "${log}"
             suite_status=${PIPESTATUS[0]}
             cat "${log}" >> .build/test-results/rtmp-tests.log
             if [ "${suite_status}" -eq 0 ]; then
@@ -101,7 +171,8 @@ jobs:
               {
                 echo
                 echo "#### ${suite}"
-                grep -n -E "error:|fatal error:|failed|Failure|Issue recorded" "${log}" | head -n 80 || true
+                extract_errors "${log}"
+                grep -n -E "failed|Failure|Issue recorded" "${log}" | head -n 80 || true
               } >> .build/test-results/failures.md
               status="${suite_status}"
             fi
@@ -138,7 +209,7 @@ jobs:
             fi
           fi
           {
-            echo "### RTMPHaishinKit test suites"
+            echo "### RTMPHaishinKit iOS test suites"
             echo
             if [ -s .build/test-results/summary.md ]; then
               cat .build/test-results/summary.md
