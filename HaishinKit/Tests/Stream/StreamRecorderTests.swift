@@ -38,12 +38,18 @@ import Testing
     @Test func startRunning_fileAlreadyExists() async {
         let recorder = StreamRecorder()
         let filePath = await recorder.moviesDirectory.appendingPathComponent("duplicate-file.mp4")
-        FileManager.default.createFile(atPath: filePath.path, contents: nil)
         do {
-            try await recorder.startRecording(filePath)
-            fatalError()
+            try FileManager.default.createDirectory(
+                at: filePath.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            _ = FileManager.default.createFile(atPath: filePath.path, contents: nil)
+            await #expect(throws: StreamRecorder.Error.self) {
+                try await recorder.startRecording(filePath)
+            }
         } catch {
-            try? FileManager.default.removeItem(atPath: filePath.path)
+            Issue.record(error)
         }
+        try? FileManager.default.removeItem(at: filePath)
     }
 }

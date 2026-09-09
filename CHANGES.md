@@ -17,6 +17,8 @@
 `HaishinKit/Sources/Mixer/PlatformAudioEchoRouteObserver_iOS.swift`、
 `HaishinKit/Sources/Mixer/PlatformAudioEchoRouteObserver_Default.swift`、
 `HaishinKit/Tests/Mixer/AudioMixerByMultiTrackTests.swift`、
+`HaishinKit/Tests/Mixer/MediaMixerTests.swift`、
+`HaishinKit/Tests/Stream/StreamRecorderTests.swift`、
 `Docs/PLATFORM_BOUNDARIES.md`、
 `Docs/README.md`、
 `.github/workflows/swift-tests.yml`
@@ -77,6 +79,10 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
 - `AudioMixerByMultiTrack` 的 AEC route detection 改走 `AudioEchoRouteObserving`
   facade；iOS-family 實作處理 `AVAudioSession` route notification，其他平台使用
   保守預設，讓 mixer 主流程不再直接包含 route API 的 platform condition。
+- 修正主包測試的 CI 假設：`AudioMixerByMultiTrackTests` 等待 serial queue 完成
+  後再驗 `outputFormat` / `inputFormats`，`MediaMixerTests` 在沒有 camera device 時
+  跳過 device attach，`StreamRecorderTests` 改用明確 fixture 與 throws expectation
+  驗證檔案已存在情境，避免 fatal error。
 - workflow 另加 macOS compile smoke job，避免 iOS test workflow 掩蓋 macOS target
   編譯退化。
 

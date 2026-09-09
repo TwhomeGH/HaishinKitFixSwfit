@@ -11,7 +11,10 @@ struct MediaMixerTests {
         await #expect(throws: (MediaMixer.Error).self) {
             try await mixer.configuration(video: 0) { _ in }
         }
-        try await mixer.attachVideo(AVCaptureDevice.default(for: .video), track: 0) { unit in
+        guard let videoDevice = AVCaptureDevice.default(for: .video) else {
+            return
+        }
+        try await mixer.attachVideo(videoDevice, track: 0) { unit in
             #expect(throws: (any Error).self) {
                 try unit.setFrameRate(60)
             }

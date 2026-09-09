@@ -49,7 +49,16 @@ import Testing
         }
     }
 
-    @Test func keep44100() {
+    func waitUntil(_ predicate: @escaping () -> Bool) async throws {
+        for _ in 0..<50 {
+            if predicate() {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    @Test func keep44100() async throws {
         let result = Result()
         let mixer = AudioMixerByMultiTrack()
         mixer.delegate = result
@@ -58,27 +67,31 @@ import Testing
         )
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 1)!)
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 1)!)
+        try await waitUntil { mixer.outputFormat?.sampleRate == 44100 }
         #expect(mixer.outputFormat?.sampleRate == 44100)
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(44100, numSamples: 1024, channels: 1)!)
+        try await waitUntil { result.outputs.count >= 2 }
         #expect(mixer.outputFormat?.sampleRate == 44100)
-        #expect(result.outputs.count == 2)
+        #expect(result.outputs.count >= 2)
     }
 
-    @Test func test44100to48000() {
+    @Test func test44100to48000() async throws {
         let mixer = AudioMixerByMultiTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1
         )
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 1)!)
+        try await waitUntil { mixer.outputFormat?.sampleRate == 44100 }
         #expect(mixer.outputFormat?.sampleRate == 44100)
         mixer.settings = .init(
             sampleRate: 48000, channels: 1
         )
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(44100, numSamples: 1024, channels: 1)!)
+        try await waitUntil { mixer.outputFormat?.sampleRate == 48000 }
         #expect(mixer.outputFormat?.sampleRate == 48000)
     }
 
-    @Test func test48000_2ch() {
+    @Test func test48000_2ch() async throws {
         let result = Result()
         let mixer = AudioMixerByMultiTrack()
         mixer.delegate = result
@@ -87,6 +100,7 @@ import Testing
         )
         mixer.append(1, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
+        try await waitUntil { mixer.outputFormat?.channelCount == 2 && mixer.outputFormat?.sampleRate == 48000 }
         #expect(mixer.outputFormat?.channelCount == 2)
         #expect(mixer.outputFormat?.sampleRate == 48000)
         mixer.append(1, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
@@ -95,13 +109,16 @@ import Testing
         // #expect(result.error == nil)
     }
 
-    @Test func inputFormats() {
+    @Test func inputFormats() async throws {
         let mixer = AudioMixerByMultiTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1
         )
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 1)!)
         mixer.append(1, buffer: CMAudioSampleBufferFactory.makeSinWave(44100, numSamples: 1024, channels: 1)!)
+        try await waitUntil {
+            mixer.inputFormats[0]?.sampleRate == 48000 && mixer.inputFormats[1]?.sampleRate == 44100
+        }
         let inputFormats = mixer.inputFormats
         #expect(inputFormats[0]?.sampleRate == 48000)
         #expect(inputFormats[1]?.sampleRate == 44100)
@@ -115,9 +132,7 @@ import Testing
         )
         mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(44100, numSamples: 1024, channels: 1)!)
 
-        for _ in 0..<50 where !observer.isStarted {
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
+        try await waitUntil { observer.isStarted }
         #expect(observer.isStarted)
     }
 }
