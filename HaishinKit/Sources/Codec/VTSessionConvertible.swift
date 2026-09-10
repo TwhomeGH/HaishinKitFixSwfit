@@ -38,7 +38,10 @@ extension VTSessionConvertible where Self: VTSession {
 
     func copyProperty(_ key: CFString) -> Any? {
         var value: CFTypeRef?
-        let status = VTSessionCopyProperty(self, key: key, allocator: kCFAllocatorDefault, valueOut: &value)
+        let status = withUnsafeMutablePointer(to: &value) { ptr in
+            VTSessionCopyProperty(self, key: key, allocator: kCFAllocatorDefault,
+                                  valueOut: UnsafeMutableRawPointer(ptr))
+        }
         guard status == noErr else { return nil }
         return value
     }

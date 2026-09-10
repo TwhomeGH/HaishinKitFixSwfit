@@ -346,7 +346,6 @@ public struct VideoCodecSettings: Codable, Sendable {
 
     // https://developer.apple.com/documentation/videotoolbox/encoding_video_for_live_streaming
     func makeOptions(measuredFrameRate: Double? = nil) -> Set<VTSessionOption> {
-        let isBaseline = profileLevel.contains("Baseline")
         var options = Set<VTSessionOption>([
             .init(key: .realTime, value: kCFBooleanTrue),
             .init(key: .profileLevel, value: profileLevel as NSObject),

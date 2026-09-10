@@ -2,7 +2,7 @@ import AVFoundation
 
 /// The AudioCodec translate audio data to another format.
 /// - seealso: https://developer.apple.com/library/ios/technotes/tn2236/_index.html
-final class AudioCodec {
+final class AudioCodec: @unchecked Sendable {
     static let defaultFrameCapacity: UInt32 = 1024
     static let defaultInputBuffersCursor = 0
 
