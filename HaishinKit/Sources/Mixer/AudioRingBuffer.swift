@@ -176,8 +176,9 @@ final class AudioRingBuffer: @unchecked Sendable {
         // Deadband：門檻內視為量測抖動，不修正，避免每幀微丟/微補造成細碎斷音。
         if behind > Self.alignDeadband {
             // behind > 0：播放頭在資料起點之後 → 本軌過期 → 丟棄 stale。
-            // 先消耗 pending silence（skip），再消耗資料。
-            var toDrop = behind
+            // 先消耗 pending silence（skip），再消耗資料。上限鎖在目前可丟的
+            // counts，避免 behind 超過實際資料量時把 storedSamples 扣成負值。
+            var toDrop = min(behind, Int64(calculateCounts()))
             let skipToDrop = min(Int64(skip), toDrop)
             skip -= Int(skipToDrop)
             toDrop -= skipToDrop
