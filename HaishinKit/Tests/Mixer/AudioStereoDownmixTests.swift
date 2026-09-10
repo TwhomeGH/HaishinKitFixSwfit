@@ -31,8 +31,8 @@ import Testing
 
         let input = makeRightOnlyBuffer(inFormat, frames: 1024, rightValue: 16384)
         let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: 1024)!
-        let status = try converter.convert(to: output, from: input)
-        #expect(status == .haveData)
+        // convert(to:from:) 是 throwing、回傳 Void；轉換失敗會 throw 讓測試失敗。
+        try converter.convert(to: output, from: input)
 
         let rms = AudioMixerByMultiTrack.channelRMS(output)
         // 右聲道 0.5：只取左聲道 → 0；L+R 平均 → 0.25。
