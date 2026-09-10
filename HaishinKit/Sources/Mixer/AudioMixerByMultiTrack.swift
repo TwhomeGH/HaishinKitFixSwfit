@@ -2,7 +2,7 @@ import AVFoundation
 import CoreAudio
 import Foundation
 
-final class AudioMixerByMultiTrack: AudioMixer {
+final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     private static let defaultSampleTime: AVAudioFramePosition = 0
 
     // 專用 serial queue：所有音訊處理（append→convert→mix→AudioUnitRender）
@@ -364,7 +364,7 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
     /// 推進混音時間軸到指定幀的位置，以區塊渲染（各軌由 align 對齊到正確位置）。
     /// 正常情形一幀一個區塊；長時間靜默後恢復會一次補齊（多為 silence，可接受）。
     private func advanceMix(to when: AVAudioTime, numberOfFrames: AVAudioFrameCount) {
-        guard let outputNode else {
+        guard outputNode != nil else {
             return
         }
         let position = when.sampleTime

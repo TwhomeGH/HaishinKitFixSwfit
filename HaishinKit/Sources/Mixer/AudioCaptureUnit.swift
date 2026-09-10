@@ -137,12 +137,12 @@ final class AudioCaptureUnit: CaptureUnit {
 
         let savedSettings = audioMixer.settings
         if isMultiTrackAudioMixingEnabled {
-            var mixer = AudioMixerByMultiTrack()
+            let mixer = AudioMixerByMultiTrack()
             mixer.delegate = self
             mixer.settings = savedSettings
             audioMixer = mixer
         } else {
-            var mixer = AudioMixerBySingleTrack()
+            let mixer = AudioMixerBySingleTrack()
             mixer.delegate = self
             mixer.settings = savedSettings
             audioMixer = mixer

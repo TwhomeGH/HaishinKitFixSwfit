@@ -60,26 +60,19 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             } else {
                 let inputChannels = Int(audioConverter.inputFormat.channelCount)
                 let outputChannels = Int(audioConverter.outputFormat.channelCount)
-                switch outputChannels {
-                case 1:
-                    if inputChannels == 1 {
-                        audioConverter.channelMap = [0]
-                    } else {
-                        // 下混到 mono：不設 channelMap，讓 downmix 依 channel layout
-                        // 做 L+R 平均，而不是只取左聲道把右聲道丟掉。
-                        audioConverter.channelMap = nil
-                    }
-                case 2:
-                    if inputChannels == 1 {
-                        audioConverter.channelMap = [0, 0]   // mono → stereo：複製到雙聲道
-                    } else if inputChannels == 2 {
-                        audioConverter.channelMap = [0, 1]   // stereo → stereo：直通
-                    } else {
-                        // >2 聲道下混到 stereo：讓 downmix 處理
-                        audioConverter.channelMap = nil
-                    }
+                switch (inputChannels, outputChannels) {
+                case (1, 1):
+                    audioConverter.channelMap = [0]
+                case (1, 2):
+                    audioConverter.channelMap = [0, 0]   // mono → stereo：複製到雙聲道
+                case (2, 2):
+                    audioConverter.channelMap = [0, 1]   // stereo → stereo：直通
                 default:
-                    break
+                    // 下混（input > output）或 >2 聲道：**不設 channelMap**（channelMap
+                    // 非 optional，保留其預設），讓 downmix 依 channel layout 做 L+R
+                    // 平均，而不是只取左聲道丟掉右聲道。（channelMap 是「一對一」映射，
+                    // 無法表達相加，下混只能靠 downmix。）
+                    audioConverter.downmix = true
                 }
             }
             audioConverter.primeMethod = .normal

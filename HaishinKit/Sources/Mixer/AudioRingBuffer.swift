@@ -4,7 +4,7 @@ import CoreAudio
 import CoreMedia
 import Foundation
 
-final class AudioRingBuffer {
+final class AudioRingBuffer: @unchecked Sendable {
     // 容量 24×1024 = 24576 samples ≈ 557ms @44.1k（原 16×1024≈371ms）。
     // 調大吸收更多 producer 節奏抖動，減少 PTS gap 造成的 skip 補 silence
     //（斷續的聽覺來源）。直播延遲本就 ~1s，多 186ms 可忽略。
