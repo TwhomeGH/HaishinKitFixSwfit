@@ -117,6 +117,9 @@ public actor StreamRecorder {
         return settings.count == writer.inputs.count
     }
     private var writer: AVAssetWriter?
+    /// When set, sample buffers are forwarded to this sink instead of a local file
+    /// (see `startRecording(to:)`).
+    private var sink: (any StreamRecorderSink)?
     private var continuation: AsyncStream<Error>.Continuation? {
         didSet {
             oldValue?.finish()
@@ -198,6 +201,39 @@ public actor StreamRecorder {
         isRecording = true
     }
 
+    /// Starts recording by forwarding every encoded sample buffer to `sink`
+    /// instead of writing a local file.
+    ///
+    /// Use this when the local container is not visible to the host app or the
+    /// user — notably a ReplayKit broadcast extension. The host app is expected to
+    /// rebuild the recording from the forwarded sample buffers.
+    /// - Parameter sink: The destination for the encoded sample buffers.
+    /// - Throws: `Error.invalidState` when already recording.
+    public func startRecording(to sink: any StreamRecorderSink) async throws {
+        guard !isRecording else {
+            throw Error.invalidState
+        }
+        videoPresentationTime = .zero
+        audioPresentationTime = .zero
+        self.sink = sink
+        startInputConsumer()
+        isRecording = true
+    }
+
+    /// Stops a sink-based recording started with `startRecording(to:)`.
+    /// - Throws: `Error.invalidState` when not recording or not in sink mode.
+    public func stopRecordingToSink() async throws {
+        guard isRecording, let sink else {
+            throw Error.invalidState
+        }
+        defer {
+            stopInputConsumer()
+            isRecording = false
+            self.sink = nil
+        }
+        await sink.finish()
+    }
+
     /// Stops recording.
     ///
     /// ## Example of saving to the Photos app.
@@ -263,7 +299,11 @@ public actor StreamRecorder {
         inputContinuation = continuation
         inputConsumerTask = Task {
             for await sampleBuffer in stream {
-                append(sampleBuffer)
+                if let sink {
+                    await sink.write(sampleBuffer)
+                } else {
+                    append(sampleBuffer)
+                }
             }
         }
     }
