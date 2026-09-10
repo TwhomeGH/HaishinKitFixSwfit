@@ -613,7 +613,8 @@ extension MediaMixer: AsyncRunner {
         }
         Task {
             for await inputs in videoIO.inputs {
-                let videoMixerSettings = await self.videoMixerSettings
+                // Task 繼承 actor 隔離，這裡是 actor 內同步存取，不需 await。
+                let videoMixerSettings = self.videoMixerSettings
                 if videoMixerSettings.mode == .offscreen {
                     Task { @ScreenActor in
                         let sampleBuffer = inputs.1
