@@ -46,6 +46,9 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     private var ringBuffer: AudioRingBuffer?
     private var inputBuffer: AVAudioPCMBuffer?
     private var outputBuffer: AVAudioPCMBuffer?
+    // 累計診斷計數（AHealth 用）；只在 mixer 專用 queue 上寫入。
+    private(set) var outputFrames = 0
+    private(set) var resampleNoDataCount = 0
     private var audioConverter: AVAudioConverter? {
         didSet {
             guard let audioConverter else {
@@ -55,11 +58,26 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             if let channelMap = settings.validatedChannelMap(audioConverter) {
                 audioConverter.channelMap = channelMap.map { NSNumber(value: $0) }
             } else {
-                switch audioConverter.outputFormat.channelCount {
+                let inputChannels = Int(audioConverter.inputFormat.channelCount)
+                let outputChannels = Int(audioConverter.outputFormat.channelCount)
+                switch outputChannels {
                 case 1:
-                    audioConverter.channelMap = [0]
+                    if inputChannels == 1 {
+                        audioConverter.channelMap = [0]
+                    } else {
+                        // 下混到 mono：不設 channelMap，讓 downmix 依 channel layout
+                        // 做 L+R 平均，而不是只取左聲道把右聲道丟掉。
+                        audioConverter.channelMap = nil
+                    }
                 case 2:
-                    audioConverter.channelMap = (audioConverter.inputFormat.channelCount == 1) ? [0, 0] : [0, 1]
+                    if inputChannels == 1 {
+                        audioConverter.channelMap = [0, 0]   // mono → stereo：複製到雙聲道
+                    } else if inputChannels == 2 {
+                        audioConverter.channelMap = [0, 1]   // stereo → stereo：直通
+                    } else {
+                        // >2 聲道下混到 stereo：讓 downmix 處理
+                        audioConverter.channelMap = nil
+                    }
                 default:
                     break
                 }
@@ -102,6 +120,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         // 結束，積壓時一次消化全部才能追上延遲、避免 ring buffer 滿掉幀。
         // 實測 audioInputFrames=audioFrames=43-45/s（44.1k/1024 即時節奏），
         // 完全吃得動，不需要任何渲染上限。
+        let framesBefore = outputFrames
         var status: AVAudioConverterOutputStatus? = .endOfStream
         repeat {
             var error: NSError?
@@ -124,6 +143,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             }
             switch status {
             case .haveData:
+                outputFrames += 1
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
                 audioTime.advanced(AVAudioFramePosition(outputBuffer.frameLength))
             case .error:
@@ -134,6 +154,26 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 break
             }
         } while(status == .haveData)
+        // 此 append 完全沒產出 = ring buffer 來不及提供完整輸入塊（underrun）。
+        if outputFrames == framesBefore {
+            resampleNoDataCount += 1
+        }
+    }
+
+    /// 累計診斷快照；呼叫端必須在 mixer 專用 queue 上讀取（見 AudioMixerByMultiTrack）。
+    var diagnosticsSnapshot: AudioPipelineDiagnostics.Track {
+        AudioPipelineDiagnostics.Track(
+            trackId: id,
+            outputFrames: outputFrames,
+            resampleNoDataCount: resampleNoDataCount,
+            alignDroppedSamples: ringBuffer?.alignDroppedSamples ?? 0,
+            alignInsertedSamples: ringBuffer?.alignInsertedSamples ?? 0,
+            overflowDroppedSamples: ringBuffer?.overflowDroppedSamples ?? 0,
+            skipInsertedSamples: ringBuffer?.skipInsertedSamples ?? 0,
+            ringBufferCounts: ringBuffer?.counts ?? 0,
+            alignFireCount: ringBuffer?.alignFireCountValue ?? 0,
+            lastAlignDiff: ringBuffer?.lastAlignDiffValue ?? 0
+        )
     }
 
     private func setUp(_ inSourceFormat: CMFormatDescription?) {

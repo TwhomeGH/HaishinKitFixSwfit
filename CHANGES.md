@@ -4,6 +4,37 @@
 
 ---
 
+## 52. 音訊管線診斷 API + 混音對齊/聲道修正
+
+**檔案**：`HaishinKit/Sources/Mixer/AudioPipelineDiagnostics.swift`（新增）、
+`AudioRingBuffer.swift`、`AudioMixerTrack.swift`、`AudioMixerByMultiTrack.swift`、
+`AudioMixerSettings.swift`、`AudioCaptureUnit.swift`、`AudioMixer.swift`、`MediaMixer.swift`、
+`Docs/AUDIO_PIPELINE_DIAGNOSTICS.md`（新增）、`Docs/AUDIO_MULTITRACK_ALIGNMENT.md`、
+`Docs/README.md`
+
+**新增**：公開 `AudioPipelineDiagnostics` 與 `MediaMixer.audioPipelineDiagnostics()`，
+讓 host（ReplyKit AHealth）能取樣混音管線的內部計數：`alignFireCount`、
+`lastAlignDiff`、`alignDropped/InsertedSamples`、`skipInsertedSamples`、
+`overflowDroppedSamples`、`resampleNoDataCount`、`outputFrames`、`mixerOutputFrames`。
+這些是唯一能看到「幀數正常、但 1024-sample 封包內樣本被丟」的訊號。
+
+**修正**：
+- `AudioRingBuffer.align()` 加死區 `alignDeadband`（256 samples）：門檻內視為量測
+  抖動不修正，避免來源抖動造成每幀微丟/微補（細碎斷音）。
+- `AudioRingBuffer.append()` 的 PTS gap 改用 `appendZeros()` 把 0 樣本寫進尾端
+  （正確位置），不再用 `skip` 搬到佇列最前面、把已緩衝樣本整體往後推。
+- `AudioMixerSettings.outputFormatTrack`：輸出格式與 `mainTrack`（混音時鐘）脫鉤；
+  `mainTrack = mic` 不再強制 mono 輸出。
+- `AudioMixerTrack.audioConverter`：輸入聲道 > 輸出聲道時不設 `channelMap`，讓
+  `downmix` 依 channel layout 做 L+R 平均，不再只取左聲道丟掉右聲道。
+- `AudioMixerByMultiTrack.diagnosticsSnapshot()` 改用 queue 上維護、鎖保護的快取，
+  不再 `queue.sync` 阻塞 `MediaMixer` actor。
+
+**備註**：曾誤判 `align()` 有「output vs input 取樣率單位不一致」，後確認 `align`
+作用在 `buffers[track]`（以 `outputFormat` 建立），無單位問題，該改動已回退。
+
+---
+
 ## 51. RTMP audio wire timestamp 改為 drift-aware preferred delta
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、

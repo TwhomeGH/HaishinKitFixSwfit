@@ -42,6 +42,19 @@ public struct AudioMixerSettings: Codable, Sendable {
     /// reference/target 已完全脫離 mainTrack（見 `echoCancellationReferenceTrack`）。
     public var mainTrack: UInt8
 
+    /// Specifies the track whose source format defines the mixer output format
+    /// (sample rate / channels when `sampleRate` / `channels` are 0).
+    ///
+    /// 與 `mainTrack`（混音時鐘 + 免對齊參考）**脱鉤**：main track 可以是持續
+    /// 輸出的 mic（穩定時鐘），輸出格式則可取自 app 軌（保留立體聲），避免
+    /// mainTrack 設 mic 時整個輸出被壓成 mono。`UInt8.max` 表示沿用 `mainTrack`。
+    public var outputFormatTrack: UInt8
+
+    /// 實際採用的輸出格式來源軌（未設定時沿用 `mainTrack`）。
+    var resolvedOutputFormatTrack: UInt8 {
+        outputFormatTrack == UInt8.max ? mainTrack : outputFormatTrack
+    }
+
     /// Specifies the track settings.
     public var tracks: [UInt8: AudioMixerTrackSettings]
 
@@ -80,6 +93,7 @@ public struct AudioMixerSettings: Codable, Sendable {
         channels: UInt32 = 0,
         isMuted: Bool = false,
         mainTrack: UInt8 = 0,
+        outputFormatTrack: UInt8 = UInt8.max,
         tracks: [UInt8: AudioMixerTrackSettings] = .init(),
         isEchoCancellationEnabled: Bool = false,
         echoCancellationReferenceTrack: UInt8 = UInt8.max
@@ -88,6 +102,7 @@ public struct AudioMixerSettings: Codable, Sendable {
         self.channels = channels
         self.isMuted = isMuted
         self.mainTrack = mainTrack
+        self.outputFormatTrack = outputFormatTrack
         self.tracks = tracks
         self.isEchoCancellationEnabled = isEchoCancellationEnabled
         self.echoCancellationReferenceTrack = echoCancellationReferenceTrack
@@ -98,6 +113,7 @@ public struct AudioMixerSettings: Codable, Sendable {
         // 決定（sampleRate/channels 為 0 時）。只比 sampleRate/channels 會在
         // mainTrack 從 app(44100) 切到 mic(48000) 時沿用舊格式。
         return mainTrack != oldValue.mainTrack
+            || resolvedOutputFormatTrack != oldValue.resolvedOutputFormatTrack
             || !(sampleRate == oldValue.sampleRate && channels == oldValue.channels)
     }
 
@@ -129,6 +145,7 @@ private enum AudioMixerSettingsCodingKeys: String, CodingKey {
     case channels
     case isMuted
     case mainTrack
+    case outputFormatTrack
     case tracks
     case maximumNumberOfChannels
     case isEchoCancellationEnabled
@@ -144,6 +161,7 @@ extension AudioMixerSettings {
         channels = try container.decodeIfPresent(UInt32.self, forKey: .channels) ?? 0
         isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
         mainTrack = try container.decodeIfPresent(UInt8.self, forKey: .mainTrack) ?? 0
+        outputFormatTrack = try container.decodeIfPresent(UInt8.self, forKey: .outputFormatTrack) ?? UInt8.max
         tracks = try container.decodeIfPresent([UInt8: AudioMixerTrackSettings].self, forKey: .tracks) ?? [:]
         maximumNumberOfChannels = try container.decodeIfPresent(UInt32.self, forKey: .maximumNumberOfChannels) ?? 2
         isEchoCancellationEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEchoCancellationEnabled) ?? false
@@ -156,6 +174,7 @@ extension AudioMixerSettings {
         try container.encode(channels, forKey: .channels)
         try container.encode(isMuted, forKey: .isMuted)
         try container.encode(mainTrack, forKey: .mainTrack)
+        try container.encode(outputFormatTrack, forKey: .outputFormatTrack)
         try container.encode(tracks, forKey: .tracks)
         try container.encode(maximumNumberOfChannels, forKey: .maximumNumberOfChannels)
         try container.encode(isEchoCancellationEnabled, forKey: .isEchoCancellationEnabled)

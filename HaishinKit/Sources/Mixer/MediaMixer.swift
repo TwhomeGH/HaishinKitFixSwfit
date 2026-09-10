@@ -249,6 +249,12 @@ public final actor MediaMixer {
         }
     }
 
+    /// Cumulative audio pipeline diagnostics for host-side telemetry (AHealth).
+    /// Counters are cumulative; sample periodically and compute deltas.
+    public func audioPipelineDiagnostics() -> AudioPipelineDiagnostics {
+        audioIO.diagnosticsSnapshot()
+    }
+
     /// Sets the video mixier settings.
     public func setVideoMixerSettings(_ settings: VideoMixerSettings) {
         let mode = self.videoMixerSettings.mode

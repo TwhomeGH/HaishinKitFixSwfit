@@ -100,6 +100,10 @@ final class AudioCaptureUnit: CaptureUnit {
         }
     }
 
+    func diagnosticsSnapshot() -> AudioPipelineDiagnostics {
+        audioMixer.diagnosticsSnapshot()
+    }
+
     @available(tvOS 17.0, *)
     func suspend() {
         guard !isSuspended else {

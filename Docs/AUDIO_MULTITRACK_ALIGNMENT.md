@@ -82,6 +82,12 @@ actor 忙碌時**靜默丟棄音訊幀**。mic 與 app 若**非相關性掉幀**
 `os_unfair_lock` 重入；trace 日誌只在調整量 ≥ 4096 samples（約 93ms）時記錄，避免
 熱路徑 per-frame 日誌寫入。
 
+**死區（2026-09 修正）**：`align` 對 |偏差| 加上 `alignDeadband`（256 samples ≈
+5.8ms），門檻內視為量測抖動**不修正**，避免來源 PTS 抖動造成每幀微丟/微補
+（細碎斷音）。累計 `alignFireCount` / `lastAlignDiff` 可從
+`MediaMixer.audioPipelineDiagnostics()` 觀察是否仍在持續動手
+（見 `Docs/AUDIO_PIPELINE_DIAGNOSTICS.md`）。
+
 ### 2. `AudioMixerByMultiTrack.render()`（非 main track 對齊）
 
 ```swift
@@ -143,7 +149,7 @@ target，在混音前對 mic 幀做 NLMS（normalized least mean squares）自�
 >
 > AEC target 不再綁定 mainTrack（舊設計的缺陷：mainTrack 若是 app 軌，會把 app
 > 誤當消除目標、用 mic 當 reference，造成有害相減）。target 恆為「非 reference
-> 的軌」，mainTrack 純粹是混音時鐘/格式來源。
+> 的軌」，mainTrack 純粹是混音時鐘；**輸出格式由 `outputFormatTrack` 決定**（見下）。
 
 **整合**：`AudioMixerByMultiTrack` 的 serial queue 上，每 channel 一個 canceler；
 reference（App 軌）逐幀餵入、mic（main track）幀在進混音 buffer 前先消除。
@@ -155,6 +161,31 @@ reference（App 軌）逐幀餵入、mic（main track）幀在進混音 buffer �
 **驗證**：`.cortexkit/verify-aec.swift`（編譯 `AudioEchoCanceler.swift` + harness，
 純 Swift 無 AVFoundation），3 情境全過：收斂後回音衰減 >12dB、雙講人聲保留、雙講後
 濾波器不發散。
+
+## 輸出格式與聲道（2026-09 修正）
+
+### `mainTrack` 與輸出格式脫鉤
+
+`mainTrack` 原本同時決定 (1) 混音時鐘 (2) 輸出格式 (3) 免對齊參考。輸出聲道數 =
+main track 的來源聲道數（`channels == 0` 時），所以 `mainTrack = mic`（單聲道）會
+把整個混音輸出壓成 **mono**。
+
+`AudioMixerSettings` 新增 `outputFormatTrack`（預設 `UInt8.max` = 沿用 `mainTrack`）：
+輸出格式改由此軌的來源格式決定，與混音時鐘脫鉤。ReplyKit 因此可設
+`mainTrack = mic`（穩定時鐘）+ `outputFormatTrack = app`（保留立體聲輸出）。
+
+### stereo → mono 不再只取左聲道
+
+`AudioMixerTrack.audioConverter` 原本對輸出 mono 設 `channelMap = [0]`，等於
+`M = L`，**右聲道被丟掉**（不是 L+R 平均）。現改為：
+
+- `input == output` → 直通
+- `input < output`（mono→stereo）→ `[0,0]` 複製到雙聲道
+- `input > output`（stereo→mono、5.1→stereo…）→ **不設 `channelMap`**，讓
+  `downmix` 依 channel layout 做平均（stereo→mono 即 `(L+R)/2`）
+
+`channelMap` 是「一對一」映射（輸出聲道 i 只從輸入聲道 j 取），無法表達相加，
+所以下混必須靠 `downmix`。
 
 ## 驗證
 

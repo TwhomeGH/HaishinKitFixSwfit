@@ -46,10 +46,10 @@ final class AudioMixerByMultiTrack: AudioMixer {
             echoCancelers.forEach { $0.reset() }
         }
         if newValue.invalidateOutputFormat(previous) {
-            // mainTrack 變更時，要從「新的 main track」的實際來源格式重新推導
-            // outputFormat，而不是沿用舊 inSourceFormat（可能還是舊 main track 的）。
+            // 輸出格式來源軌變更時，要從「新的來源軌」的實際來源格式重新推導
+            // outputFormat，而不是沿用舊 inSourceFormat（可能還是舊來源軌的）。
             // track 尚未建立/設定時退回 inSourceFormat。
-            if let format = tracks[newValue.mainTrack]?.inputFormat?.formatDescription {
+            if let format = tracks[newValue.resolvedOutputFormatTrack]?.inputFormat?.formatDescription {
                 outputFormat = newValue.makeOutputFormat(format)
             } else if let inSourceFormat {
                 outputFormat = newValue.makeOutputFormat(inSourceFormat)
@@ -99,6 +99,12 @@ final class AudioMixerByMultiTrack: AudioMixer {
     private var mixerNode: MixerNode?
     private var sampleTime: AVAudioFramePosition = AudioMixerByMultiTrack.defaultSampleTime
     private var outputNode: OutputNode?
+    // 累計混合輸出區塊數（AHealth 診斷用）。
+    private var mixerOutputFrames = 0
+    // 診斷快照快取：由 queue 上的 append/mix 更新；讀取端只上鎖不排隊，
+    // 不會阻塞 MediaMixer actor（#5 修正）。
+    private let diagnosticsLock = NSLock()
+    private var diagnosticsCache = AudioPipelineDiagnostics.empty
     // 各軌最近一次輸出的「幀結束位置」（when.sampleTime + frameLength）。
     // 用於 main 軌靜默時由其他軌推進混音時間軸。
     private var lastOutputPosition: [UInt8: Int64] = [:]
@@ -141,21 +147,42 @@ final class AudioMixerByMultiTrack: AudioMixer {
     func append(_ track: UInt8, buffer: CMSampleBuffer) {
         queue.async { [weak self] in
             guard let self else { return }
-            if self._settings.mainTrack == track {
+            if self._settings.resolvedOutputFormatTrack == track {
                 self.inSourceFormat = buffer.formatDescription
             }
             self.track(for: track)?.append(buffer)
+            self.refreshDiagnosticsCache()
         }
     }
 
     func append(_ track: UInt8, buffer: AVAudioPCMBuffer, when: AVAudioTime) {
         queue.async { [weak self] in
             guard let self else { return }
-            if self._settings.mainTrack == track {
+            if self._settings.resolvedOutputFormatTrack == track {
                 self.inSourceFormat = buffer.format.formatDescription
             }
             self.track(for: track)?.append(buffer, when: when)
+            self.refreshDiagnosticsCache()
         }
+    }
+
+    /// 在 mixer queue 上重建診斷快取（與 append/align/resample 同序列）。
+    private func refreshDiagnosticsCache() {
+        let snapshot = AudioPipelineDiagnostics(
+            tracks: tracks.values.sorted { $0.id < $1.id }.map { $0.diagnosticsSnapshot },
+            mixerOutputFrames: mixerOutputFrames
+        )
+        diagnosticsLock.lock()
+        diagnosticsCache = snapshot
+        diagnosticsLock.unlock()
+    }
+
+    /// 累計音訊管線診斷快照（供 host telemetry 取樣）。只上鎖讀快取，
+    /// 不 `queue.sync`，因此不會阻塞 MediaMixer actor。
+    func diagnosticsSnapshot() -> AudioPipelineDiagnostics {
+        diagnosticsLock.lock()
+        defer { diagnosticsLock.unlock() }
+        return diagnosticsCache
     }
 
     private func tryToSetupAudioNodes() {
@@ -243,6 +270,8 @@ final class AudioMixerByMultiTrack: AudioMixer {
         // track 的 sampleTime 對齊；否則「先到先混」會把兩軌的起始相位差與
         // 積壓以錯誤的相對位置混入 → 回音/撕裂。main track 是時鐘本身，不可
         // 對齊（對齊它會吃掉其內部來源 gap 的 silence 推進）。
+        // 註：`buffers[track]` 是用 outputFormat 建的，其 sampleTime 與 mixer 的
+        // sampleTime 同為 output 取樣率單位，可直接比較（無單位不一致問題）。
         if track != _settings.mainTrack {
             buffer.align(to: sampleTime)
         }
@@ -264,6 +293,8 @@ final class AudioMixerByMultiTrack: AudioMixer {
         }
         do {
             let buffer = try outputNode.render(numberOfFrames: numberOfFrames, sampleTime: sampleTime)
+            mixerOutputFrames += 1
+            refreshDiagnosticsCache()
             let time = AVAudioTime(sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
             if let anchor, let when = time.extrapolateTime(fromAnchor: anchor) {
                 delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)

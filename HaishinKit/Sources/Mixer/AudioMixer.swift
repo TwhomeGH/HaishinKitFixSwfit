@@ -26,4 +26,13 @@ protocol AudioMixer: AnyObject {
 
     func append(_ track: UInt8, buffer: CMSampleBuffer)
     func append(_ track: UInt8, buffer: AVAudioPCMBuffer, when: AVAudioTime)
+
+    /// Cumulative audio pipeline counters for host-side telemetry.
+    func diagnosticsSnapshot() -> AudioPipelineDiagnostics
+}
+
+extension AudioMixer {
+    func diagnosticsSnapshot() -> AudioPipelineDiagnostics {
+        .empty
+    }
 }

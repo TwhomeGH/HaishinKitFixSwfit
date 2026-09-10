@@ -26,6 +26,13 @@ final class AudioRingBuffer {
     private var tail = 0
     private var skip = 0
     private var storedSamples = 0
+    // 累計診斷計數（AHealth 用）：由呼叫端取樣後自行算 delta。
+    private var alignDropped = 0
+    private var alignInserted = 0
+    private var overflowDropped = 0
+    private var skipInserted = 0
+    private var alignFireCount = 0
+    private var lastAlignDiff = 0
     private var sampleTime: AVAudioFramePosition = 0
     private var inputFormat: AVAudioFormat
     private var inputBuffer: AVAudioPCMBuffer
@@ -48,6 +55,17 @@ final class AudioRingBuffer {
 
     private func lock() { os_unfair_lock_lock(&unfairLock) }
     private func unlock() { os_unfair_lock_unlock(&unfairLock) }
+
+    // MARK: 診斷計數（累計）
+
+    var alignDroppedSamples: Int { lock(); defer { unlock() }; return alignDropped }
+    var alignInsertedSamples: Int { lock(); defer { unlock() }; return alignInserted }
+    var overflowDroppedSamples: Int { lock(); defer { unlock() }; return overflowDropped }
+    var skipInsertedSamples: Int { lock(); defer { unlock() }; return skipInserted }
+    /// align 實際動手的次數（丟或補），用來判斷死區外是否仍在持續修正。
+    var alignFireCountValue: Int { lock(); defer { unlock() }; return alignFireCount }
+    /// 最近一次 align 看到的偏差（position - current，input 樣本單位；正=落後）。
+    var lastAlignDiffValue: Int { lock(); defer { unlock() }; return lastAlignDiff }
 
     func isDataAvailable(_ inNumberFrames: UInt32) -> Bool {
         return inNumberFrames <= counts
@@ -96,8 +114,13 @@ final class AudioRingBuffer {
                 }
             }
         }
-        skip = max(Int(targetSampleTime - sampleTime), 0)
-        sampleTime += Int64(skip)
+        // PTS gap 直接以 0 樣本寫進尾端（正確位置），不再用 `skip` 搬到佇列
+        // 最前面——否則已緩衝的樣本會被整體往後推（#4 修正）。
+        let gap = max(Int(targetSampleTime - sampleTime), 0)
+        if gap > 0 {
+            appendZeros(gap)
+            skipInserted += gap
+        }
         appendInternal(inputBuffer)
         unlock()
     }
@@ -116,8 +139,11 @@ final class AudioRingBuffer {
         }
         inputBuffer.frameLength = audioPCMBuffer.frameLength
         _ = inputBuffer.copy(audioPCMBuffer)
-        skip = Int(max(when.sampleTime - sampleTime, 0))
-        sampleTime += Int64(skip)
+        let gap = max(Int(when.sampleTime - sampleTime), 0)
+        if gap > 0 {
+            appendZeros(gap)
+            skipInserted += gap
+        }
         appendInternal(inputBuffer)
         unlock()
     }
@@ -137,14 +163,26 @@ final class AudioRingBuffer {
     ///   避免舊音訊以錯誤的相對位置混入，正是回音/梳狀濾波的來源。
     /// - 前端晚於 `position` → 前方補 silence，靜音到對齊點再開始輸出。
     /// 呼叫端（AudioMixerByMultiTrack.render）在 serial queue 上，本方法持鎖與
-    /// append/render 互斥。
+    /// append/render 互斥。mixer 的 `buffers[track]` 是以 outputFormat 建立的，
+    /// 故 `position` 與本緩衝區的 `sampleTime` 同為 output 取樣率單位。
     func align(to position: Int64) {
         lock()
         defer { unlock() }
         let current = sampleTime - Int64(calculateCounts())
-        if current < position {
-            let stale = position - current
-            var toDrop = min(stale, Int64(calculateCounts()))
+        // behind > 0：本軌緩衝區起點落後播放頭（要補靜音）；
+        // behind < 0：超前（要丟 stale）。
+        let behind = position - current
+        lastAlignDiff = Int(behind)
+        // Deadband：門檻內視為量測抖動，不修正，避免每幀微丟/微補造成細碎斷音。
+        if behind > Self.alignDeadband {
+            skip += Int(behind)
+            alignInserted += Int(behind)
+            alignFireCount += 1
+            if Self.alignLogThreshold <= behind, logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: inserted \(behind) silence to align at \(position)")
+            }
+        } else if behind < -Self.alignDeadband {
+            var toDrop = -behind
             // 先消耗 pending silence（skip），再消耗資料。
             let skipToDrop = min(Int64(skip), toDrop)
             skip -= Int(skipToDrop)
@@ -153,16 +191,12 @@ final class AudioRingBuffer {
                 let numSamples = min(Int(toDrop), Int(outputBuffer.frameCapacity) - tail)
                 tail = (tail + numSamples) % Int(outputBuffer.frameCapacity)
                 storedSamples -= numSamples
+                alignDropped += numSamples
                 toDrop -= Int64(numSamples)
             }
-            if Self.alignLogThreshold <= stale, logger.isEnabledFor(level: .trace) {
-                logger.trace("AudioRingBuffer.align: dropped \(stale) stale samples to align at \(position)")
-            }
-        } else if position < current {
-            let lead = current - position
-            skip += Int(lead)
-            if Self.alignLogThreshold <= lead, logger.isEnabledFor(level: .trace) {
-                logger.trace("AudioRingBuffer.align: inserted \(lead) silence to align at \(position)")
+            alignFireCount += 1
+            if Self.alignLogThreshold <= -behind, logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: dropped \(-behind) stale samples to align at \(position)")
             }
         }
     }
@@ -170,6 +204,10 @@ final class AudioRingBuffer {
     /// align 僅在調整量 ≥ 此值（約 93ms @44.1k）時記錄 trace，
     /// 避免熱路徑上的 per-frame 日誌寫入。
     private static let alignLogThreshold: Int64 = 4096
+
+    /// align 死區（樣本數，input 率）：|discrepancy| 在此門檻內視為量測抖動，
+    /// 不修正，避免每幀微丟/微補造成細碎斷音。約 256 samples ≈ 5.8ms @44.1k。
+    private static let alignDeadband: Int64 = 256
 
     private func renderInternal(_ inNumberFrames: UInt32, ioData: UnsafeMutablePointer<AudioBufferList>?, offset: Int = 0) -> OSStatus {
         guard Int(inNumberFrames) <= calculateCounts() else { return -1 }
@@ -303,6 +341,47 @@ final class AudioRingBuffer {
         }
     }
 
+    /// 把 `count` 個 0 樣本寫進環形緩衝區尾端（PTS gap 的正確位置）並推進
+    /// sampleTime。超過容量時只保留最後 capacity 個 0，前段直接推進時間軸。
+    private func appendZeros(_ count: Int) {
+        guard count > 0 else { return }
+        let capacity = Int(outputBuffer.frameCapacity)
+        if count > capacity {
+            sampleTime += Int64(count - capacity)
+        }
+        var remaining = min(count, capacity)
+        while remaining > 0 {
+            let numSamples = min(remaining, capacity - head)
+            zeroRingSamples(at: head, count: numSamples)
+            head = (head + numSamples) % capacity
+            storedSamples += numSamples
+            sampleTime += Int64(numSamples)
+            remaining -= numSamples
+            discardStoredSamples(max(0, storedSamples - capacity))
+        }
+    }
+
+    /// 把環形緩衝區 [offset, offset+count) 範圍的樣本清零。
+    private func zeroRingSamples(at offset: Int, count: Int) {
+        let channelCount = Int(inputFormat.channelCount)
+        let bytesPerSample: Int
+        switch inputFormat.commonFormat {
+        case .pcmFormatInt16: bytesPerSample = 2
+        case .pcmFormatInt32: bytesPerSample = 4
+        case .pcmFormatFloat32: bytesPerSample = 4
+        default: return
+        }
+        if inputFormat.isInterleaved {
+            guard let dst = outputBuffer.int16ChannelData?[0] else { return }
+            memset(dst.advanced(by: offset * channelCount), 0, count * channelCount * bytesPerSample)
+        } else {
+            for i in 0..<channelCount {
+                guard let dst = outputBuffer.int16ChannelData?[i] else { continue }
+                memset(dst.advanced(by: offset), 0, count * bytesPerSample)
+            }
+        }
+    }
+
     private func discardStoredSamples(_ count: Int) {
         var remaining = min(count, storedSamples)
         let capacity = Int(outputBuffer.frameCapacity)
@@ -310,6 +389,7 @@ final class AudioRingBuffer {
             let numSamples = min(remaining, capacity - tail)
             tail = (tail + numSamples) % capacity
             storedSamples -= numSamples
+            overflowDropped += numSamples
             remaining -= numSamples
         }
     }
