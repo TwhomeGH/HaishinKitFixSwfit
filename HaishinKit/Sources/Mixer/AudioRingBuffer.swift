@@ -175,15 +175,9 @@ final class AudioRingBuffer: @unchecked Sendable {
         lastAlignDiff = Int(behind)
         // Deadband：門檻內視為量測抖動，不修正，避免每幀微丟/微補造成細碎斷音。
         if behind > Self.alignDeadband {
-            skip += Int(behind)
-            alignInserted += Int(behind)
-            alignFireCount += 1
-            if Self.alignLogThreshold <= behind, logger.isEnabledFor(level: .trace) {
-                logger.trace("AudioRingBuffer.align: inserted \(behind) silence to align at \(position)")
-            }
-        } else if behind < -Self.alignDeadband {
-            var toDrop = -behind
+            // behind > 0：播放頭在資料起點之後 → 本軌過期 → 丟棄 stale。
             // 先消耗 pending silence（skip），再消耗資料。
+            var toDrop = behind
             let skipToDrop = min(Int64(skip), toDrop)
             skip -= Int(skipToDrop)
             toDrop -= skipToDrop
@@ -195,8 +189,17 @@ final class AudioRingBuffer: @unchecked Sendable {
                 toDrop -= Int64(numSamples)
             }
             alignFireCount += 1
-            if Self.alignLogThreshold <= -behind, logger.isEnabledFor(level: .trace) {
-                logger.trace("AudioRingBuffer.align: dropped \(-behind) stale samples to align at \(position)")
+            if Self.alignLogThreshold <= behind, logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: dropped \(behind) stale samples to align at \(position)")
+            }
+        } else if behind < -Self.alignDeadband {
+            // behind < 0：播放頭在資料起點之前 → 有空隙 → 補 silence。
+            let lead = -behind
+            skip += Int(lead)
+            alignInserted += Int(lead)
+            alignFireCount += 1
+            if Self.alignLogThreshold <= lead, logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: inserted \(lead) silence to align at \(position)")
             }
         }
     }
