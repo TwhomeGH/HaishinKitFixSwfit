@@ -283,7 +283,7 @@ private struct ByteWriter {
     mutating func writeTime(_ time: CMTime) {
         writeUInt64(UInt64(bitPattern: time.value))
         writeUInt32(UInt32(bitPattern: time.timescale))
-        writeUInt32(UInt32(bitPattern: time.flags.rawValue))
+        writeUInt32(time.flags.rawValue)
     }
 }
 
@@ -321,7 +321,12 @@ private struct ByteReader {
         guard let value = readUInt64(), let timescale = readUInt32(), let flags = readUInt32() else {
             return nil
         }
-        return CMTime(value: CMTimeValue(bitPattern: value), timescale: CMTimeScale(bitPattern: timescale), flags: CMTimeFlags(rawValue: flags))
+        return CMTime(
+            value: CMTimeValue(bitPattern: value),
+            timescale: CMTimeScale(bitPattern: timescale),
+            flags: CMTimeFlags(rawValue: flags),
+            epoch: 0
+        )
     }
 
     private mutating func readUInt64Width(_ width: Int) -> UInt64? {
