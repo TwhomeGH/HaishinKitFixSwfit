@@ -22,6 +22,8 @@ public struct AudioPipelineDiagnostics: Sendable {
     }
     public let tracks: [Track]
     public let mixerOutputFrames: Int
+    public let outputChannels: Int
+    public let outputChannelRMS: [Float]
     public static let empty: AudioPipelineDiagnostics
 }
 
@@ -54,6 +56,8 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 | `alignFireCount` | `align()` **實際動手**的次數（丟或補）。用來分辨「一次性 anchor 校正」與「每幀持續校正」 |
 | `lastAlignDiff` | 最近一次 `align()` 看到的偏差 `position - current`（input 樣本；正 = 本軌落後） |
 | `mixerOutputFrames` | 混音器成功產出的輸出區塊數 |
+| `outputChannels` | 混音輸出聲道數（1 = mono、2 = stereo） |
+| `outputChannelRMS` | 最近一次混音輸出的 per-channel RMS（index = 聲道，瞬時值） |
 
 ## 判讀
 
@@ -65,6 +69,7 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 | `alignInsertedSamples` 持續增加 | 持續插入靜音（聽覺缺口） |
 | `resampleNoDataCount` 增加 | ring buffer underrun |
 | `overflowDroppedSamples` 增加 | producer 超出 buffer 容量，樣本被丟 |
+| `outputChannelRMS` 某聲道 ≈ 0 但來源該聲道有聲 | 該聲道在聲道映射 / 下混時被丟掉（例：stereo→mono 只取左聲道） |
 
 ## 設計
 

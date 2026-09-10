@@ -101,6 +101,8 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     private var outputNode: OutputNode?
     // 累計混合輸出區塊數（AHealth 診斷用）。
     private var mixerOutputFrames = 0
+    // 最近一次混合輸出的 per-channel RMS（AHealth 診斷用）。
+    private var outputChannelRMS: [Float] = []
     // 診斷快照快取：由 queue 上的 append/mix 更新；讀取端只上鎖不排隊，
     // 不會阻塞 MediaMixer actor（#5 修正）。
     private let diagnosticsLock = NSLock()
@@ -170,7 +172,9 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     private func refreshDiagnosticsCache() {
         let snapshot = AudioPipelineDiagnostics(
             tracks: tracks.values.sorted { $0.id < $1.id }.map { $0.diagnosticsSnapshot },
-            mixerOutputFrames: mixerOutputFrames
+            mixerOutputFrames: mixerOutputFrames,
+            outputChannels: Int(outputFormat?.channelCount ?? 0),
+            outputChannelRMS: outputChannelRMS
         )
         diagnosticsLock.lock()
         diagnosticsCache = snapshot
@@ -294,6 +298,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         do {
             let buffer = try outputNode.render(numberOfFrames: numberOfFrames, sampleTime: sampleTime)
             mixerOutputFrames += 1
+            outputChannelRMS = Self.channelRMS(buffer)
             refreshDiagnosticsCache()
             let time = AVAudioTime(sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
             if let anchor, let when = time.extrapolateTime(fromAnchor: anchor) {
@@ -303,6 +308,36 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         } catch {
             delegate?.audioMixer(self, errorOccurred: .failedToMix(error: error))
         }
+    }
+
+    /// 計算每個輸出聲道的 RMS（診斷用）。支援 interleaved / non-interleaved 與
+    /// Int16 / Float32；供 AHealth 判斷左右聲道是否有聲音、是否被 downmix 成 mono。
+    /// internal 以便單元測試（見 Tests/Mixer/AudioStereoDownmixTests.swift）。
+    static func channelRMS(_ buffer: AVAudioPCMBuffer) -> [Float] {
+        let channels = Int(buffer.format.channelCount)
+        let frames = Int(buffer.frameLength)
+        guard channels > 0, frames > 0 else { return [] }
+        var result = [Float](repeating: 0, count: channels)
+        let isFloat = buffer.format.commonFormat == .pcmFormatFloat32
+        let isInterleaved = buffer.format.isInterleaved
+        let floatPtr = buffer.floatChannelData
+        let int16Ptr = buffer.int16ChannelData
+        for ch in 0..<channels {
+            var sum: Double = 0
+            for i in 0..<frames {
+                let v: Double
+                if isFloat, let floatPtr {
+                    v = isInterleaved ? Double(floatPtr[0][i * channels + ch]) : Double(floatPtr[ch][i])
+                } else if let int16Ptr {
+                    v = (isInterleaved ? Double(int16Ptr[0][i * channels + ch]) : Double(int16Ptr[ch][i])) / 32768.0
+                } else {
+                    v = 0
+                }
+                sum += v * v
+            }
+            result[ch] = Float((sum / Double(frames)).squareRoot())
+        }
+        return result
     }
 
     private func track(for id: UInt8) -> AudioMixerTrack<AudioMixerByMultiTrack>? {

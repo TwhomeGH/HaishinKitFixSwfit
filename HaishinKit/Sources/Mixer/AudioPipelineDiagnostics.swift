@@ -66,10 +66,24 @@ public struct AudioPipelineDiagnostics: Sendable {
     public let tracks: [Track]
     /// Number of mixed output blocks produced by the mixer.
     public let mixerOutputFrames: Int
+    /// Number of channels of the mixer output format (1 = mono, 2 = stereo).
+    public let outputChannels: Int
+    /// Per-output-channel RMS of the most recent mixed block (index = channel).
+    /// Lets the host verify stereo handling: with a right-only source, a
+    /// non-zero mono RMS means L+R was averaged (not L-only), and a stereo
+    /// output with both entries non-zero means both channels survived.
+    public let outputChannelRMS: [Float]
 
-    public init(tracks: [Track], mixerOutputFrames: Int) {
+    public init(
+        tracks: [Track],
+        mixerOutputFrames: Int,
+        outputChannels: Int = 0,
+        outputChannelRMS: [Float] = []
+    ) {
         self.tracks = tracks
         self.mixerOutputFrames = mixerOutputFrames
+        self.outputChannels = outputChannels
+        self.outputChannelRMS = outputChannelRMS
     }
 
     public static let empty = AudioPipelineDiagnostics(tracks: [], mixerOutputFrames: 0)
