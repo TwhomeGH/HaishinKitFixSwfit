@@ -3,8 +3,8 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct ByteArrayTests {
-    @Test func int8() throws {
+@Suite("ByteArray：各型別讀寫往返") struct ByteArrayTests {
+    @Test("Int8：min / 0 / max 往返") func int8() throws {
         let bytes = ByteArray()
         bytes.writeInt8(Int8.min)
         bytes.writeInt8(0)
@@ -16,7 +16,7 @@ import Testing
         #expect(try bytes.readInt8() == Int8.max)
     }
 
-    @Test func uint8() throws {
+    @Test("UInt8：min / 0 / max 往返") func uint8() throws {
         let bytes = ByteArray()
         bytes.writeUInt8(UInt8.min)
         bytes.writeUInt8(0)
@@ -28,7 +28,7 @@ import Testing
         #expect(try bytes.readUInt8() == UInt8.max)
     }
 
-    @Test func int16() throws {
+    @Test("Int16：min / 0 / max 往返") func int16() throws {
         let bytes = ByteArray()
         bytes.writeInt16(Int16.min)
         bytes.writeInt16(0)
@@ -40,7 +40,7 @@ import Testing
         #expect(try bytes.readInt16() == Int16.max)
     }
 
-    @Test func uint16() throws {
+    @Test("UInt16：min / 0 / max 往返") func uint16() throws {
         let bytes = ByteArray()
         bytes.writeUInt16(UInt16.min)
         bytes.writeUInt16(0)
@@ -51,14 +51,14 @@ import Testing
         #expect(try bytes.readUInt16() == UInt16.max)
     }
 
-    @Test func uint24() throws {
+    @Test("UInt24：0xFFFFFF 往返") func uint24() throws {
         let bytes = ByteArray()
         bytes.writeUInt24(0xFFFFFF)
         bytes.position = 0
         #expect(try bytes.readUInt24() == 0xFFFFFF)
     }
 
-    @Test func uint32() throws {
+    @Test("UInt32：min / 0 / max 往返") func uint32() throws {
         let bytes = ByteArray()
         bytes.writeUInt32(UInt32.min)
         bytes.writeUInt32(0)
@@ -69,7 +69,7 @@ import Testing
         #expect(try bytes.readUInt32() == UInt32.max)
     }
 
-    @Test func int32() throws {
+    @Test("Int32：min / 0 / max 往返") func int32() throws {
         let bytes = ByteArray()
         bytes.writeInt32(Int32.min)
         bytes.writeInt32(0)
@@ -80,7 +80,7 @@ import Testing
         #expect(try bytes.readInt32() == Int32.max)
     }
 
-    @Test func float() throws {
+    @Test("Float：infinity 往返") func float() throws {
         let bytes = ByteArray()
         bytes.writeFloat(Float.infinity)
         #expect(bytes.position == ByteArray.sizeOfFloat)
@@ -88,7 +88,7 @@ import Testing
         #expect(try bytes.readFloat() == Float.infinity)
     }
 
-    @Test func double() throws {
+    @Test("Double：pi / infinity 往返") func double() throws {
         let bytes = ByteArray()
         bytes.writeDouble(.pi)
         #expect(bytes.position == ByteArray.sizeOfDouble)
@@ -100,7 +100,7 @@ import Testing
         #expect(try bytes.readDouble() == Double.infinity)
     }
 
-    @Test func utf8() throws {
+    @Test("UTF8：寫入讀取與越界錯誤") func utf8() throws {
         let bytes = ByteArray()
         do {
             try bytes.writeUTF8("hello world!!")

@@ -4,9 +4,9 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite(.disabled(if: TestEnvironment.isCI))
+@Suite("MediaMixer：設定與生命週期", .disabled(if: TestEnvironment.isCI))
 struct MediaMixerTests {
-    @Test func videoConfiguration() async throws {
+    @Test("視訊設定與錯誤") func videoConfiguration() async throws {
         let mixer = MediaMixer()
         await #expect(throws: (MediaMixer.Error).self) {
             try await mixer.configuration(video: 0) { _ in }
@@ -22,7 +22,7 @@ struct MediaMixerTests {
         try await mixer.configuration(video: 0) { _ in }
     }
 
-    @Test func release() async {
+    @Test("釋放後弱引用為 nil") func release() async {
         weak var weakMixer: MediaMixer?
         _ = await {
             let mixer = MediaMixer(captureSessionMode: .manual)
@@ -35,7 +35,7 @@ struct MediaMixerTests {
         #expect(weakMixer == nil)
     }
 
-    @Test func release_with_multimode() async {
+    @Test("多重模式：釋放後為 nil") func release_with_multimode() async {
         weak var weakMixer: MediaMixer?
         _ = await {
             let mixer = MediaMixer(captureSessionMode: .multi)
@@ -48,7 +48,7 @@ struct MediaMixerTests {
         #expect(weakMixer == nil)
     }
 
-    @Test func currentFrameRate() async throws {
+    @Test("設定並讀取幀率") func currentFrameRate() async throws {
         let mixer = MediaMixer()
         try await mixer.setFrameRate(60)
         #expect(await mixer.frameRate == 60)

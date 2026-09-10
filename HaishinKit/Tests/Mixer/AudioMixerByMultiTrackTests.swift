@@ -4,7 +4,7 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct AudioMixerByMultiTrackTests {
+@Suite("AudioMixerByMultiTrack：多軌混音") struct AudioMixerByMultiTrackTests {
     final class AudioEchoRouteObserverSpy: AudioEchoRouteObserving {
         var hasEchoPath: Bool
         private(set) var isStarted = false
@@ -58,7 +58,7 @@ import Testing
         }
     }
 
-    @Test func keep44100() async throws {
+    @Test("維持 44100Hz 輸出") func keep44100() async throws {
         let result = Result()
         let mixer = AudioMixerByMultiTrack()
         mixer.delegate = result
@@ -75,7 +75,7 @@ import Testing
         #expect(!result.outputs.isEmpty)
     }
 
-    @Test func test44100to48000() async throws {
+    @Test("44100 切換至 48000Hz") func test44100to48000() async throws {
         let mixer = AudioMixerByMultiTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1
@@ -91,7 +91,7 @@ import Testing
         #expect(mixer.outputFormat?.sampleRate == 48000)
     }
 
-    @Test func test48000_2ch() async throws {
+    @Test("48000Hz 雙聲道輸出") func test48000_2ch() async throws {
         let result = Result()
         let mixer = AudioMixerByMultiTrack()
         mixer.delegate = result
@@ -109,7 +109,7 @@ import Testing
         // #expect(result.error == nil)
     }
 
-    @Test func inputFormats() async throws {
+    @Test("各軌輸入格式") func inputFormats() async throws {
         let mixer = AudioMixerByMultiTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1
@@ -124,7 +124,7 @@ import Testing
         #expect(inputFormats[1]?.sampleRate == 44100)
     }
 
-    @Test func startsRouteObserverWhenAudioNodesAreReady() async throws {
+    @Test("音訊節點就緒後啟動路由觀察") func startsRouteObserverWhenAudioNodesAreReady() async throws {
         let observer = AudioEchoRouteObserverSpy()
         let mixer = AudioMixerByMultiTrack(routeObserver: observer)
         mixer.settings = .init(

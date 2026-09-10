@@ -5,8 +5,8 @@ import Testing
 @testable import HaishinKit
 
 @ScreenActor
-@Suite struct ScreenObjectContainerTests {
-    @Test func lookUpVideoTrackScreenObject() {
+@Suite("ScreenObjectContainer：查找子物件") struct ScreenObjectContainerTests {
+    @Test("遞迴查找 VideoScreenObject") func lookUpVideoTrackScreenObject() {
         let container1 = ScreenObjectContainer()
 
         let videoTrack1 = VideoScreenObject()

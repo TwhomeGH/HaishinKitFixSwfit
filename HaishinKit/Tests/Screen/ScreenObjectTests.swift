@@ -5,8 +5,8 @@ import Testing
 @testable import HaishinKit
 
 @ScreenActor
-@Suite struct ScreenObjectTests {
-    @Test func screenHorizontalAlignmentRect() {
+@Suite("ScreenObject：版面與對齊") struct ScreenObjectTests {
+    @Test("水平對齊：bounds 計算") func screenHorizontalAlignmentRect() {
         let screen = Screen()
 
         let object1 = ScreenObject()
@@ -33,7 +33,7 @@ import Testing
         #expect(object3.bounds == .init(x: 1500, y: 0, width: 100, height: 100))
     }
 
-    @Test func screenVerticalAlignmentRect() {
+    @Test("垂直對齊：bounds 計算") func screenVerticalAlignmentRect() {
         let screen = Screen()
 
         let object0 = ScreenObject()
@@ -66,7 +66,7 @@ import Testing
         #expect(object3.bounds == .init(x: 0, y: 800, width: 100, height: 100))
     }
 
-    @Test func screenWithContainerTests() {
+    @Test("容器內物件：bounds 計算") func screenWithContainerTests() {
         let screen = Screen()
 
         let container = ScreenObjectContainer()

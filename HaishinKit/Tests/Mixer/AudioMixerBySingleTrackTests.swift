@@ -4,7 +4,7 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct AudioMixerBySingleTrackTests {
+@Suite("AudioMixerBySingleTrack：單軌混音") struct AudioMixerBySingleTrackTests {
     final class Result: AudioMixerDelegate {
         var outputs: [AVAudioPCMBuffer] = []
 
@@ -22,7 +22,7 @@ import Testing
         }
     }
 
-    @Test func keep44100_1ch() {
+    @Test("維持 44100Hz 單聲道") func keep44100_1ch() {
         let mixer = AudioMixerBySingleTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1
@@ -33,7 +33,7 @@ import Testing
         #expect(mixer.outputFormat?.sampleRate == 44100)
     }
 
-    @Test func test44100to48000_1ch() {
+    @Test("44100 切換至 48000Hz 單聲道") func test44100to48000_1ch() {
         let mixer = AudioMixerBySingleTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1
@@ -47,7 +47,7 @@ import Testing
         #expect(mixer.outputFormat?.sampleRate == 48000)
     }
 
-    @Test func test44100to48000_4ch_2ch() {
+    @Test("44100 至 48000Hz：4 聲道轉 2 聲道") func test44100to48000_4ch_2ch() {
         let result = Result()
         let mixer = AudioMixerBySingleTrack()
         mixer.delegate = result
@@ -67,7 +67,7 @@ import Testing
         #expect(result.outputs.count == 2)
     }
 
-    @Test func test44100to48000_4ch() {
+    @Test("44100 至 48000Hz：4 聲道") func test44100to48000_4ch() {
         let result = Result()
         let mixer = AudioMixerBySingleTrack()
         mixer.delegate = result
@@ -89,7 +89,7 @@ import Testing
         #expect(result.outputs.count == 2)
     }
 
-    @Test func passthrough16000_48000() {
+    @Test("16000 / 44100Hz 直通") func passthrough16000_48000() {
         let mixer = AudioMixerBySingleTrack()
         mixer.settings = .init(
             sampleRate: 0, channels: 1
@@ -100,7 +100,7 @@ import Testing
         #expect(mixer.outputFormat?.sampleRate == 44100)
     }
 
-    @Test func inputFormats() {
+    @Test("輸入格式回報") func inputFormats() {
         let mixer = AudioMixerBySingleTrack()
         mixer.settings = .init(
             sampleRate: 44100, channels: 1

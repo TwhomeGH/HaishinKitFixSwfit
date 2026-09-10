@@ -5,8 +5,8 @@ import Testing
 @testable import HaishinKit
 
 @ScreenActor
-@Suite struct VideoObjectContainerTests {
-    @Test func horizontalAlignmentBounds() {
+@Suite("VideoScreenObject：對齊") struct VideoObjectContainerTests {
+    @Test("水平對齊：resizeAspect bounds") func horizontalAlignmentBounds() {
         let screen = Screen()
 
         let object1 = VideoScreenObject()

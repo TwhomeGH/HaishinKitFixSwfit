@@ -4,8 +4,8 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct AudioDeviceUnitTests {
-    @Test func release() {
+@Suite("AudioDeviceUnit：釋放") struct AudioDeviceUnitTests {
+    @Test("釋放後弱引用為 nil") func release() {
         weak var weakDevice: AudioDeviceUnit?
         _ = {
             guard let audioDevice = AVCaptureDevice.default(for: .audio) else {

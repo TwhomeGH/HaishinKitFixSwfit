@@ -5,8 +5,8 @@ import Testing
 @testable import HaishinKit
 
 @ScreenActor
-@Suite struct ScreenObjectSnapshotTests {
-    @Test func videoSnapshot() throws {
+@Suite("ScreenObjectSnapshot：解碼") struct ScreenObjectSnapshotTests {
+    @Test("解碼 video 快照") func videoSnapshot() throws {
         let string = """
 {"type":"video","id":"1771162233189358-1238207813","size":{"width":90,"height":160},"isVisible":true,"layoutMargin":{"top":16,"left":0,"bottom":0,"right":16},"horizontalAlignment":2,"verticalAlignment":0,"elements":{"track":"1"},"children":[]}
 """.data(using: .utf8)!

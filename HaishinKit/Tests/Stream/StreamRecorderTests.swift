@@ -3,8 +3,8 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct StreamRecorderTests {
-    @Test func startRunning_nil() async throws {
+@Suite("StreamRecorder：開始錄影路徑") struct StreamRecorderTests {
+    @Test("nil 路徑：使用預設檔名") func startRunning_nil() async throws {
         let recorder = StreamRecorder()
         try await recorder.startRecording(nil)
         let moviesDirectory = await recorder.moviesDirectory
@@ -12,7 +12,7 @@ import Testing
         #expect(((await recorder.outputURL?.path.contains(moviesDirectory.path)) != nil))
     }
 
-    @Test func startRunning_fileName() async throws {
+    @Test("相對檔名：置於影片目錄") func startRunning_fileName() async throws {
         let recorder = StreamRecorder()
         try? await recorder.startRecording(URL(string: "dir/sample.mp4"))
         _ = await recorder.moviesDirectory
@@ -20,7 +20,7 @@ import Testing
         #expect(((await recorder.outputURL?.path.contains("dir/sample.mp4")) != nil))
     }
 
-    @Test func startRunning_fullPath() async {
+    @Test("完整路徑：直接使用") func startRunning_fullPath() async {
         let recorder = StreamRecorder()
         let fullPath = await recorder.moviesDirectory.appendingPathComponent("sample.mp4")
         // $moviesDirectory/sample.mp4
@@ -28,14 +28,14 @@ import Testing
         #expect(await recorder.outputURL == fullPath)
     }
 
-    @Test func startRunning_dir() async {
+    @Test("目錄路徑：產生檔名") func startRunning_dir() async {
         let recorder = StreamRecorder()
         try? await recorder.startRecording(URL(string: "dir"))
         // $moviesDirectory/dir/33FA7D32-E0A8-4E2C-9980-B54B60654044.mp4
         #expect(((await recorder.outputURL?.path.contains("dir")) != nil))
     }
 
-    @Test func startRunning_fileAlreadyExists() async {
+    @Test("檔案已存在：拋出錯誤") func startRunning_fileAlreadyExists() async {
         let recorder = StreamRecorder()
         let filePath = await recorder.moviesDirectory.appendingPathComponent("duplicate-file.mp4")
         do {

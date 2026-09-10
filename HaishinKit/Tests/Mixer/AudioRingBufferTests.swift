@@ -4,16 +4,16 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct AudioRingBufferTests {
-    @Test func monoAppendSampleBuffer_920() throws {
+@Suite("AudioRingBuffer：append / render / align") struct AudioRingBufferTests {
+    @Test("單聲道：append 920 樣本") func monoAppendSampleBuffer_920() throws {
         try appendSampleBuffer(920, channels: 1)
     }
 
-    @Test func monoAppendSampleBuffer_1024() throws {
+    @Test("單聲道：append 1024 樣本") func monoAppendSampleBuffer_1024() throws {
         try appendSampleBuffer(1024, channels: 1)
     }
 
-    @Test func monoAppendSampleBuffer_overrun() throws {
+    @Test("單聲道：溢位後保留容量") func monoAppendSampleBuffer_overrun() throws {
         let numSamples = 1024 * 4
         var asbd = AudioStreamBasicDescription(
             mSampleRate: 44100,
@@ -45,15 +45,15 @@ import Testing
         #expect(buffer?.render(UInt32(1024), ioData: readBuffer.mutableAudioBufferList) != noErr)
     }
 
-    @Test func stereoAppendSampleBuffer_920() throws {
+    @Test("雙聲道：append 920 樣本") func stereoAppendSampleBuffer_920() throws {
         try appendSampleBuffer(920, channels: 2)
     }
 
-    @Test func stereoAppendSampleBuffer_1024() throws {
+    @Test("雙聲道：append 1024 樣本") func stereoAppendSampleBuffer_1024() throws {
         try appendSampleBuffer(1024, channels: 2)
     }
 
-    @Test func appendAudioPCMBuffer_overrunKeepsNewestSamples() throws {
+    @Test("PCM 溢位：保留最新樣本") func appendAudioPCMBuffer_overrunKeepsNewestSamples() throws {
         let format = makeInt16Format()
         let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
         for index in 0..<4 {
@@ -73,7 +73,7 @@ import Testing
 
     // MARK: align(to:)
 
-    @Test func alignAheadInsertsSilence() throws {
+    @Test("align：超前補靜音") func alignAheadInsertsSilence() throws {
         // 資料落在 position 1024，對齊到 0 → 前方先輸出 silence 再輸出資料。
         let format = makeInt16Format()
         let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
@@ -88,7 +88,7 @@ import Testing
         #expect(readInt16(read).allSatisfy { $0 == 7 })
     }
 
-    @Test func alignBehindDropsStaleData() throws {
+    @Test("align：落後丟過期樣本") func alignBehindDropsStaleData() throws {
         // 兩幀落在 [0,1024) 與 [1024,2048)，對齊到 1024 → 過期的第一幀被丟棄。
         let format = makeInt16Format()
         let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
@@ -103,7 +103,7 @@ import Testing
         #expect(ring.counts == 0)
     }
 
-    @Test func alignPastEndEmptiesBuffer() throws {
+    @Test("align：超出範圍清空緩衝") func alignPastEndEmptiesBuffer() throws {
         let format = makeInt16Format()
         let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
         let (first, when0) = makeInt16Buffer(format, sampleTime: 0, fill: 3)
@@ -116,7 +116,7 @@ import Testing
         #expect(ring.render(1024, ioData: read.mutableAudioBufferList) != noErr)
     }
 
-    @Test func alignAdjustsLeadingSilence() throws {
+    @Test("align：調整開頭靜音") func alignAdjustsLeadingSilence() throws {
         // 先對齊補 1024 silence，再把對齊點推進到 512 → 前方 silence 縮減為 512。
         let format = makeInt16Format()
         let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))

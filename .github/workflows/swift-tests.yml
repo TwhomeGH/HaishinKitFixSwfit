@@ -126,7 +126,7 @@ jobs:
             -destination "${destination}" \
             -only-testing:"${test_target}" \
             -resultBundlePath .build/test-results/RTMPHaishinKitTests.xcresult \
-            2>&1 | tee .build/test-results/ios-tests.log
+            2>&1 | bash .github/scripts/colorize-test-log.sh | tee .build/test-results/ios-tests.log
           status=${PIPESTATUS[0]}
           cat .build/test-results/ios-tests.log >> .build/test-results/rtmp-tests.log
           if [ "${status}" -eq 0 ]; then
@@ -269,7 +269,7 @@ jobs:
             -destination "${destination}" \
             -only-testing:"${test_target}" \
             -resultBundlePath .build/haishinkit-test-results/HaishinKitTests.xcresult \
-            2>&1 | tee .build/haishinkit-test-results/ios-tests.log
+            2>&1 | bash .github/scripts/colorize-test-log.sh | tee .build/haishinkit-test-results/ios-tests.log
           status=${PIPESTATUS[0]}
           cat .build/haishinkit-test-results/ios-tests.log >> .build/haishinkit-test-results/haishinkit-tests.log
           if [ "${status}" -eq 0 ]; then
@@ -409,7 +409,7 @@ jobs:
             -destination "${destination}" \
             -only-testing:"${test_target}" \
             -resultBundlePath "${result_dir}/HaishinKitMacOSTests.xcresult" \
-            2>&1 | tee "${result_dir}/macos-tests.log"
+            2>&1 | bash .github/scripts/colorize-test-log.sh | tee "${result_dir}/macos-tests.log"
           status=${PIPESTATUS[0]}
           cat "${result_dir}/macos-tests.log" >> "${result_dir}/haishinkit-macos-tests.log"
           if [ "${status}" -eq 0 ]; then

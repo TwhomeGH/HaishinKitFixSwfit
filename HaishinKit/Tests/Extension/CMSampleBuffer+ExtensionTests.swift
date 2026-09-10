@@ -4,8 +4,8 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite struct CMSampleBufferExtensionTests {
-    @Test func isNotSync() {
+@Suite("CMSampleBuffer：notSync 判斷") struct CMSampleBufferExtensionTests {
+    @Test("isNotSync：預設為同步") func isNotSync() {
         if let video1 = CMVideoSampleBufferFactory.makeSampleBuffer(width: 100, height: 100) {
             video1.sampleAttachments[0][.notSync] = 1
         } else {

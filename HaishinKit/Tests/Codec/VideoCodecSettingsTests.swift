@@ -4,8 +4,8 @@ import VideoToolbox
 
 @testable import HaishinKit
 
-@Suite struct VideoCodecSettingsTests {
-    @Test func keyFrameIntervalOptions_unknownFrameRate() {
+@Suite("VideoCodecSettings：關鍵幀間隔") struct VideoCodecSettingsTests {
+    @Test("未知幀率：退回 duration") func keyFrameIntervalOptions_unknownFrameRate() {
         // 無 frameInterval / expectedFrameRate / measuredFrameRate → 不再用 30fps
         // 猜測幀數約束，退回純 duration（VFR 正確機制）。
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2)
@@ -15,7 +15,7 @@ import VideoToolbox
         #expect(options.value(for: .maxKeyFrameInterval) == nil)
     }
 
-    @Test func keyFrameIntervalOptions_measuredFrameRate() {
+    @Test("實測幀率：幀數約束") func keyFrameIntervalOptions_measuredFrameRate() {
         // sample buffer 實測幀率作為幀數約束基準。
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2)
         let options = settings.makeKeyFrameIntervalOptions(measuredFrameRate: 45)
@@ -24,7 +24,7 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 90)
     }
 
-    @Test func keyFrameIntervalOptions_expectedFrameRate() {
+    @Test("預期幀率：幀數約束") func keyFrameIntervalOptions_expectedFrameRate() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2, expectedFrameRate: 23)
         let options = settings.makeKeyFrameIntervalOptions()
 
@@ -32,7 +32,7 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 46)
     }
 
-    @Test func keyFrameIntervalOptions_frameInterval() {
+    @Test("frameInterval：幀數約束") func keyFrameIntervalOptions_frameInterval() {
         var settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2)
         settings.frameInterval = VideoCodecSettings.frameInterval10
         let options = settings.makeKeyFrameIntervalOptions()
@@ -41,7 +41,7 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 21)
     }
 
-    @Test func keyFrameIntervalOptions_highExpectedFrameRate() {
+    @Test("高預期幀率：幀數約束") func keyFrameIntervalOptions_highExpectedFrameRate() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2, expectedFrameRate: 60)
         let options = settings.makeKeyFrameIntervalOptions()
 
@@ -49,7 +49,7 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 120)
     }
 
-    @Test func keyFrameIntervalOptions_zeroDurationFallsBackToDefault() {
+    @Test("duration 為 0：退回預設") func keyFrameIntervalOptions_zeroDurationFallsBackToDefault() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
         let options = settings.makeKeyFrameIntervalOptions()
 
@@ -57,7 +57,7 @@ import VideoToolbox
         #expect(options.value(for: .maxKeyFrameInterval) == nil)
     }
 
-    @Test func keyFrameIntervalOptions_zeroDurationUsesFallbackForMeasuredFrameRate() {
+    @Test("duration 為 0：實測幀率回退") func keyFrameIntervalOptions_zeroDurationUsesFallbackForMeasuredFrameRate() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
         let options = settings.makeKeyFrameIntervalOptions(measuredFrameRate: 45)
 
@@ -65,7 +65,7 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 90)
     }
 
-    @Test func makeOptions_measuredFrameRateAsExpectedFrameRateHint() {
+    @Test("實測幀率作為 expectedFrameRate") func makeOptions_measuredFrameRateAsExpectedFrameRateHint() {
         // 來源幀率未知時，用測量值當 VT expectedFrameRate hint（官方：bitrate 須與 frame rate 一致）。
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 2)
         let options = settings.makeOptions(measuredFrameRate: 45)

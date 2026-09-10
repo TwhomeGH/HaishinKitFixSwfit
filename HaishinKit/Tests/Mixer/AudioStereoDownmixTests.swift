@@ -3,7 +3,7 @@ import Testing
 
 @testable import HaishinKit
 
-@Suite final class AudioStereoDownmixTests {
+@Suite("AudioStereoDownmix：立體聲下混") final class AudioStereoDownmixTests {
     private func makeRightOnlyBuffer(_ format: AVAudioFormat, frames: Int, rightValue: Int16) -> AVAudioPCMBuffer {
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames))!
         buffer.frameLength = AVAudioFrameCount(frames)
@@ -22,7 +22,7 @@ import Testing
     /// 這正是 `AudioMixerTrack` 下混分支的假設。若 Apple 的預設 `channelMap` 會蓋掉
     /// `downmix`，這個測試會失敗 → 代表需要改成顯式設定（channelMap 非 optional，
     /// 不能用 nil 清除）。
-    @Test func stereoToMonoKeepsRightChannel() throws {
+    @Test("立體聲轉單聲道：保留右聲道") func stereoToMonoKeepsRightChannel() throws {
         let inFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 44100, channels: 2, interleaved: true)!
         let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 44100, channels: 1, interleaved: true)!
         let converter = try #require(AVAudioConverter(from: inFormat, to: outFormat))
@@ -40,7 +40,7 @@ import Testing
     }
 
     /// `channelRMS` 能分辨左右聲道（AHealth 診斷項正確性）。
-    @Test func channelRMSDetectsPerChannel() {
+    @Test("channelRMS：分辨各聲道") func channelRMSDetectsPerChannel() {
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 44100, channels: 2, interleaved: false)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024)!
         buffer.frameLength = 1024
