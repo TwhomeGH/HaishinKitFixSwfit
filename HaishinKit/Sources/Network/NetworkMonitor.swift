@@ -15,8 +15,11 @@ package final actor NetworkMonitor {
         }
     }
 
-    /// The default maximum queue bytes threshold for triggering insufficient bandwidth.
-    package static let defaultMaxQueueBytesThreshold = 512 * 1024
+    /// The default backlog duration (in seconds) that triggers insufficient
+    /// bandwidth. Normalizing the queue against the measured drain rate makes
+    /// "congestion" mean the same added latency at every bitrate, instead of an
+    /// absolute byte count (512 KB is ~0.75 s at 5.5 Mbps but ~4 s at 1 Mbps).
+    package static let defaultMaxQueueBacklogSeconds: Double = 0.75
 
     public private(set) var isRunning = false
     private var timer: Task<Void, Never>? {
@@ -42,12 +45,12 @@ package final actor NetworkMonitor {
         }
     }
     private weak var reporter: (any NetworkTransportReporter)?
-    package var maxQueueBytesThreshold: Int
+    package var maxQueueBacklogSeconds: Double
 
     /// Creates a new instance.
-    package init(_ reporter: some NetworkTransportReporter, maxQueueBytesThreshold: Int = NetworkMonitor.defaultMaxQueueBytesThreshold) {
+    package init(_ reporter: some NetworkTransportReporter, maxQueueBacklogSeconds: Double = NetworkMonitor.defaultMaxQueueBacklogSeconds) {
         self.reporter = reporter
-        self.maxQueueBytesThreshold = maxQueueBytesThreshold
+        self.maxQueueBacklogSeconds = maxQueueBacklogSeconds
     }
 
     private func collect() async throws -> NetworkMonitorEvent {
@@ -83,8 +86,14 @@ package final actor NetworkMonitor {
             currentBytesInPerSecond: currentBytesInPerSecond,
             currentBytesOutPerSecond: currentBytesOutPerSecond
         )
-        // Absolute queue size threshold: if queue exceeds max for 2 consecutive intervals, trigger insufficient BW
-        if maxQueueBytesThreshold <= queueBytesOut {
+        // Backlog-duration threshold: the queue is congested when it holds more
+        // than `maxQueueBacklogSeconds` worth of data at the measured drain
+        // rate. This is bitrate-invariant (same added latency at every rate) and
+        // naturally ignores transient VBR bursts, which drain too fast to build
+        // a meaningful backlog. If the queue stays high for 2 consecutive
+        // intervals, trigger insufficient BW.
+        let queueBacklogSeconds = Double(queueBytesOut) / Double(max(currentBytesOutPerSecond, 1))
+        if maxQueueBacklogSeconds <= queueBacklogSeconds {
             previousQueueHighCounts += 1
             if 2 <= previousQueueHighCounts {
                 previousQueueHighCounts = 0

@@ -4,6 +4,57 @@
 
 ---
 
+## 54. NetworkMonitor 佇列壅塞門檻改為 backlog 時間正規化
+
+**檔案**：`HaishinKit/Sources/Network/NetworkMonitor.swift`
+
+**問題**：壅塞觸發用絕對值 512KB。同樣的位元組數在不同碼率代表完全不同的延遲
+（512KB ≈ 5.5 Mbps 下 0.76s、1 Mbps 下 4.2s），導致低碼率串流要積到數秒延遲才被
+判定壅塞，高碼率卻在不到 0.5 秒就被判，策略行為不一致。
+
+**修正**：
+- 門檻由 `maxQueueBytesThreshold`（bytes）改為 `maxQueueBacklogSeconds`（秒，預設
+  **0.75**）。
+- 每次採樣以 `queueBytesOut / max(currentBytesOutPerSecond, 1)` 計算 backlog 秒數，
+  再與門檻比較。以**實測排空速率**（EMA）為分母，零額外 plumbing，且能自然區分
+  真壅塞與 VBR 大 keyframe 的短暫 burst（後者排空快、backlog 秒數小，不誤觸）。
+- 「連續 2 次採樣超標」與「佇列連續遞增」兩個觸發條件不變。
+
+**效果**：壅塞在不同碼率下代表相同的增加延遲（約 0.75s）。
+
+---
+
+## 53. StreamVideoAdaptiveBitRateStrategy 降速後永久釘死的修正
+
+**檔案**：`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、
+`HaishinKit/Tests/Stream/StreamBitRateStrategyTests.swift`（新增）
+
+**問題**：`lastStableBitRate` 一個變數同時被當成「`.reset` 的安全復原值」與「回升天花板」。
+降速時它被設成**降完之後的低值**，而回升天花板又取 `lastStableBitRate + max/5`；且爬升
+路徑不再更新它。結果一次壅塞降到地板後，天花板只剩 `地板 + max/5`，bitrate 永久卡在
+`max × 2/5`（max=5.5M 時卡在 2.2M），再也回不到 max。這正是 log 中
+`bitRate change from 1100000 to 2200000` 後就不再上升的原因。
+
+**修正**：
+- 拆開兩個語意：`restartBitRate`（僅供 `.reset`）與 `provenCeiling`（回升天花板）。
+- `.status` 每次成功撐過一個健康窗口就把 `provenCeiling` 提升到當前值，天花板 =
+  `provenCeiling + max/5`。目標因此能逐格自我證明爬回 max，同時仍維持「一次一步」、
+  不瞬間彈回 max（保留 CHANGES #21 的防 VBR burst 意圖）。
+- `.publishInsufficientBWOccured` 的降幅加上界 `maximumDecreasePercentage = 25`：單次
+  事件最多降 25%（AIMD 有界乘法遞減），一次網路抖動只掉一格，持續壅塞才逐格降到地板。
+  零位元組（硬停滯）仍允許標準砍半。
+- 降速後 `restartBitRate` 與 `provenCeiling` 一併下修到新目標。
+- 修正地板可能反而「拉高」低於地板之目標的邊界情況（`min(current, ...)`）。
+
+**備註**：max 的 VBR burst 已由 `dataRateLimits`（1.5× soft）與 `vbvMaxBitRate`
+（1.2× hard，iOS 26+）約束，故不再需要用「永久壓低天花板」來防 spike。
+
+**測試**：新增 `StreamBitRateStrategyTests`（7 案例）：降速受 25% 上界約束、壅塞絕不調高、
+持續壅塞逐格到地板且不低於地板、回升一次一格、回升能回到 max（回歸永久釘死 bug）、
+`.reset` 回降速後安全值、零位元組砍半。
+
+---
+
 ## 52. 音訊管線診斷 API + 混音對齊/聲道修正
 
 **檔案**：`HaishinKit/Sources/Mixer/AudioPipelineDiagnostics.swift`（新增）、
