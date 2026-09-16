@@ -21,6 +21,15 @@ package final actor NetworkMonitor {
     /// absolute byte count (512 KB is ~0.75 s at 5.5 Mbps but ~4 s at 1 Mbps).
     package static let defaultMaxQueueBacklogSeconds: Double = 0.75
 
+    /// Absolute floor (bytes) for the send queue to count as congestion. The
+    /// backlog-seconds threshold is normalized by the *measured* drain rate,
+    /// which collapses on a static / VFR source that legitimately produces
+    /// little (e.g. audio-only ~16 KB/s): 0.75 s then equals ~12 KB, so a
+    /// single keyframe or one coalesced send chunk reads as seconds of
+    /// backlog. A queue below this floor cannot add meaningful latency — it is
+    /// at most ~one send round trip — so it must never trigger a bitrate cut.
+    package static let defaultMinimumCongestionQueueBytes: Int = 128 * 1024
+
     public private(set) var isRunning = false
     private var timer: Task<Void, Never>? {
         didSet {
@@ -46,11 +55,17 @@ package final actor NetworkMonitor {
     }
     private weak var reporter: (any NetworkTransportReporter)?
     package var maxQueueBacklogSeconds: Double
+    package var minimumCongestionQueueBytes: Int
 
     /// Creates a new instance.
-    package init(_ reporter: some NetworkTransportReporter, maxQueueBacklogSeconds: Double = NetworkMonitor.defaultMaxQueueBacklogSeconds) {
+    package init(
+        _ reporter: some NetworkTransportReporter,
+        maxQueueBacklogSeconds: Double = NetworkMonitor.defaultMaxQueueBacklogSeconds,
+        minimumCongestionQueueBytes: Int = NetworkMonitor.defaultMinimumCongestionQueueBytes
+    ) {
         self.reporter = reporter
         self.maxQueueBacklogSeconds = maxQueueBacklogSeconds
+        self.minimumCongestionQueueBytes = minimumCongestionQueueBytes
     }
 
     private func collect() async throws -> NetworkMonitorEvent {
@@ -92,8 +107,16 @@ package final actor NetworkMonitor {
         // naturally ignores transient VBR bursts, which drain too fast to build
         // a meaningful backlog. If the queue stays high for 2 consecutive
         // intervals, trigger insufficient BW.
+        //
+        // The queue must ALSO clear an absolute floor. The denominator is the
+        // measured drain rate, which on a static / VFR source collapses toward
+        // audio-only; normalizing a tiny queue by that small denominator would
+        // otherwise read as a multi-second backlog and cut bitrate on a healthy
+        // link. A queue below the floor is at most ~one send round trip, so it
+        // cannot add meaningful latency.
+        let congestedQueue = minimumCongestionQueueBytes <= queueBytesOut
         let queueBacklogSeconds = Double(queueBytesOut) / Double(max(currentBytesOutPerSecond, 1))
-        if maxQueueBacklogSeconds <= queueBacklogSeconds {
+        if congestedQueue, maxQueueBacklogSeconds <= queueBacklogSeconds {
             previousQueueHighCounts += 1
             if 2 <= previousQueueHighCounts {
                 previousQueueHighCounts = 0
@@ -107,12 +130,16 @@ package final actor NetworkMonitor {
             defer {
                 previousQueueBytesOut.removeFirst()
             }
-            var total = 0
-            for i in 0..<previousQueueBytesOut.count - 1 where previousQueueBytesOut[i] < previousQueueBytesOut[i + 1] {
-                total += 1
-            }
-            if measureInterval - 1 <= total {
-                return .publishInsufficientBWOccured(report: eventReport)
+            // The legacy monotonic-growth heuristic must respect the same floor:
+            // a queue that is merely growing from zero is not congestion.
+            if congestedQueue {
+                var total = 0
+                for i in 0..<previousQueueBytesOut.count - 1 where previousQueueBytesOut[i] < previousQueueBytesOut[i + 1] {
+                    total += 1
+                }
+                if measureInterval - 1 <= total {
+                    return .publishInsufficientBWOccured(report: eventReport)
+                }
             }
         }
         return .status(report: eventReport)

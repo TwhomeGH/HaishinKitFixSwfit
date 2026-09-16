@@ -60,14 +60,41 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     }
 
     public func adjustBitrate(_ event: NetworkMonitorEvent, stream: some StreamConvertible) async {
+        // Read the current settings first, then decide synchronously. `stream`
+        // is a different actor, so every `await` on it is a suspension point;
+        // if the counter read-modify-write lived across those awaits, a second
+        // event could re-enter this actor and double-apply one event (two 25%
+        // cuts for a single congestion, or two climbs for one healthy window).
+        // Keeping the entire decision inside `decide(...)` — which has no
+        // `await` — makes it atomic.
+        let currentVideo = await stream.videoSettings
+        let currentAudio = await stream.audioSettings
+        guard var videoSettings = decide(event, video: currentVideo, audio: currentAudio) else {
+            return
+        }
+        if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
+            deriveVBV(&videoSettings)
+        }
+        try? await stream.setVideoSettings(videoSettings)
+    }
+
+    /// Synchronous, actor-isolated decision. Performs every counter
+    /// read-modify-write without a suspension point, so a reentrant
+    /// `adjustBitrate` can never interleave and double-apply one event.
+    /// Returns the settings to apply, or `nil` when the target is unchanged.
+    private func decide(
+        _ event: NetworkMonitorEvent,
+        video currentVideo: VideoCodecSettings,
+        audio audioSettings: AudioCodecSettings
+    ) -> VideoCodecSettings? {
         switch event {
         case .status:
-            var videoSettings = await stream.videoSettings
-            if videoSettings.bitRate == mamimumVideoBitRate {
+            if currentVideo.bitRate == mamimumVideoBitRate {
                 insufficientBWCounts = 0
                 provenCeiling = mamimumVideoBitRate
-                return
+                return nil
             }
+            var videoSettings = currentVideo
             if Self.statusCountsThreshold <= sufficientBWCounts {
                 let incremental = mamimumVideoBitRate / 5
                 // The rate that just held through a full healthy window is now
@@ -79,25 +106,25 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
                 provenCeiling = max(provenCeiling, videoSettings.bitRate)
                 let ceiling = min(mamimumVideoBitRate, provenCeiling + incremental)
                 videoSettings.bitRate = min(videoSettings.bitRate + incremental, ceiling)
-                if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
-                    deriveVBV(&videoSettings)
-                }
-                try? await stream.setVideoSettings(videoSettings)
                 sufficientBWCounts = 0
-            } else {
-                sufficientBWCounts += 1
+                // Decrement cooldown when healthy
+                if 0 < insufficientBWCounts {
+                    insufficientBWCounts -= 1
+                }
+                return videoSettings
             }
+            sufficientBWCounts += 1
             // Decrement cooldown when healthy
             if 0 < insufficientBWCounts {
                 insufficientBWCounts -= 1
             }
+            return nil
         case .publishInsufficientBWOccured(let report):
             sufficientBWCounts = 0
             guard insufficientBWCounts == 0 else {
-                return
+                return nil
             }
-            var videoSettings = await stream.videoSettings
-            let audioSettings = await stream.audioSettings
+            var videoSettings = currentVideo
             let currentBitRate = videoSettings.bitRate
             let minimumBitRate = mamimumVideoBitRate / 5
             if 0 < report.currentBytesOutPerSecond {
@@ -123,17 +150,14 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
                 videoSettings.bitRate = min(currentBitRate, max(currentBitRate / 2, minimumBitRate))
             }
             insufficientBWCounts = Self.insufficientBWCooldown
-            if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
-                deriveVBV(&videoSettings)
-            }
-            try? await stream.setVideoSettings(videoSettings)
             // The pre-drop rate just proved unsustainable: lower the proven
             // ceiling to the new conservative target and remember it as the
             // safe rate for a post-reconnect `.reset`.
             restartBitRate = videoSettings.bitRate
             provenCeiling = videoSettings.bitRate
+            return videoSettings
         case .reset:
-            var videoSettings = await stream.videoSettings
+            var videoSettings = currentVideo
             insufficientBWCounts = 0
             sufficientBWCounts = 0
             // Restore the last safe rate instead of the configured maximum.
@@ -142,10 +166,7 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             let restoredBitRate = 0 < restartBitRate ? restartBitRate : mamimumVideoBitRate
             videoSettings.bitRate = restoredBitRate
             provenCeiling = restoredBitRate
-            if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
-                deriveVBV(&videoSettings)
-            }
-            try? await stream.setVideoSettings(videoSettings)
+            return videoSettings
         }
     }
 }

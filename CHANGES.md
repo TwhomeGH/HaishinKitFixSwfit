@@ -4,6 +4,56 @@
 
 ---
 
+## 55. ABR actor 重入競態、靜態畫面壅塞誤判、watchdog 誤殺閒置來源
+
+**檔案**：`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、
+`HaishinKit/Sources/Network/NetworkMonitor.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
+`HaishinKit/Tests/Stream/StreamBitRateStrategyTests.swift`
+
+### 55a. `StreamVideoAdaptiveBitRateStrategy` actor reentrancy
+
+**問題**：`adjustBitrate` 在自己的計數器讀寫之間夾著 `await`（`stream.videoSettings`
+/`audioSettings`/`setVideoSettings`）。`stream` 是另一個 actor，這些 await 是
+suspension point，actor 因此可重入——下一個事件能在上一個事件寫回計數器前進來：
+- `.publishInsufficientBWOccured` 的 `guard insufficientBWCounts == 0` 在
+  `await stream.videoSettings` **之前**，而計數器要到寫入後才更新 → 兩個事件可同時
+  通過 guard，同一格事件砍兩次 25%（合計 ~44%）。
+- `.status` 的 `sufficientBWCounts = 0` 在 `await setVideoSettings` **之後** → 兩個
+  事件可同時看到門檻成立，一個健康窗口爬兩格。
+
+**修正**：把決策抽成**同步**的 actor 方法 `decide(_:video:audio:)`（內部無 `await`），
+所有計數器 read-modify-write 在其中原子完成；`adjustBitrate` 只負責先 `await` 讀出
+settings、呼叫 `decide`、再 `await setVideoSettings`。同一事件不可能被套用兩次。
+
+**測試**：新增「同一壅塞事件併發只套用一次」案例（共 8 案例）。
+
+### 55b. NetworkMonitor backlog 門檻加絕對下限
+
+**問題**：backlog 秒數以**實測排空速率**為分母。靜態 / VFR 來源合法地幾乎不產出時，
+速率塌到只剩音訊（~16 KB/s），0.75s 只等於 ~12 KB；而 `queueBytesOut` 也包含 peek
+出去正在送的 coalesced chunk，於是單一 keyframe 或一個 send chunk 會被讀成「數秒
+backlog」→ 健康鏈路被誤判壅塞、砍碼率並把 `provenCeiling`/`restartBitRate` 釘低
+（且會自我強化）。CHANGES #54 的「bitrate-invariant」只在來源真的以目標速率產出時成立。
+
+**修正**：新增 `minimumCongestionQueueBytes`（預設 128 KB）。壅塞需同時滿足
+`queueBytesOut >= floor` **且** backlog 秒數超標；「佇列連續遞增」的 legacy 觸發也
+一併受此下限約束。低於下限的佇列最多只是一個 send round trip，不可能造成有意義延遲。
+（低速率下 128 KB = 1s，仍遠優於舊的 512 KB = 4.2s。）
+
+### 55c. Liveness watchdog 不再誤殺閒置來源
+
+**問題**：watchdog 假設「audio 永不 shed，正常推流 bytes-out 必持續前進」。這個假設在
+**沒有持續輸出音軌的 VFR 螢幕擷取（純 video / 只掛 .audioApp）且畫面全靜止**時不成立：
+來源不產幀、RTMP 客戶端也沒有 keepalive ping，兩個位元組計數一起凍結 → 8s 後
+force close socket → 重連，健康鏈路被斷開。
+
+**修正**：只有當 socket 送佇列非空（`backpressureSignal.queueBytesCurrent > 0`）時才把
+該區間計為 silent。佇列非空代表「有資料送不出去」，才是真正的半開連線徵狀；來源閒置
+時佇列為 0，不計入、不誤殺。來源恢復產出後偵測能力不變。
+
+---
+
 ## 54. NetworkMonitor 佇列壅塞門檻改為 backlog 時間正規化
 
 **檔案**：`HaishinKit/Sources/Network/NetworkMonitor.swift`

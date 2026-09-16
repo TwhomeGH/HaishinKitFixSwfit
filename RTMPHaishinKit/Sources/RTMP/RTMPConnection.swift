@@ -800,8 +800,14 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// `silentIntervalsThreshold` consecutive 1s monitor intervals on a link
     /// that previously carried traffic, force the socket closed — the recv
     /// loop exits, and the existing disconnect/reconnect path in
-    /// `performConnect` takes over. Audio is never shed, so an active publish
-    /// always advances totalBytesOut; silence means the transport is dead.
+    /// `performConnect` takes over.
+    ///
+    /// A frozen byte count is only evidence of a dead link when the socket is
+    /// actually failing to push data: an idle source (VFR screen with no
+    /// changes and no continuously-sending audio track) legitimately produces
+    /// zero bytes out, and killing it would disconnect a healthy link. So the
+    /// watchdog only counts an interval when the send queue is non-empty — the
+    /// real half-open signature (data queued, nothing draining, nothing in).
     private func checkLiveness(_ report: NetworkMonitorReport) {
         let moved = report.totalBytesIn != lastActivityBytesIn || report.totalBytesOut != lastActivityBytesOut
         lastActivityBytesIn = report.totalBytesIn
@@ -812,6 +818,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             return
         }
         guard state == .connected, hasSeenActivity else {
+            silentIntervals = 0
+            return
+        }
+        // No pending output → the source is idle, not the link. Skip.
+        guard 0 < backpressureSignal.queueBytesCurrent else {
             silentIntervals = 0
             return
         }

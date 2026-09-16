@@ -143,6 +143,22 @@ struct StreamBitRateStrategyTests {
         let bitRate = await stream.videoSettings.bitRate
         #expect(bitRate == Self.maximumBitRate / 2)
     }
+
+    @Test("同一壅塞事件併發只套用一次（actor reentrancy 回歸）")
+    func concurrentCongestionAppliesOnce() async {
+        let strategy = Self.makeStrategy()
+        let stream = Self.makeStream()
+
+        // 兩個事件併發：修復前兩者都會在 `await stream.videoSettings` 之後才
+        // 通過 `insufficientBWCounts == 0`，造成同一格事件砍兩次（max → 75%
+        // → 56.25%）。決策改為同步原子後，第二個事件必定看到冷卻計數而略過。
+        async let first: Void = strategy.adjustBitrate(.publishInsufficientBWOccured(report: Self.congestedReport()), stream: stream)
+        async let second: Void = strategy.adjustBitrate(.publishInsufficientBWOccured(report: Self.congestedReport()), stream: stream)
+        _ = await (first, second)
+
+        let bitRate = await stream.videoSettings.bitRate
+        #expect(bitRate == Self.maximumBitRate * 75 / 100)
+    }
 }
 
 /// 只實作 ABR 需要的讀寫（`videoSettings` / `audioSettings` / `setVideoSettings`），
