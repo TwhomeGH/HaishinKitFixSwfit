@@ -4,6 +4,42 @@
 
 ---
 
+## 57. OutgoingStream 執行緒安全 + keepalive 純型別化與測試
+
+**檔案**：`HaishinKit/Sources/Stream/OutgoingStream.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPKeepAlive.swift`（新）、
+`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
+`HaishinKit/Tests/Stream/OutgoingStreamTests.swift`（新）、
+`RTMPHaishinKit/Tests/RTMP/RTMPKeepAliveTests.swift`（新）、
+`.cortexkit/verify-keepalive.swift`（新）
+
+### 57a. OutgoingStream 加鎖（消除 data race）
+
+**診斷**：`OutgoingStream` 是 `@unchecked Sendable` 但**沒有任何鎖**，可變狀態被擷取 /
+mixer 執行緒（`append`）與 stream actor（`videoSettings` / `setVideoInputBufferCounts`
+/ `prepareVideoInputStream` / `start/stopRunning`）同時讀寫；`_videoInputStream` 的
+check-then-act 惰性建立可產生重複 stream。`VideoCodec` 本身也無鎖（對比 `AudioCodec`）。
+
+**修正**：加 `NSRecursiveLock`（惰性建立會在 `AsyncStream` init 內設定 continuation，
+且 `videoSettings` 重算會讀其他鎖內狀態，需可重入）；所有可變狀態與對
+`VideoCodec`/`AudioCodec` 的存取都在鎖內；`yield` 移到鎖外。
+
+**測試**：`OutgoingStreamTests`（自動計算、覆寫/還原、併發存取 smoke；Apple 端建議
+配 Thread Sanitizer）。
+
+### 57b. keepalive 抽成純型別 `RTMPKeepAlive` + 測試
+
+**修正**：把 #56b 的 keepalive 狀態機從 `RTMPConnection` 抽成 Foundation-only 的
+`RTMPKeepAlive`（`tick(now:inboundBytes:) -> Decision`、`onPong()`、`reset(now:)`），
+`RTMPConnection` 只負責驅動與執行決策。可單元測試、不依賴 AVFoundation。
+
+**測試**：`RTMPKeepAliveTests`（6 案例）。非 Apple 平台用
+`.cortexkit/verify-keepalive.swift` 搭配**真實原始碼**以 swiftc 編譯執行——已全數
+通過，並在過程中抓到「停用 pong 偵測後仍重複回報 `.disablePongDetection`」的 bug 並
+修正。
+
+---
+
 ## 56. 連線診斷強化：connect/handshake 逾時、keepalive ping、onLog always 通道
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、

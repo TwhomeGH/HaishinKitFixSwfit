@@ -334,17 +334,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public let keepAlivePongTimeout: UInt64
     public let maxUnansweredPings: Int
     private var keepAliveTask: Task<Void, Never>?
-    private var keepAliveValue: Int32 = 0
-    private var pendingPingSentAt: Date?
-    private var lastPingSentAt: Date = .distantPast
-    /// Inbound byte count (from the last monitor report) when the outstanding
-    /// ping was sent. Any advance since then proves the link is alive even if
-    /// the server never sends a PongResponse.
-    private var bytesInAtPing = 0
-    private var unansweredPings = 0
-    /// nil = unknown (no pong yet), true = server answers pings (pong timeout
-    /// is a real death signal), false = server does not answer (kill disabled).
-    private var pongSupported: Bool?
+    /// Pure, unit-testable state machine (see RTMPKeepAlive.swift).
+    private var keepAlive = RTMPKeepAlive()
 
     /// Creates a new connection with E-RTMP command parameters.
     ///
@@ -625,13 +616,14 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// reconnect doesn't stack timers.
     private func startKeepAlive() {
         stopKeepAlive()
-        lastPingSentAt = Date()
-        pendingPingSentAt = nil
-        unansweredPings = 0
-        keepAliveValue = 0
+        keepAlive = RTMPKeepAlive(
+            interval: Double(keepAliveInterval),
+            pongTimeout: Double(keepAlivePongTimeout),
+            maxUnansweredProbes: maxUnansweredPings
+        )
         // Re-probe the new peer: a previous server that ignored pings must not
         // pin pong-based detection off for this connection.
-        pongSupported = nil
+        keepAlive.reset(now: Date())
         keepAliveTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -644,47 +636,27 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     private func stopKeepAlive() {
         keepAliveTask?.cancel()
         keepAliveTask = nil
-        pendingPingSentAt = nil
     }
 
     private func tickKeepAlive() async {
         guard state == .connected else {
             return
         }
-        let now = Date()
-        if let sentAt = pendingPingSentAt {
-            guard now.timeIntervalSince(sentAt) >= Double(keepAlivePongTimeout) else {
-                return
-            }
-            pendingPingSentAt = nil
-            if lastActivityBytesIn != bytesInAtPing {
-                // Any inbound since the ping (pong or ordinary server traffic)
-                // proves the link is alive; a specific pong is not required.
-                unansweredPings = 0
-            } else if pongSupported == true {
-                log(.error, "Keepalive pong timeout, forcing reconnect",
-                    detail: "value=\(keepAliveValue) timeout=\(keepAlivePongTimeout)s unanswered=\(unansweredPings)",
-                    always: true)
-                await socket?.close()
-                return
-            } else {
-                unansweredPings += 1
-                if maxUnansweredPings <= unansweredPings {
-                    pongSupported = false
-                    log(.warn, "Server does not answer keepalive pings; disabling pong-based death detection",
-                        detail: "unanswered=\(unansweredPings)",
-                        always: true)
-                }
-            }
+        switch keepAlive.tick(now: Date(), inboundBytes: lastActivityBytesIn) {
+        case .none:
+            break
+        case .probe(let value):
+            doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .ping, value: value))
+        case .declareDead:
+            log(.error, "Keepalive pong timeout, forcing reconnect",
+                detail: "value=\(keepAlive.value) timeout=\(keepAlivePongTimeout)s",
+                always: true)
+            await socket?.close()
+        case .disablePongDetection:
+            log(.warn, "Server does not answer keepalive pings; disabling pong-based death detection",
+                detail: "unanswered=\(keepAlive.unansweredProbes)",
+                always: true)
         }
-        guard now.timeIntervalSince(lastPingSentAt) >= Double(keepAliveInterval) else {
-            return
-        }
-        lastPingSentAt = now
-        pendingPingSentAt = now
-        bytesInAtPing = lastActivityBytesIn
-        keepAliveValue = keepAliveValue &+ 1
-        doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .ping, value: keepAliveValue))
     }
 
     /// Fails a connect whose RTMP handshake / connect-command response never
@@ -1072,9 +1044,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .pong, value: message.value))
                 case .pong:
                     // Positive liveness: the server answered our keepalive ping.
-                    pongSupported = true
-                    unansweredPings = 0
-                    pendingPingSentAt = nil
+                    keepAlive.onPong()
                 default:
                     for stream in streams where await stream.id == message.value {
                         Task { await stream.dispatch(message, type: type) }
