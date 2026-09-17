@@ -499,3 +499,102 @@ jobs:
           name: haishinkit-macos-swift-test-logs
           path: .build/haishinkit-macos-test-results
           if-no-files-found: error
+
+  haishinkit-tsan:
+    name: HaishinKit macOS tests (Thread Sanitizer)
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Print toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Run OutgoingStream tests under Thread Sanitizer
+        id: tsan
+        shell: bash
+        run: |
+          set +e
+          result_dir=".build/haishinkit-tsan-results"
+          mkdir -p "${result_dir}"
+          scheme="HaishinKit-Package"
+          # 併發/鎖的正確性只在 TSan 下才驗得到；範圍限縮到 OutgoingStreamTests
+          # 以免既有的無關 race 讓這個 job 恆紅。
+          test_filter="HaishinKitTests/OutgoingStreamTests"
+          destination="platform=macOS"
+          status=0
+          : > "${result_dir}/tsan-tests.log"
+          : > "${result_dir}/summary.md"
+          : > "${result_dir}/failures.md"
+          rm -rf "${result_dir}/HaishinKitTSan.xcresult"
+          echo "[info] Running ${test_filter} under Thread Sanitizer on ${destination}"
+          xcodebuild test \
+            -scheme "${scheme}" \
+            -destination "${destination}" \
+            -only-testing:"${test_filter}" \
+            -enableThreadSanitizer YES \
+            -resultBundlePath "${result_dir}/HaishinKitTSan.xcresult" \
+            2>&1 | tee "${result_dir}/tsan-tests.log"
+          status=${PIPESTATUS[0]}
+          # 防止 filter 打錯導致「0 個測試」卻 exit 0 的假綠燈。
+          if ! grep -q "OutgoingStreamTests" "${result_dir}/tsan-tests.log"; then
+            echo "[error] no OutgoingStreamTests were executed (filter typo?)"
+            echo "- FAIL: filter matched no tests" >> "${result_dir}/failures.md"
+            status=1
+          fi
+          if [ "${status}" -eq 0 ]; then
+            echo "[pass] Thread Sanitizer reported no data races"
+            echo "- PASS: OutgoingStreamTests under Thread Sanitizer" >> "${result_dir}/summary.md"
+          else
+            echo "[error] Thread Sanitizer reported issues or the build failed"
+            {
+              echo "- FAIL: OutgoingStreamTests under Thread Sanitizer, exit code \`${status}\`"
+              echo
+              echo "#### Diagnostics"
+              grep -n -E "WARNING: ThreadSanitizer|SUMMARY: ThreadSanitizer|data race|^error:|^/.+:[0-9]+:[0-9]+: error:" "${result_dir}/tsan-tests.log" | head -n 120 || true
+            } >> "${result_dir}/failures.md"
+          fi
+          echo "${status}" > "${result_dir}/exit-code"
+
+      - name: Summarize Thread Sanitizer results
+        if: always()
+        shell: bash
+        run: |
+          result_dir=".build/haishinkit-tsan-results"
+          status="$(cat "${result_dir}/exit-code" 2>/dev/null || echo 1)"
+          {
+            echo "### HaishinKit Thread Sanitizer"
+            echo
+            if [ -s "${result_dir}/summary.md" ]; then
+              cat "${result_dir}/summary.md"
+            fi
+            if [ -s "${result_dir}/failures.md" ]; then
+              echo
+              echo "### Thread Sanitizer findings"
+              cat "${result_dir}/failures.md"
+            fi
+            echo
+            echo "- Final exit code: \`${status}\`"
+            echo
+            echo "<details><summary>Last 200 log lines</summary>"
+            echo
+            echo '```text'
+            tail -n 200 "${result_dir}/tsan-tests.log"
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"
+
+      - name: Upload Thread Sanitizer log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: haishinkit-tsan-logs
+          path: .build/haishinkit-tsan-results
+          if-no-files-found: error
