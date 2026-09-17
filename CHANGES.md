@@ -8,8 +8,9 @@
 
 **檔案**：`.github/workflows/swift-tests.yml`
 
-新增 `haishinkit-tsan` job（macOS），以
-`xcodebuild test -enableThreadSanitizer YES -only-testing:HaishinKitTests/OutgoingStreamTests`
+新增 `haishinkit-tsan` job，以 matrix 同時跑 **macOS 與 iOS Simulator**（與既有測試
+矩陣一致）：
+`xcodebuild test -enableThreadSanitizer YES -only-testing:HaishinKitTests/OutgoingStreamTests`，
 驗證 CHANGES #57a 的鎖在併發下沒有 data race。範圍刻意限縮在 `OutgoingStreamTests`，
 避免既有的無關 race 讓 job 恆紅；job 內另加「filter 沒匹配到測試就失敗」的守門，
 避免 filter 打錯造成「0 個測試卻綠燈」的假陽性。

@@ -501,9 +501,13 @@ jobs:
           if-no-files-found: error
 
   haishinkit-tsan:
-    name: HaishinKit macOS tests (Thread Sanitizer)
+    name: HaishinKit tests (Thread Sanitizer, ${{ matrix.platform }})
     runs-on: macos-26
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macOS, iOS]
 
     steps:
       - name: Checkout
@@ -515,18 +519,33 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Resolve destination
+        id: destination
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "macOS" ]; then
+            echo "value=platform=macOS" >> "${GITHUB_OUTPUT}"
+          else
+            device_name="$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone[^()]*\) (.*/\1/p' | head -n 1)"
+            if [ -z "${device_name}" ]; then
+              device_name="iPhone 17"
+            fi
+            echo "value=platform=iOS Simulator,name=${device_name},OS=latest" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Run OutgoingStream tests under Thread Sanitizer
         id: tsan
         shell: bash
         run: |
           set +e
-          result_dir=".build/haishinkit-tsan-results"
+          platform="${{ matrix.platform }}"
+          result_dir=".build/haishinkit-tsan-${platform}"
           mkdir -p "${result_dir}"
           scheme="HaishinKit-Package"
           # 併發/鎖的正確性只在 TSan 下才驗得到；範圍限縮到 OutgoingStreamTests
           # 以免既有的無關 race 讓這個 job 恆紅。
           test_filter="HaishinKitTests/OutgoingStreamTests"
-          destination="platform=macOS"
+          destination="${{ steps.destination.outputs.value }}"
           status=0
           : > "${result_dir}/tsan-tests.log"
           : > "${result_dir}/summary.md"
@@ -548,12 +567,12 @@ jobs:
             status=1
           fi
           if [ "${status}" -eq 0 ]; then
-            echo "[pass] Thread Sanitizer reported no data races"
-            echo "- PASS: OutgoingStreamTests under Thread Sanitizer" >> "${result_dir}/summary.md"
+            echo "[pass] Thread Sanitizer reported no data races (${platform})"
+            echo "- PASS: OutgoingStreamTests under Thread Sanitizer (${platform})" >> "${result_dir}/summary.md"
           else
-            echo "[error] Thread Sanitizer reported issues or the build failed"
+            echo "[error] Thread Sanitizer reported issues or the build failed (${platform})"
             {
-              echo "- FAIL: OutgoingStreamTests under Thread Sanitizer, exit code \`${status}\`"
+              echo "- FAIL: OutgoingStreamTests under Thread Sanitizer (${platform}), exit code \`${status}\`"
               echo
               echo "#### Diagnostics"
               grep -n -E "WARNING: ThreadSanitizer|SUMMARY: ThreadSanitizer|data race|^error:|^/.+:[0-9]+:[0-9]+: error:" "${result_dir}/tsan-tests.log" | head -n 120 || true
@@ -565,10 +584,11 @@ jobs:
         if: always()
         shell: bash
         run: |
-          result_dir=".build/haishinkit-tsan-results"
+          platform="${{ matrix.platform }}"
+          result_dir=".build/haishinkit-tsan-${platform}"
           status="$(cat "${result_dir}/exit-code" 2>/dev/null || echo 1)"
           {
-            echo "### HaishinKit Thread Sanitizer"
+            echo "### HaishinKit Thread Sanitizer (${platform})"
             echo
             if [ -s "${result_dir}/summary.md" ]; then
               cat "${result_dir}/summary.md"
@@ -595,6 +615,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: haishinkit-tsan-logs
-          path: .build/haishinkit-tsan-results
+          name: haishinkit-tsan-logs-${{ matrix.platform }}
+          path: .build/haishinkit-tsan-${{ matrix.platform }}
           if-no-files-found: error
