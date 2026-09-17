@@ -112,7 +112,7 @@ try await session.stream.publish("streamKey")
 | [測試](TESTING.md) | 測試結構與執行 |
 | [故障排除](TROUBLESHOOTING.md) | 常見問題與解決方案 |
 | [日誌架構](LOGGING.md) | 遠端日誌：logger 多 handler 並存 + connection.onLog 轉送 |
-| [TODO / 計畫](TODO.md) | 已規劃未實作項目（目前：RTMP keepalive ping 狀態機） |
+| [TODO / 計畫](TODO.md) | 已規劃未實作項目（目前：keepalive 純型別化 + 測試、OutgoingStream 執行緒安全） |
 
 ## 相依性
 

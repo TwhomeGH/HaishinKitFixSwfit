@@ -88,7 +88,7 @@ public actor SRTStream {
             }
         }
         Task {
-            for await buffer in outgoing.videoInputStream {
+            for await buffer in outgoing.prepareVideoInputStream() {
                 outgoing.append(video: buffer)
             }
         }
@@ -152,6 +152,10 @@ public actor SRTStream {
     }
 
     private func startMixerInputConsumers() {
+        // Compute the auto buffer count for the current resolution *before* the
+        // mixer consumer stream below captures it into its buffering policy.
+        // (RTMPStream does this via prepareVideoInputStream() at publish start.)
+        _ = outgoing.prepareVideoInputStream()
         let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
         let (videoStream, videoContinuation) = AsyncStream.makeStream(
             of: CMSampleBuffer.self,

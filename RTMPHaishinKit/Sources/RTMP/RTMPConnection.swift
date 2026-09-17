@@ -57,6 +57,16 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public static let defaultReconnectBaseDelay: UInt64 = 1
     /// The default reconnect max delay in seconds.
     public static let defaultReconnectMaxDelay: UInt64 = 30
+    /// Seconds between keepalive PingRequests while connected. Must stay well
+    /// under the ~60s idle-flow reaping window of NAT / carrier gateways.
+    public static let defaultKeepAliveInterval: UInt64 = 20
+    /// Seconds to wait for a PongResponse before treating the link as dead.
+    /// Only enforced after the server has proven it answers pings.
+    public static let defaultKeepAlivePongTimeout: UInt64 = 5
+    /// Consecutive unanswered pings after which pong-based death detection is
+    /// disabled (server does not implement PingResponse). Pings keep being sent
+    /// so the idle path stays warm; only the kill is disabled.
+    public static let defaultMaxUnansweredPings: Int = 3
     /// The supported audio fourCc Information.
     public static let supportedAudioFourCcInfoMap: AMFObject = [
         RTMPAudioFourCC.opus.description: FourCcInfoMask.canEncode.rawValue
@@ -294,13 +304,17 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         didSet {
             logger.info(oldValue, "=>", state)
             connected = (state == .connected)
-            log(.info, "State: \(oldValue) => \(state)")
+            log(.info, "State: \(oldValue) => \(state)", always: true)
         }
     }
     private var command: String = ""
     private var reconnectAttempts = 0
     private var isReconnecting = false
     private var reconnectionTask: Task<Void, Never>?
+    /// Monotonic token identifying the current connect attempt. A connect
+    /// timeout timer captures the value and only fires if it still matches, so
+    /// a stale timer from a previous attempt can never tear down a newer one.
+    private var connectGeneration = 0
     /// Liveness watchdog state: consecutive 1s monitor intervals where neither
     /// totalBytesIn nor totalBytesOut moved. A silently dead link (half-open
     /// TCP, radio drop) never errors NWConnection, so the recv loop would block
@@ -310,6 +324,27 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     private var lastActivityBytesIn = 0
     private var lastActivityBytesOut = 0
     private var hasSeenActivity = false
+
+    /// Keepalive configuration. An RTMP User Control PingRequest is sent every
+    /// `keepAliveInterval` seconds while connected: it keeps the NAT/carrier
+    /// path warm (an idle TCP flow can be reaped at ~60s) and, once the server
+    /// answers with a PongResponse, gives a positive liveness signal that
+    /// detects a half-open link even when the app has nothing to publish.
+    public let keepAliveInterval: UInt64
+    public let keepAlivePongTimeout: UInt64
+    public let maxUnansweredPings: Int
+    private var keepAliveTask: Task<Void, Never>?
+    private var keepAliveValue: Int32 = 0
+    private var pendingPingSentAt: Date?
+    private var lastPingSentAt: Date = .distantPast
+    /// Inbound byte count (from the last monitor report) when the outstanding
+    /// ping was sent. Any advance since then proves the link is alive even if
+    /// the server never sends a PongResponse.
+    private var bytesInAtPing = 0
+    private var unansweredPings = 0
+    /// nil = unknown (no pong yet), true = server answers pings (pong timeout
+    /// is a real death signal), false = server does not answer (kill disabled).
+    private var pongSupported: Bool?
 
     /// Creates a new connection with E-RTMP command parameters.
     ///
@@ -338,6 +373,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         maxReconnectAttempts: Int = RTMPConnection.defaultMaxReconnectAttempts,
         reconnectBaseDelay: UInt64 = RTMPConnection.defaultReconnectBaseDelay,
         reconnectMaxDelay: UInt64 = RTMPConnection.defaultReconnectMaxDelay,
+        keepAliveInterval: UInt64 = RTMPConnection.defaultKeepAliveInterval,
+        keepAlivePongTimeout: UInt64 = RTMPConnection.defaultKeepAlivePongTimeout,
+        maxUnansweredPings: Int = RTMPConnection.defaultMaxUnansweredPings,
         minimumLogLevel: RTMPLogLevel = .info) {
         self.swfUrl = swfUrl
         self.pageUrl = pageUrl
@@ -354,6 +392,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.maxReconnectAttempts = maxReconnectAttempts
         self.reconnectBaseDelay = reconnectBaseDelay
         self.reconnectMaxDelay = reconnectMaxDelay
+        self.keepAliveInterval = keepAliveInterval
+        self.keepAlivePongTimeout = keepAlivePongTimeout
+        self.maxUnansweredPings = maxUnansweredPings
         self.minimumLogLevel = minimumLogLevel
         // 最早註冊 logger 轉送：catch mixer/codec 的啟動期一發性日誌
         // （例如音訊軌來源格式），不必等 connect。
@@ -386,7 +427,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 guard let operation = operations.removeValue(forKey: message.transactionId) else {
                     return
                 }
-                log(.error, "Command timeout", detail: "cmd=\(commandName) txn=\(message.transactionId)")
+                log(.error, "Command timeout", detail: "cmd=\(commandName) txn=\(message.transactionId)", always: true)
                 operation.resume(throwing: Error.requestTimedOut)
             }
             operations[message.transactionId] = continutation
@@ -456,6 +497,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         chunks.removeAll()
         sequence = 0
         state = .connecting
+        connectGeneration += 1
+        let generation = connectGeneration
         chunkSizeC = RTMPChunkMessageHeader.chunkSize
         chunkSizeS = RTMPChunkMessageHeader.chunkSize
         currentTransactionId = Self.connectTransactionId
@@ -463,7 +506,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         await socket?.setBackpressureSignal(backpressureSignal)
         let logLevel = minimumLogLevel
         await socket?.setOnLog { [weak self, logLevel] event in
-            guard event.level.severity >= logLevel.severity else {
+            // `always` events (socket lifecycle / faults) bypass the verbosity
+            // filter so a production `minimumLogLevel = .warn` still gets the
+            // connect/close/reconnect story. High-frequency events stay gated.
+            guard event.always || event.level.severity >= logLevel.severity else {
                 return
             }
             Task { [weak self] in
@@ -472,7 +518,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
         }
         networkMonitor = await socket?.makeNetworkMonitor()
-        log(.info, "HaishinKit revision", detail: kHaishinKitRevision)
+        log(.info, "HaishinKit revision", detail: kHaishinKitRevision, always: true)
         // 把 HaishinKit logger（os_log 之外的 module logger）輸出轉送到
         // connection.onLog，讓 app 不需 Xcode 就能把 framework 內部日誌（如
         // 音訊軌來源格式、resync、stall 偵測）送到伺服器。close() 時解除。
@@ -493,19 +539,30 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             let result: RTMPResponse = try await withCheckedThrowingContinuation { continutation in
                 Task {
                     do {
-                        log(.info, "TCP connecting", detail: "\(host):\(uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))")
+                        log(.info, "TCP connecting", detail: "\(host):\(uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))", always: true)
                         try await socket.connect(host, port: uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))
                     } catch {
-                        log(.error, "TCP connect failed", detail: "\(error)")
+                        log(.error, "TCP connect failed", detail: "\(error)", always: true)
                         state = .error
                         continutation.resume(throwing: error)
                         return
                     }
                     do {
-                        log(.info, "TCP connected, sending C0C1")
+                        log(.info, "TCP connected, sending C0C1", always: true)
                         state = .versionSent
                         await socket.send(handshake.c0c1packet)
                         operations[Self.connectTransactionId] = continutation
+                        // Overall connect timeout. The socket's own timeout only
+                        // guards the TCP-connect continuation, so a server that
+                        // accepts TCP but stalls the RTMP handshake (S0S1/S2) or
+                        // never answers the connect command would otherwise hang
+                        // forever (no reconnect would ever fire). `timeout`
+                        // (default 15s) now covers the whole exchange.
+                        let connectTimeout = timeout
+                        Task { [weak self] in
+                            try? await Task.sleep(nanoseconds: UInt64(connectTimeout) * 1_000_000_000)
+                            await self?.timeoutConnectIfPending(generation: generation)
+                        }
                         for await data in await socket.recv() {
                             try await listen(data)
                         }
@@ -516,7 +573,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                             try? await close()
                         }
                     } catch {
-                        log(.error, "Socket recv loop ended with error", detail: "\(error)")
+                        log(.error, "Socket recv loop ended with error", detail: "\(error)", always: true)
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
                             try? await close()
                             await startReconnection()
@@ -531,6 +588,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     dispatch(event)
                 }
             }
+            startKeepAlive()
             return result
         } catch let error as RTMPSocket.Error {
             outputContinuation?.finish()
@@ -561,6 +619,87 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
 
+    // MARK: Keepalive
+
+    /// Starts the 1s-tick keepalive loop. Cancels any previous loop so a
+    /// reconnect doesn't stack timers.
+    private func startKeepAlive() {
+        stopKeepAlive()
+        lastPingSentAt = Date()
+        pendingPingSentAt = nil
+        unansweredPings = 0
+        keepAliveValue = 0
+        // Re-probe the new peer: a previous server that ignored pings must not
+        // pin pong-based detection off for this connection.
+        pongSupported = nil
+        keepAliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.tickKeepAlive()
+            }
+        }
+    }
+
+    private func stopKeepAlive() {
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
+        pendingPingSentAt = nil
+    }
+
+    private func tickKeepAlive() async {
+        guard state == .connected else {
+            return
+        }
+        let now = Date()
+        if let sentAt = pendingPingSentAt {
+            guard now.timeIntervalSince(sentAt) >= Double(keepAlivePongTimeout) else {
+                return
+            }
+            pendingPingSentAt = nil
+            if lastActivityBytesIn != bytesInAtPing {
+                // Any inbound since the ping (pong or ordinary server traffic)
+                // proves the link is alive; a specific pong is not required.
+                unansweredPings = 0
+            } else if pongSupported == true {
+                log(.error, "Keepalive pong timeout, forcing reconnect",
+                    detail: "value=\(keepAliveValue) timeout=\(keepAlivePongTimeout)s unanswered=\(unansweredPings)",
+                    always: true)
+                await socket?.close()
+                return
+            } else {
+                unansweredPings += 1
+                if maxUnansweredPings <= unansweredPings {
+                    pongSupported = false
+                    log(.warn, "Server does not answer keepalive pings; disabling pong-based death detection",
+                        detail: "unanswered=\(unansweredPings)",
+                        always: true)
+                }
+            }
+        }
+        guard now.timeIntervalSince(lastPingSentAt) >= Double(keepAliveInterval) else {
+            return
+        }
+        lastPingSentAt = now
+        pendingPingSentAt = now
+        bytesInAtPing = lastActivityBytesIn
+        keepAliveValue = keepAliveValue &+ 1
+        doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .ping, value: keepAliveValue))
+    }
+
+    /// Fails a connect whose RTMP handshake / connect-command response never
+    /// completed within `timeout`. `generation` guards against a stale timer
+    /// from a previous attempt tearing down the current one.
+    private func timeoutConnectIfPending(generation: Int) async {
+        guard generation == connectGeneration,
+              let operation = operations.removeValue(forKey: Self.connectTransactionId) else {
+            return
+        }
+        log(.error, "Connect timed out", detail: "timeout=\(timeout)s generation=\(generation)", always: true)
+        operation.resume(throwing: Error.requestTimedOut)
+        try? await close()
+    }
+
     private func startReconnection() async {
         guard !isReconnecting else {
             return
@@ -576,7 +715,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
             reconnectAttempts += 1
             let delay = min(reconnectBaseDelay << (reconnectAttempts - 1), reconnectMaxDelay)
-            logger.info("Reconnecting in \(delay)s (attempt \(reconnectAttempts)/\(maxReconnectAttempts))")
+            log(.info, "Reconnecting in \(delay)s", detail: "attempt \(reconnectAttempts)/\(maxReconnectAttempts)", always: true)
             await onReconnectStateChanged?(.started(attempt: reconnectAttempts, maxAttempts: maxReconnectAttempts))
             do {
                 try await Task.sleep(nanoseconds: delay * 1_000_000_000)
@@ -593,12 +732,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     try await stream.createStream()
                     await stream.resumePublishing()
                 }
+                log(.info, "Reconnect succeeded", detail: "attempt \(reconnectAttempts)/\(maxReconnectAttempts)", always: true)
                 await onReconnectStateChanged?(.succeeded)
                 return
             } catch {
+                log(.warn, "Reconnect attempt failed", detail: "attempt \(reconnectAttempts)/\(maxReconnectAttempts) error=\(error)", always: true)
                 await onReconnectStateChanged?(.failed(error))
             }
         }
+        log(.error, "Reconnect exhausted", detail: "attempts=\(reconnectAttempts)/\(maxReconnectAttempts)", always: true)
         await onReconnectStateChanged?(.exhausted)
     }
 
@@ -609,9 +751,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
 
         unregisterLoggerForwarding()
-        log(.info, "Close requested, state=\(state)")
+        log(.info, "Close requested, state=\(state)", always: true)
         reconnectionTask?.cancel()
         reconnectionTask = nil
+        stopKeepAlive()
         uri = nil
         for stream in streams {
             // publishing 一律用 deleteStream（保留 lastPublishName 供重連 resumePublishing）。
@@ -658,15 +801,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
         guard let outputContinuation else {
             if connected {
-                log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))")
+                log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))", always: true)
             }
             return 0
         }
         let result = outputContinuation.yield(data)
         if case .dropped = result {
-            log(.warn, "doOutput dropped: connection output buffer full (\(chunkStreamId))")
+            log(.warn, "doOutput dropped: connection output buffer full (\(chunkStreamId))", always: true)
         } else if case .terminated = result {
-            log(.warn, "doOutput dropped: outputContinuation terminated (\(chunkStreamId))")
+            log(.warn, "doOutput dropped: outputContinuation terminated (\(chunkStreamId))", always: true)
         }
         return message.payload.count
     }
@@ -717,15 +860,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
             guard handshake.s0Version >= 3 else {
                 try await close()
-                log(.error, "S0 version mismatch", detail: "got \(handshake.s0Version)")
+                log(.error, "S0 version mismatch", detail: "got \(handshake.s0Version)", always: true)
                 throw Error.requestFailed(response: .init(status: .init(code: Code.connectFailed.rawValue, level: "error", description: "Unsupported RTMP protocol version: \(handshake.s0Version)")))
             }
-            log(.debug, "S0S1 received, sending C2")
+            log(.debug, "S0S1 received, sending C2", always: true)
             await socket?.send(handshake.c2packet())
             state = .ackSent
             try await listen(.init())
         case .ackSent:
-            log(.debug, "Waiting for S2")
+            log(.debug, "Waiting for S2", always: true)
             handshake.put(data)
             guard handshake.hasS2Packet else {
                 return
@@ -830,7 +973,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         guard Self.silentIntervalsThreshold <= silentIntervals else {
             return
         }
-        log(.warn, "Liveness watchdog: no traffic for \(silentIntervals)s, forcing socket close", detail: "in=\(report.totalBytesIn) out=\(report.totalBytesOut)")
+        log(.warn, "Liveness watchdog: no traffic for \(silentIntervals)s, forcing socket close", detail: "in=\(report.totalBytesIn) out=\(report.totalBytesOut)", always: true)
         silentIntervals = 0
         hasSeenActivity = false
         Task {
@@ -875,11 +1018,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     }
                     return
                 }
-                log(.info, "Response: \(message.commandName)", detail: "txn=\(message.transactionId)")
+                log(.info, "Response: \(message.commandName)", detail: "txn=\(message.transactionId)", always: true)
                 switch message.commandName {
                 case "_result":
                     if message.transactionId == Self.connectTransactionId {
-                        log(.info, "Connect success")
+                        log(.info, "Connect success", always: true)
                         state = .connected
                         chunkSizeS = chunkSize
                         doOutput(.zero, chunkStreamId: .control, message: RTMPSetChunkSizeMessage(size: UInt32(chunkSizeS)))
@@ -914,7 +1057,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     }
                     responder.resume(returning: response)
                 default:
-                    log(.error, "Command error", detail: "\(response)")
+                    log(.error, "Command error", detail: "\(response)", always: true)
                     responder.resume(throwing: Error.requestFailed(response: response))
                 }
             case let message as RTMPSharedObjectMessage:
@@ -927,6 +1070,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 switch message.event {
                 case .ping:
                     doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .pong, value: message.value))
+                case .pong:
+                    // Positive liveness: the server answered our keepalive ping.
+                    pongSupported = true
+                    unansweredPings = 0
+                    pendingPingSentAt = nil
                 default:
                     for stream in streams where await stream.id == message.value {
                         Task { await stream.dispatch(message, type: type) }
@@ -991,11 +1139,11 @@ extension RTMPConnection {
         }
     }
 
-    func log(_ level: RTMPLogLevel, _ message: String, detail: String? = nil, file: String = #file, line: Int = #line) {
-        guard level.severity >= minimumLogLevel.severity else {
+    func log(_ level: RTMPLogLevel, _ message: String, detail: String? = nil, always: Bool = false, file: String = #file, line: Int = #line) {
+        guard always || level.severity >= minimumLogLevel.severity else {
             return
         }
-        let event = RTMPLogEvent(level: level, message: message, detail: detail, file: file, line: line)
+        let event = RTMPLogEvent(level: level, message: message, detail: detail, always: always, file: file, line: line)
         onLog?(event)
     }
 

@@ -4,6 +4,68 @@
 
 ---
 
+## 56. 連線診斷強化：connect/handshake 逾時、keepalive ping、onLog always 通道
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPLogEvent.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
+`HaishinKit/Sources/Stream/OutgoingStream.swift`、
+`SRTHaishinKit/Sources/SRT/SRTStream.swift`、
+`RTCHaishinKit/Sources/RTC/RTCStream.swift`
+
+### 56a. connect/handshake 整體逾時（`timeout` 終於生效）
+
+**診斷**：`RTMPSocket.connect` 的 15s timeout 只保護 TCP-connect 的 continuation；
+`.ready` 時就 resume+nil，timer 立刻返回。之後等 S0S1/S2 的 RTMP 握手、以及 connect
+command 的 `_result` **完全沒有逾時**——server 若接受 TCP 卻卡住握手，會一直 hang
+（log-40 觀察到每次重連卡 ~32s 才失敗）。另外 `RTMPConnection.timeout` 宣告了卻從未
+被使用（死設定）。
+
+**修正**：在 `performConnect` 註冊 connect operation 後，啟動一個以 `timeout`
+（預設 15s）為期的計時器；到期且該 connect 仍未完成 → 以 `requestTimedOut` resume 並
+`close()`（走既有重連路徑）。用 `connectGeneration` token 防止舊 attempt 的計時器拆掉
+新 attempt。
+
+### 56b. Keepalive ping/pong（NAT 60s idle + 閒置死線偵測）
+
+**診斷**：idle 的 TCP flow 可能被 NAT/carrier 在 ~60s 回收；純 video VFR 靜止 + 無持續
+音軌時，客戶端可能數十秒不送任何位元組。原本也沒有任何 client 主動探測。
+
+**修正**：連線成功後啟動 1s tick 的 keepalive loop，每 `keepAliveInterval`（預設 20s）
+送 RTMP User Control PingRequest（保留 NAT 路徑）。收到 PongResponse →
+`pongSupported = true`（正向存活訊號）；送出 ping 後 `keepAlivePongTimeout`（預設 5s）
+內無 pong → force close socket 走重連。連續 `maxUnansweredPings`（預設 3）次無 pong →
+判定 server 不回應 ping，**停用 pong 死線判定但持續送 ping**（不誤殺）。與 CHANGES
+#55c 的 queue-based watchdog 互補：idle 時佇列為空、watchdog 不計，改由 pong 判定；
+active stall 仍由 watchdog 判定。
+
+### 56c. onLog `always` 通道（production `.warn` 仍拿得到斷線劇本）
+
+**診斷**：`minimumLogLevel` 同時 gate 了 trace/debug 火管與連線生命週期/故障事件。
+production 用 `.warn` 時，`State:`、`TCP connecting/connected`、`S0S1`、
+`Reconnecting in`、socket ready/close 等全被濾掉，遠端無法分析斷線。
+
+**修正**：`RTMPLogEvent` 新增 `always`；`RTMPConnection.log(..., always:)` 與
+socket→connection 的轉送都改為 `always || severity >= minimumLogLevel`。標記為 always
+的是低頻、必要的生命週期/故障事件（連線狀態轉移、TCP/握手、connect timeout、close、
+重連各階段、watchdog、socket ready/waiting/failed/cancelled、doOutput drop、OOM
+guard、send drop、publish 啟停）。per-chunk/per-frame 的 trace/debug 仍受
+`minimumLogLevel` 控制。
+
+### 56d. `videoInputBufferCounts` 自動計算
+
+**診斷**：AsyncStream 的 bufferingPolicy 在建立時固定；`videoInputStream` 又被快取，
+因此 `videoSettings` setter 對已存在 stream 的重算是無效的（註解誤導）。且 SRT/RTC 從不
+呼叫 `prepareVideoInputStream()`，auto-compute 可能從未執行。`videoInputBufferCounts`
+的 didSet 自我賦值 clamp 也依賴 Swift 的重入抑制，易誤解。
+
+**修正**：SRT/RTC 改走 `prepareVideoInputStream()`（SRT 另在建立 mixer consumer stream
+前先算一次，讓 policy 拿到正確計數）；移除多餘的 didSet clamp；把「重算只影響下一次
+建立 stream」寫進註解。
+
+---
+
 ## 55. ABR actor 重入競態、靜態畫面壅塞誤判、watchdog 誤殺閒置來源
 
 **檔案**：`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、

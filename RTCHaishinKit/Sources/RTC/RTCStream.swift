@@ -48,7 +48,7 @@ public actor RTCStream {
                 }
             }
             Task {
-                for await video in outgoing.videoInputStream {
+                for await video in outgoing.prepareVideoInputStream() {
                     outgoing.append(video: video)
                 }
             }

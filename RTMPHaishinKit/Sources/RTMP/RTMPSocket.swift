@@ -196,7 +196,7 @@ final actor RTMPSocket {
             return
         }
         guard connected else {
-            onLog?(.init(level: .warn, message: "Send dropped: not connected \(RTMPURL):\(RTMPPort)", detail: "size=\(data.count)"))
+            onLog?(.init(level: .warn, message: "Send dropped: not connected \(RTMPURL):\(RTMPPort)", detail: "size=\(data.count)", always: true))
             return
         }
 
@@ -207,7 +207,7 @@ final actor RTMPSocket {
         // Keeping a hard cap protects against encoder-throttle bugs.
         let oomGuardLimit = backpressureSignal?.oomGuardLimit ?? Self.maxQueueBytesOut
         if sendQueue.totalBytes + data.count > oomGuardLimit {
-            onLog?(.init(level: .error, message: "OOM guard: dropped incoming (upstream throttle failed)", detail: "size=\(data.count) queue=\(sendQueue.totalBytes) limit=\(oomGuardLimit)"))
+            onLog?(.init(level: .error, message: "OOM guard: dropped incoming (upstream throttle failed)", detail: "size=\(data.count) queue=\(sendQueue.totalBytes) limit=\(oomGuardLimit)", always: true))
             return
         }
 
@@ -244,7 +244,7 @@ final actor RTMPSocket {
             isReceiveStopped = true
             lastRecvError = error
             logger.error("recv error:", error)
-            onLog?(.init(level: .error, message: "recv error", detail: "\(error)"))
+            onLog?(.init(level: .error, message: "recv error", detail: "\(error)", always: true))
             receiveContinuation?.finish()
             return
         }
@@ -304,7 +304,7 @@ final actor RTMPSocket {
             self.drainContinuation = nil
         }
         
-        onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)"))
+        onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)", always: true))
         connected = false
         isSending = false
         sendQueue.removeAll()
@@ -322,24 +322,24 @@ final actor RTMPSocket {
         switch state {
         case .ready:
             logger.info("Connection is ready.")
-            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) buffer=\(sendQueue.totalBytes)"))
+            onLog?(.init(level: .info, message: "Socket ready \(RTMPURL):\(RTMPPort)", detail: "totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut) buffer=\(sendQueue.totalBytes)", always: true))
             connected = true
             self.continuation?.resume()
             self.continuation = nil
         case .waiting(let error):
             logger.warn("Connection waiting:", error)
-            onLog?(.init(level: .warn, message: "Socket waiting \(RTMPURL):\(RTMPPort)", detail: "\(error)"))
+            onLog?(.init(level: .warn, message: "Socket waiting \(RTMPURL):\(RTMPPort)", detail: "\(error)", always: true))
         case .setup:
             logger.debug("Connection is setting up.")
         case .preparing:
             logger.debug("Connection is preparing.")
         case .failed(let error):
             logger.warn("Connection failed:", error)
-            onLog?(.init(level: .error, message: "Socket failed", detail: "\(error)"))
+            onLog?(.init(level: .error, message: "Socket failed", detail: "\(error)", always: true))
             close(error)
         case .cancelled:
             logger.info("Connection cancelled.")
-            onLog?(.init(level: .info, message: "Socket cancelled"))
+            onLog?(.init(level: .info, message: "Socket cancelled", always: true))
             close(NWError.posix(.ECONNABORTED))
 
 
@@ -350,7 +350,7 @@ final actor RTMPSocket {
 
     private func viabilityDidChange(to viability: Bool) {
         logger.info("Connection viability changed to ", viability)
-        onLog?(.init(level: .info, message: "Socket viability changed", detail: "viability=\(viability)"))
+        onLog?(.init(level: .info, message: "Socket viability changed", detail: "viability=\(viability)", always: true))
     }
 
     private func sendNextChunk() {
@@ -392,6 +392,7 @@ final actor RTMPSocket {
         }
         if let error {
             logger.error("Failed to send data:", error)
+            onLog?(.init(level: .error, message: "Failed to send data", detail: "\(error)", always: true))
             close(error)
         }
     }

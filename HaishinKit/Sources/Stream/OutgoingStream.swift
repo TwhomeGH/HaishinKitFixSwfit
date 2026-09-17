@@ -41,7 +41,10 @@ package final class OutgoingStream: @unchecked Sendable {
         set {
             let oldSize = videoCodec.settings.videoSize
             videoCodec.settings = newValue
-            // videoSize 變更時自動重新計算 buffer count（auto mode 下）
+            // videoSize 變更時重新計算 buffer count（auto mode 下）。注意：
+            // AsyncStream 的 bufferingPolicy 在建立時就固定（見 videoInputStream），
+            // 因此這裡只影響「下一次」建立 videoInputStream 的計數；mid-stream 改
+            // 解析度不會改動已存在 stream 的 buffer。
             if !videoInputBufferCountsOverridden, videoCodec.settings.videoSize != oldSize {
                 videoInputBufferCounts = computeVideoInputBufferCounts(for: videoCodec.settings.videoSize)
             }
@@ -50,11 +53,9 @@ package final class OutgoingStream: @unchecked Sendable {
 
     /// Specifies the video buffering count. Auto-computed from video resolution
     /// and `maxVideoBufferBytes` unless manually set via `setVideoInputBufferCounts()`.
-    package private(set) var videoInputBufferCounts = 1 {
-        didSet {
-            videoInputBufferCounts = max(1, videoInputBufferCounts)
-        }
-    }
+    /// Every write site already clamps to `>= 1` (`computeVideoInputBufferCounts`
+    /// and `setVideoInputBufferCounts`), so no observer clamp is needed here.
+    package private(set) var videoInputBufferCounts = 1
     /// Returns `true` when the user has explicitly set a custom `videoInputBufferCounts`.
     /// When `false`, the count is auto-computed from `maxVideoBufferBytes` and video resolution.
     package private(set) var videoInputBufferCountsOverridden = false

@@ -4,105 +4,46 @@
 
 ---
 
-## P1. RTMP 客戶端 keepalive ping 狀態機（閒置連線的死線偵測）
+## P1. keepalive ping 狀態機：抽成可單元測試的純型別 + 測試
+
+**狀態**：核心已實作（CHANGES #56b：`RTMPConnection` 內的 1s-tick keepalive loop +
+ping/pong + fallback）。剩下的是**可測試性**與**握手階段**的細化。
+
+**剩餘工作**：
+
+1. 把 keepalive 邏輯從 `RTMPConnection` 抽成純型別 `RTMPKeepAlive`（輸入
+   `onTick(now:)` / `onPong` / `onInboundBytes` / `onApplicationBytes`，輸出
+   `Decision { none, probe(value), declareDead }`），讓狀態機可在無 socket 下單元測試。
+2. 測試案例：active 不送 probe、idle 達門檻送 probe、probe 後收 pong → alive、
+   probe 逾時無 inbound → declareDead、連續 `maxUnansweredPings` 無 pong → 停用
+   dead 判定、reset 後狀態歸零。
+3. 補：握手階段（C0C1→S0S1→C2→S2）各自逾時（目前 CHANGES #56a 只做整體 connect
+   timeout）。
+
+---
+
+## P2. `OutgoingStream` 執行緒安全（data race）
 
 **狀態**：規劃中
-**相關**：CHANGES #55c、`Docs/CHANGELOG_RTMP_SOCKET.md` #18 / #20
-**預計檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
-`RTMPHaishinKit/Sources/RTMP/RTMPKeepAlive.swift`（新）、
-`RTMPHaishinKit/Tests/RTMP/RTMPKeepAliveTests.swift`（新）
+**檔案**：`HaishinKit/Sources/Stream/OutgoingStream.swift`（必要時
+`HaishinKit/Sources/Codec/VideoCodec.swift`）
 
-### 背景
+**問題**：`OutgoingStream` 是 `@unchecked Sendable` 且**完全沒有鎖**。可變狀態
+（`videoInputBufferCounts` / `videoInputBufferCountsOverridden` /
+`observedVideoBytesPerFrame` / `_videoInputStream` / `videoInputContinuation` /
+`videoInputFormat` / `audioInputFormat`）同時被：
 
-CHANGES #55c 讓 liveness watchdog 只在「送佇列非空」時才把該區間計為 silent，因此不再
-誤殺健康的閒置來源（純 video VFR 靜止 + 無持續音軌）。代價是：**來源閒置期間若連線
-半開（half-open TCP / radio drop），watchdog 不會發現**，必須等來源恢復產出後才會在
-~8s 內偵測到。
+- 擷取 / mixer 執行緒：`append(_:)`（寫 `observedVideoBytesPerFrame`、
+  `videoInputFormat`、`audioInputFormat`，並 `yield`）。
+- stream actor：`videoSettings` setter、`setVideoInputBufferCounts`、
+  `prepareVideoInputStream`、`startRunning` / `stopRunning`。
 
-目前 RTMP 客戶端沒有任何 keepalive：只被動回應伺服器的 `PingRequest`
-（`RTMPConnection.swift` 的 `RTMPUserControlMessage` → `pong`），從不主動探測。
+具體風險：`_videoInputStream` 的 check-then-act 惰性建立若被兩處同時呼叫 → 建出兩條
+stream、其中一個 continuation 變孤兒；`observedVideoBytesPerFrame` 跨執行緒讀寫。
+另外 `VideoCodec.settings` 也沒有鎖（對比 `AudioCodec` 有 NSLock），其 didSet 會直接
+apply VT session option。
 
-### 目標
-
-以**主動 ping/pong** 區分「來源閒置」與「連線死掉」，讓閒置期間也能偵測死線，且對
-**不回應 client ping 的伺服器絕不誤殺**。
-
-### 設計
-
-#### 通訊協定
-
-RTMP User Control（`RTMPMessage.swift` 的 `RTMPUserControlMessage`，event `0x06` =
-PingRequest / `0x07` = PingResponse）。客戶端送 `PingRequest(value:)`；合規伺服器回
-`PingResponse(value:)`（echo 同一個 value）。
-
-#### 狀態機（抽成純型別以便單元測試）
-
-新增 `RTMPKeepAlive`（lock 保護的 struct 或 actor），輸入事件：
-
-- `onTick(now:)` — 每 1s（沿用 NetworkMonitor 節拍）
-- `onInboundBytes()` — 任何 inbound 位元組
-- `onApplicationBytes()` — **非探測**的 outbound 位元組（應用資料）
-- `onPong(value:)` — 收到 PingResponse
-
-輸出決策 `enum Decision { case none, probe(UInt32), declareDead }`：
-
-1. **Active 判定**：若 `onApplicationBytes` 或 `onInboundBytes` 有更新 → `alive`，
-   重置所有計時。
-2. **Idle 探測**：連續 `keepAliveIdleProbeInterval`（預設 3s）無應用位元組 → 送
-   `probe(seq)`，記錄 `lastProbeValue = seq`、`probeSentAt = now`；`seq` 遞增
-   （UInt32 wrapping）。
-3. **Pong 判定**：收到任何 `onPong` 或 `onInboundBytes` → `alive`。
-4. **Dead 判定**：送出 probe 後 `keepAlivePongTimeout`（預設 5s）內**完全無 inbound**
-   → `declareDead`。
-5. **Fallback（關鍵）**：若連續 `maxUnansweredProbes`（預設 3）次 probe 都收不到
-   pong，判定「本伺服器不回應 client ping」→ **永久停用** ping-based dead 判定，
-   退回 #55c 的 queue-based 規則，只 log 一次 warning，之後不再宣告 dead。
-
-#### 與 watchdog 的整合
-
-- 目前 `checkLiveness` 以 `totalBytesIn` / `totalBytesOut` 的移動判定。**主動 ping 會
-  讓 `totalBytesOut` 前進**（且半開連線下 `send` 的本地 completion 仍可能完成），
-  因此探測期間必須改以 **inbound** 為存活依據，否則會自我欺騙。
-- 具體：watchdog 的 `moved` 在「有未回應 probe 進行中」時只採計 `totalBytesIn`。
-- `declareDead` → 沿用既有 `socket.close()` → recv loop 退出 → `startReconnection()`。
-
-#### 重置點
-
-- `performConnect` 成功、`close()`、socket `reset()` 時，keepalive 狀態歸零
-  （`seq`、`probeSentAt`、`unanswered`、`alive`、`pingUnsupported`）。
-- 收到伺服器主動 `PingRequest` 時照常回 `pong`，並視為 `onInboundBytes`。
-
-### 可調參數（公開）
-
-| 參數 | 預設 | 說明 |
-|---|---|---|
-| `isKeepAliveEnabled` | `true` | 總開關（可關閉回到 #55c 行為） |
-| `keepAliveIdleProbeInterval` | 3s | 閒置多久開始探測 |
-| `keepAlivePongTimeout` | 5s | probe 後多久無 inbound 判死 |
-| `maxUnansweredProbes` | 3 | 幾次無 pong 後停用 ping 判定 |
-
-### 風險 / 注意
-
-- **不回應 ping 的伺服器**：靠 `maxUnansweredProbes` fallback，絕不因探測失敗而斷線。
-- **Pong value 不符**：只要有任何 inbound 即視為存活；value 只用於配對診斷 log。
-- **與伺服器 ping 混淆**：只配對自己送出的 `seq`，不影響既有 pong 回應邏輯。
-- **額外流量**：每次 probe 約 16 bytes，閒置時每 3s 一次，可忽略。
-- **範圍**：本計畫只涵蓋 RTMP；SRT 有原生 keepalive，MoQT 另議。
-
-### 測試計畫
-
-- 純狀態機單元測試（`RTMPKeepAliveTests`，不需 socket）：
-  1. active 期間不送 probe
-  2. idle 達門檻送 probe
-  3. probe 後收 pong → alive，不再判死
-  4. probe 後 timeout 無 inbound → `declareDead`
-  5. 連續 `maxUnansweredProbes` 無 pong → 永久停用 dead 判定（fallback）
-  6. reset 後狀態歸零
-- 整合（Apple 端手動 / CI）：
-  - 以不存在的 host 建半開連線，驗證閒置時 ~8s 內觸發重連。
-  - 以正常伺服器驗證閒置 60s 不誤斷。
-
-### 驗收
-
-- 純 video VFR 靜止、無音軌：連線正常者**不**被斷；拔網線後 ~8s 內重連。
-- 正常推流（有音軌）行為與 CHANGES #55 前一致（無額外斷線）。
+**方向**：以單一鎖（或 `NSRecursiveLock`，注意 `videoInputContinuation` 的 didSet 會
+在 `AsyncStream` init 的 closure 內被觸發，需避免非遞迴鎖自我死鎖）保護上述狀態；
+`videoInputStream` 建立改為 double-checked locking。需在 Apple 端跑
+`OutgoingStream` / `AudioRingBuffer` 相關測試 + Thread Sanitizer 驗證。

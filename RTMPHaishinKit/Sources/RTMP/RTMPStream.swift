@@ -516,7 +516,7 @@ public actor RTMPStream {
                 ))
                 Task { await connection?.log(.debug, "publish: command sent, waiting for response") }
             }
-            await connection?.log(.debug, "publish: response received, starting publish tasks")
+            await connection?.log(.debug, "publish: response received, starting publish tasks", always: true)
             sendMetadataIfNeeded()
             startPublishTasks()
             return response
@@ -858,7 +858,7 @@ public actor RTMPStream {
 
         publishTask = Task { [weak self] in
             guard let self else { return }
-            await connection?.log(.info, "startPublishTasks: task started")
+            await connection?.log(.info, "startPublishTasks: task started", always: true)
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await (buffer, when) in audioStream {
@@ -881,7 +881,7 @@ public actor RTMPStream {
                     }
                 }
             }
-            await connection?.log(.info, "startPublishTasks: task ended")
+            await connection?.log(.info, "startPublishTasks: task ended", always: true)
         }
     }
 
