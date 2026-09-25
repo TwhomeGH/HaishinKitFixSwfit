@@ -33,8 +33,8 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
     private var sufficientBWCounts: Int = 0
     private var insufficientBWCounts: Int = 0
     /// The rate to hand a fresh encoder on `.reset` after a reconnect. Set to
-    /// the lowered rate on congestion so a reconnect doesn't immediately burst
-    /// a new encoder at the ceiling; `0` means "never congested, use the max".
+    /// the lowered rate on congestion and advanced after healthy recovery,
+    /// so reconnects use the latest proven rate; `0` means "use the max".
     private var restartBitRate: Int = 0
     /// The highest rate the link has held through a full healthy window. Caps
     /// the recovery climb at one step past this, so a post-congestion burst
@@ -75,7 +75,12 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
         if #available(iOS 26.0, tvOS 26.0, macOS 26.0, *) {
             deriveVBV(&videoSettings)
         }
-        try? await stream.setVideoSettings(videoSettings)
+        do {
+            try await stream.setVideoSettings(videoSettings)
+            logger.info("ABR apply event=\(event) target=\(currentVideo.bitRate)->\(videoSettings.bitRate) max=\(mamimumVideoBitRate)")
+        } catch {
+            logger.error("ABR apply failed target=\(videoSettings.bitRate) error=\(error)")
+        }
     }
 
     /// Synchronous, actor-isolated decision. Performs every counter
@@ -88,10 +93,21 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
         audio audioSettings: AudioCodecSettings
     ) -> VideoCodecSettings? {
         switch event {
-        case .status:
+        case .status(let report):
+            // A status can be the first unconfirmed congested sample. Do not
+            // treat a substantial outstanding queue as proof of spare capacity.
+            let backlog = Double(report.currentQueueBytesOut) / Double(max(report.currentBytesOutPerSecond, 1))
+            if NetworkMonitor.defaultMinimumCongestionQueueBytes <= report.currentQueueBytesOut,
+               NetworkMonitor.defaultMaxQueueBacklogSeconds <= backlog {
+                if 0 < insufficientBWCounts {
+                    insufficientBWCounts -= 1
+                }
+                return nil
+            }
             if currentVideo.bitRate == mamimumVideoBitRate {
                 insufficientBWCounts = 0
                 provenCeiling = mamimumVideoBitRate
+                restartBitRate = mamimumVideoBitRate
                 return nil
             }
             var videoSettings = currentVideo
@@ -104,6 +120,7 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
                 // all the way back to the max on a healthy link, but never
                 // jumps there in a single burst.
                 provenCeiling = max(provenCeiling, videoSettings.bitRate)
+                restartBitRate = videoSettings.bitRate
                 let ceiling = min(mamimumVideoBitRate, provenCeiling + incremental)
                 videoSettings.bitRate = min(videoSettings.bitRate + incremental, ceiling)
                 sufficientBWCounts = 0
@@ -120,10 +137,12 @@ public final actor StreamVideoAdaptiveBitRateStrategy: StreamBitRateStrategy {
             }
             return nil
         case .publishInsufficientBWOccured(let report):
-            sufficientBWCounts = 0
             guard insufficientBWCounts == 0 else {
+                // Duplicate congestion notifications during cooldown must not
+                // erase healthy samples accumulated since the last actual cut.
                 return nil
             }
+            sufficientBWCounts = 0
             var videoSettings = currentVideo
             let currentBitRate = videoSettings.bitRate
             let minimumBitRate = mamimumVideoBitRate / 5

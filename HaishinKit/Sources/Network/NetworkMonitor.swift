@@ -26,8 +26,8 @@ package final actor NetworkMonitor {
     /// which collapses on a static / VFR source that legitimately produces
     /// little (e.g. audio-only ~16 KB/s): 0.75 s then equals ~12 KB, so a
     /// single keyframe or one coalesced send chunk reads as seconds of
-    /// backlog. A queue below this floor cannot add meaningful latency — it is
-    /// at most ~one send round trip — so it must never trigger a bitrate cut.
+    /// backlog. This noise floor avoids reacting to small packet bursts; it
+    /// does not assert that small queues are latency-free on very slow links.
     package static let defaultMinimumCongestionQueueBytes: Int = 128 * 1024
 
     public private(set) var isRunning = false
@@ -36,7 +36,7 @@ package final actor NetworkMonitor {
             oldValue?.cancel()
         }
     }
-    private var measureInterval = 3
+    private var previousSampleTime = ProcessInfo.processInfo.systemUptime
     private var currentBytesInPerSecond = 0
     private var currentBytesOutPerSecond = 0
     private var previousTotalBytesIn = 0
@@ -44,9 +44,9 @@ package final actor NetworkMonitor {
     /// EMA smoothing factor for per-second throughput samples. A single 1s
     /// window can read as a burst when the socket drains its backlog after a
     /// stall; smoothing keeps downstream consumers (stats, bitrate strategy)
-    /// seeing sustainable throughput rather than the momentary drain rate.
+    /// seeing smoothed traffic rather than the momentary drain rate. Neither
+    /// sample measures unused link capacity.
     private static let emaSmoothing: Double = 0.3
-    private var previousQueueBytesOut: [Int] = []
     private var previousQueueHighCounts: Int = 0
     private var continuation: AsyncStream<NetworkMonitorEvent>.Continuation? {
         didSet {
@@ -72,11 +72,21 @@ package final actor NetworkMonitor {
         guard let report = await reporter?.makeNetworkTransportReport() else {
             throw Error.invalidState
         }
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = now - previousSampleTime
+        previousSampleTime = now
+        return evaluate(report, elapsed: elapsed)
+    }
+
+    /// Deterministic sampling entry point shared by the timer and regression tests.
+    /// Throughput is observed traffic, not a measurement of link capacity.
+    func evaluate(_ report: NetworkTransportReport, elapsed: TimeInterval) -> NetworkMonitorEvent {
         let totalBytesIn = report.totalBytesIn
         let totalBytesOut = report.totalBytesOut
         let queueBytesOut = report.queueBytesOut
-        let rawBytesIn = totalBytesIn - previousTotalBytesIn
-        let rawBytesOut = totalBytesOut - previousTotalBytesOut
+        let interval = max(elapsed, 0.001)
+        let rawBytesIn = Int(Double(max(0, totalBytesIn - previousTotalBytesIn)) / interval)
+        let rawBytesOut = Int(Double(max(0, totalBytesOut - previousTotalBytesOut)) / interval)
         previousTotalBytesIn = totalBytesIn
         previousTotalBytesOut = totalBytesOut
         // EMA-smooth the throughput samples so a single burst window (e.g. the
@@ -93,7 +103,6 @@ package final actor NetworkMonitor {
         } else {
             currentBytesOutPerSecond = rawBytesOut
         }
-        previousQueueBytesOut.append(queueBytesOut)
         let eventReport = NetworkMonitorReport(
             totalBytesIn: totalBytesIn,
             totalBytesOut: totalBytesOut,
@@ -101,46 +110,22 @@ package final actor NetworkMonitor {
             currentBytesInPerSecond: currentBytesInPerSecond,
             currentBytesOutPerSecond: currentBytesOutPerSecond
         )
-        // Backlog-duration threshold: the queue is congested when it holds more
-        // than `maxQueueBacklogSeconds` worth of data at the measured drain
-        // rate. This is bitrate-invariant (same added latency at every rate) and
-        // naturally ignores transient VBR bursts, which drain too fast to build
-        // a meaningful backlog. If the queue stays high for 2 consecutive
-        // intervals, trigger insufficient BW.
-        //
-        // The queue must ALSO clear an absolute floor. The denominator is the
-        // measured drain rate, which on a static / VFR source collapses toward
-        // audio-only; normalizing a tiny queue by that small denominator would
-        // otherwise read as a multi-second backlog and cut bitrate on a healthy
-        // link. A queue below the floor is at most ~one send round trip, so it
-        // cannot add meaningful latency.
-        let congestedQueue = minimumCongestionQueueBytes <= queueBytesOut
-        let queueBacklogSeconds = Double(queueBytesOut) / Double(max(currentBytesOutPerSecond, 1))
-        if congestedQueue, maxQueueBacklogSeconds <= queueBacklogSeconds {
+        // Require BOTH an absolute queue floor and sustained backlog. Growth
+        // alone (e.g. 130 -> 140 -> 150 KiB on a fast link) is not congestion.
+        // Use the faster of the fresh sample and EMA for detection: after an
+        // idle source resumes, a stale low EMA must not exaggerate backlog.
+        // The strategy still receives the smoothed sample for bounded cuts.
+        let drainRate = max(rawBytesOut, currentBytesOutPerSecond, 1)
+        let queueBacklogSeconds = Double(queueBytesOut) / Double(drainRate)
+        if minimumCongestionQueueBytes <= queueBytesOut, maxQueueBacklogSeconds <= queueBacklogSeconds {
             previousQueueHighCounts += 1
             if 2 <= previousQueueHighCounts {
                 previousQueueHighCounts = 0
-                previousQueueBytesOut.removeAll()
+                logger.info("ABR congestion queue=\(queueBytesOut) rawBps=\(rawBytesOut) emaBps=\(currentBytesOutPerSecond) backlog=\(queueBacklogSeconds)")
                 return .publishInsufficientBWOccured(report: eventReport)
             }
         } else {
             previousQueueHighCounts = 0
-        }
-        if measureInterval <= previousQueueBytesOut.count {
-            defer {
-                previousQueueBytesOut.removeFirst()
-            }
-            // The legacy monotonic-growth heuristic must respect the same floor:
-            // a queue that is merely growing from zero is not congestion.
-            if congestedQueue {
-                var total = 0
-                for i in 0..<previousQueueBytesOut.count - 1 where previousQueueBytesOut[i] < previousQueueBytesOut[i + 1] {
-                    total += 1
-                }
-                if measureInterval - 1 <= total {
-                    return .publishInsufficientBWOccured(report: eventReport)
-                }
-            }
         }
         return .status(report: eventReport)
     }
@@ -153,6 +138,8 @@ extension NetworkMonitor: AsyncRunner {
             return
         }
         isRunning = true
+        previousSampleTime = ProcessInfo.processInfo.systemUptime
+        previousQueueHighCounts = 0
         timer = Task {
             let timer = AsyncStream {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)

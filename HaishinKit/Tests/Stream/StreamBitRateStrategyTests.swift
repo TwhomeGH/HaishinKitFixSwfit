@@ -144,6 +144,74 @@ struct StreamBitRateStrategyTests {
         #expect(bitRate == Self.maximumBitRate / 2)
     }
 
+    @Test("冷卻期間重複壅塞通知不抹除恢復進度")
+    func cooldownPreservesRecovery() async {
+        let strategy = Self.makeStrategy()
+        let stream = Self.makeStream()
+        let congestion = NetworkMonitorEvent.publishInsufficientBWOccured(report: Self.congestedReport())
+        let healthy = NetworkMonitorEvent.status(report: Self.report(bytesOutPerSecond: 1_000_000))
+        await strategy.adjustBitrate(congestion, stream: stream)
+        let afterDrop = await stream.videoSettings.bitRate
+        await strategy.adjustBitrate(healthy, stream: stream)
+        await strategy.adjustBitrate(congestion, stream: stream)
+        for _ in 0..<5 {
+            await strategy.adjustBitrate(healthy, stream: stream)
+        }
+        #expect(await stream.videoSettings.bitRate == afterDrop + Self.incremental)
+    }
+
+    @Test("有明顯積壓的 status 不應觸發升速")
+    func pendingQueueDoesNotProveRecovery() async {
+        let strategy = Self.makeStrategy()
+        let stream = Self.makeStream()
+        await strategy.adjustBitrate(.publishInsufficientBWOccured(report: Self.congestedReport()), stream: stream)
+        let afterDrop = await stream.videoSettings.bitRate
+        let pending = NetworkMonitorReport(totalBytesIn: 0, totalBytesOut: 0,
+            currentQueueBytesOut: 256_000, currentBytesInPerSecond: 0, currentBytesOutPerSecond: 64_000)
+        for _ in 0..<20 {
+            await strategy.adjustBitrate(.status(report: pending), stream: stream)
+        }
+        #expect(await stream.videoSettings.bitRate == afterDrop)
+    }
+
+    @Test("高速排空的佇列不應阻止恢復")
+    func fastQueueAllowsRecovery() async {
+        let strategy = Self.makeStrategy()
+        let stream = Self.makeStream()
+        await strategy.adjustBitrate(.publishInsufficientBWOccured(report: Self.congestedReport()), stream: stream)
+        let report = NetworkMonitorReport(totalBytesIn: 0, totalBytesOut: 0,
+            currentQueueBytesOut: 150_000, currentBytesInPerSecond: 0, currentBytesOutPerSecond: 1_000_000)
+        for _ in 0..<40 {
+            await strategy.adjustBitrate(.status(report: report), stream: stream)
+        }
+        #expect(await stream.videoSettings.bitRate == Self.maximumBitRate)
+    }
+
+    @Test("重連使用已驗證的恢復階梯，不使用尚未驗證的新目標")
+    func resetUsesProvenRecoveryStep() async {
+        let strategy = Self.makeStrategy()
+        let stream = Self.makeStream()
+        await strategy.adjustBitrate(.publishInsufficientBWOccured(report: Self.congestedReport()), stream: stream)
+        let afterDrop = await stream.videoSettings.bitRate
+        for _ in 0..<12 {
+            await strategy.adjustBitrate(.status(report: Self.report(bytesOutPerSecond: 1_000_000)), stream: stream)
+        }
+        await strategy.adjustBitrate(.reset, stream: stream)
+        #expect(await stream.videoSettings.bitRate == afterDrop + Self.incremental)
+    }
+
+    @Test("恢復後重連不應套回歷史低碼率")
+    func resetUsesRecoveredRate() async {
+        let strategy = Self.makeStrategy()
+        let stream = Self.makeStream()
+        await strategy.adjustBitrate(.publishInsufficientBWOccured(report: Self.congestedReport()), stream: stream)
+        for _ in 0..<40 {
+            await strategy.adjustBitrate(.status(report: Self.report(bytesOutPerSecond: 1_000_000)), stream: stream)
+        }
+        await strategy.adjustBitrate(.reset, stream: stream)
+        #expect(await stream.videoSettings.bitRate == Self.maximumBitRate)
+    }
+
     @Test("同一壅塞事件併發只套用一次（actor reentrancy 回歸）")
     func concurrentCongestionAppliesOnce() async {
         let strategy = Self.makeStrategy()
