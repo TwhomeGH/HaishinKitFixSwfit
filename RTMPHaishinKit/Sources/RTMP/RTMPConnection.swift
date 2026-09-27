@@ -295,7 +295,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
     private var windowSizeS = RTMPConnection.defaultWindowSizeS
     private var outputBuffer = RTMPChunkBuffer()
-    private var outputContinuation: AsyncStream<Data>.Continuation?
+    /// 連線層的輸出佇列（訊息已序列化成 Data）。世代（generation）用來標記
+    /// 「連線輸出 epoch」：任何遺失（佇列滿 / consumer 終止）都會作廢整個 epoch，
+    /// 使帶舊世代的 media 被拒絕。stream 送出前會記下此世代，重連後世代改變，
+    /// 舊 stream 的恢復流程便無法誤傷新連線。
+    private var outputQueue = RTMPOutputQueue<Data>()
+    /// 目前連線輸出 epoch。重連/換 socket 前會遞增，讓失敗路徑無法沿用新連線。
+    var outputGeneration: UInt64 { outputQueue.generation }
     private let authenticator = RTMPAuthenticator()
     private var networkMonitor: NetworkMonitor?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
@@ -582,8 +588,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             startKeepAlive()
             return result
         } catch let error as RTMPSocket.Error {
-            outputContinuation?.finish()
-            outputContinuation = nil
+            // socket 建立/連線失敗：作廢輸出 epoch，讓後續 media 無法再入列。
+            outputQueue.invalidate()
             throw error
         } catch let error as Error {
             switch error {
@@ -739,8 +745,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 _ = try? await stream.close()
             }
         }
-        outputContinuation?.finish()
-        outputContinuation = nil
+        // 作廢輸出 epoch：finish 佇列，讓 consumer 的 for-await 迴圈能排空後退出。
+        outputQueue.invalidate()
         // 等待 output consumer 把緩衝資料（FCUnpublish / deleteStream / 尾幀）
         // 全部送進 socket send queue，再 drain + close。若不 await，consumer 可能
         // 在 socket 關閉後才 flush → 最終訊息/尾幀被丟掉。
@@ -763,27 +769,45 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     @discardableResult
-    func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) -> Int {
+    func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage, expectedGeneration: UInt64? = nil) -> Int {
+        // stream 媒體會帶 expectedGeneration：要求「目前連線已連上」且「世代相符」。
+        // 不符（例如呼叫端是舊 epoch 的 stale consumer）就靜默丟棄，避免舊訊息
+        // 灌進新 socket。連線自己的控制訊息不帶此參數。
+        if let expectedGeneration {
+            guard connected, expectedGeneration == outputGeneration else { return 0 }
+        }
         if logger.isEnabledFor(level: .trace) {
             logger.trace("<<", message)
         }
-        // 斷線/重連期間 outputContinuation 為 nil 是正常狀態，靜默丟棄。
-        // 不能 guard connected：handshake 期間 connected 是 false，
-        // 但 connect command 必須透過 doOutput 送出。
-        let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
-        guard let outputContinuation else {
+        // connect 指令在 connected 變 true 之前也會走這條路（handshake 期間），
+        // 所以不能 guard connected；佇列關閉（未啟動 / 已作廢）才是真正的異常。
+        guard outputQueue.isOpen else {
             if connected {
-                log(.warn, "doOutput dropped: no outputContinuation (\(chunkStreamId))", always: true)
+                log(.warn, "doOutput dropped: output queue closed (\(chunkStreamId))", always: true)
             }
             return 0
         }
-        let result = outputContinuation.yield(data)
-        if case .dropped = result {
-            log(.warn, "doOutput dropped: connection output buffer full (\(chunkStreamId))", always: true)
-        } else if case .terminated = result {
-            log(.warn, "doOutput dropped: outputContinuation terminated (\(chunkStreamId))", always: true)
+        let data = outputBuffer.putMessage(type, chunkStreamId: chunkStreamId.rawValue, message: message)
+        // 入列失敗（佇列滿 / 世代不符 / consumer 已終止）代表有訊息遺失。
+        // RTMP 後續封包可能依賴前一則（type-1 header 依賴 type-0、P 幀依賴參考幀），
+        // 因此不能只丟這一則，必須作廢整個 epoch 並關閉 transport。
+        guard outputQueue.enqueue(data, expectedGeneration: expectedGeneration) else {
+            invalidateOutput(expectedGeneration: outputGeneration, reason: "connection output lost message (\(chunkStreamId))")
+            return 0
         }
         return message.payload.count
+    }
+
+    /// 已編碼訊息遺失。若繼續送，後續會是沒有前導的依賴幀或 type-1 header。
+    /// 關掉當下這個 transport；既有的 recv loop 重連路徑會重建一個乾淨的解碼點。
+    /// 以 expectedGeneration 把關，確保 stale 的恢復流程不會誤關新連線。
+    func invalidateOutput(expectedGeneration: UInt64, reason: String) {
+        guard expectedGeneration == outputGeneration else { return }
+        log(.error, "Output continuity lost; closing transport", detail: reason, always: true)
+        outputQueue.invalidate()
+        outputConsumerTask?.cancel()
+        let failedSocket = socket
+        Task { await failedSocket?.close() }
     }
 
     func addStream(_ stream: RTMPStream) {
@@ -800,22 +824,22 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     private var outputBacklogBytes = 0
     private let outputBacklogLock = NSLock()
-    /// The task draining `outputContinuation` into the socket. `close()` awaits it
+    /// The task draining `outputQueue` into the socket. `close()` awaits it
     /// so the final buffered messages (FCUnpublish / deleteStream / trailing media
     /// frames) reach the socket's send queue before `drain()` + `close()` — otherwise
     /// the consumer may flush after the socket is torn down and the data is dropped
     /// ("stop 時少送完" / 訊號沒傳遞下去)。
     private var outputConsumerTask: Task<Void, Never>?
 
+    /// 啟動 output consumer：把 outputQueue 的 Data 依序送進指定 socket。
+    /// 舊 task 先 cancel，再開新的 epoch；`outputBacklogBytes` 記錄已入列但尚未
+    /// 寫入 socket 的位元組數（供 congestion 判斷）。
     private func startOutputConsumer(_ socket: RTMPSocket) {
-        outputContinuation?.finish()
-        let (stream, continuation) = AsyncStream.makeStream(
-            of: Data.self,
-            bufferingPolicy: .bufferingOldest(256)
-        )
-        outputContinuation = continuation
+        outputConsumerTask?.cancel()
+        let stream = outputQueue.start()
         outputConsumerTask = Task {
             for await data in stream {
+                guard !Task.isCancelled else { break }
                 outputBacklogLock.withLock { outputBacklogBytes += data.count }
                 await socket.send(data)
                 outputBacklogLock.withLock { outputBacklogBytes -= data.count }

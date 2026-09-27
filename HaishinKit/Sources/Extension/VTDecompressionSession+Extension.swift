@@ -23,10 +23,13 @@ extension VTDecompressionSession: VTSessionConvertible {
 
     @inline(__always)
     @discardableResult
+    // 解碼路徑不需要追蹤 keyframe/失敗狀態（keyframe 邏輯只在編碼端），
+    // 故 outputState 忽略。
     func convert(
         _ sampleBuffer: CMSampleBuffer,
         forceKeyFrame _: Bool,
-        continuation: AsyncStream<CMSampleBuffer>.Continuation?
+        continuation: AsyncStream<CMSampleBuffer>.Continuation?,
+        outputState _: VideoEncoderOutputState
     ) throws -> Bool {
         var flagsOut: VTDecodeInfoFlags = []
         var _: VTEncodeInfoFlags = []

@@ -315,8 +315,22 @@ public actor RTMPStream {
     private var expectedResponse: Code?
     package var bitRateStrategy: (any StreamBitRateStrategy)?
     private var statusContinuation: AsyncStream<RTMPStatus>.Continuation?
-    private var outputContinuation: AsyncStream<RTMPOutputItem>.Continuation?
+    /// stream 層的輸出佇列（RTMPOutputItem：尚未序列化的 chunk + message）。
+    /// 與連線層的 outputQueue<Data> 是兩段管線：此處先保序，再由 consumer
+    /// 逐筆 hop 到 connection 序列化送出。
+    private var outputQueue = RTMPOutputQueue<RTMPOutputItem>()
     private var publishTask: Task<Void, Never>?
+    /// publish 管線的世代。startPublishTasks / stopPublishTasks 各 +1，讓舊的
+    /// task group（即使 cancellation 尚未生效）無法再 append / encode 新資料。
+    private var publishGeneration: UInt64 = 0
+    private var outputGeneration: UInt64 { outputQueue.generation }
+    /// 啟動 output consumer 時記下的「連線輸出世代」。送出時帶回 connection 比對，
+    /// 重連後世代不符即拒收，避免 stale consumer 灌錯連線。
+    private var connectionOutputGeneration: UInt64?
+    private var outputConsumerTask: Task<Void, Never>?
+    /// true = 尚未送出（或已失去）可解碼的 keyframe；在拿到下一顆 keyframe 前
+    /// 不送任何 P 幀，避免下游以殘缺 GOP 起解。
+    private var waitingForVideoKeyFrame = true
     nonisolated private let mixerOutputBridge = MediaMixerOutputBridge()
     private(set) var id: UInt32 = RTMPStream.defaultID
     package lazy var incoming = IncomingStream(self)
@@ -354,24 +368,28 @@ public actor RTMPStream {
 
     private var videoFormat: CMFormatDescription? {
         didSet {
-            guard videoFormat != oldValue else {
-                return
-            }
-            switch readyState {
-            case .publishing:
-                // Same rule as the audio sequence header: type-0 carries the
-                // real wire-cumulative position, type-1 is a zero delta.
-                let timestamp = oldValue == nil ? UInt32(videoTimestamp.cumulativeTime * 1000) : 0
-                guard let message = RTMPVideoMessage(streamId: id, timestamp: timestamp, formatDescription: videoFormat) else {
-                    Task { await connection?.log(.warn, "video: sequence header creation failed") }
-                    return
-                }
-                Task { await connection?.log(.debug, "video: sequence header sent, size=\(message.payload.count) first=0x\(String(format: "%02x", message.payload[0]))") }
-                doOutput(oldValue == nil ? .zero : .one, chunkStreamId: .video, message: message)
-            default:
-                break
-            }
+            // 只在 publishing 且有變化時送 sequence header。第一次（oldValue == nil）
+            // 用 type-0，其餘（格式變更 / 週期性重送）用 type-1。
+            guard let videoFormat, videoFormat != oldValue, readyState == .publishing else { return }
+            sendVideoSequenceHeader(videoFormat, first: oldValue == nil)
         }
+    }
+
+    /// 送出 video sequence header（SPS/PPS）。
+    /// `first` 決定 type-0 / type-1 與時間戳規則：type-0 要帶「真實 wire 累積位置」
+    /// （videoTimestamp.cumulativeTime），type-1 則是 0 delta。重送時不可再用
+    /// 絕對時間戳，否則會在每個週期性 keyframe 重複推進時間軸。
+    /// 送不出去（訊息建立失敗 / 入列失敗）回 false，呼叫端據此中止本幀處理。
+    @discardableResult
+    private func sendVideoSequenceHeader(_ format: CMFormatDescription, first: Bool) -> Bool {
+        let timestamp = first ? UInt32(videoTimestamp.cumulativeTime * 1000) : 0
+        guard let message = RTMPVideoMessage(streamId: id, timestamp: timestamp, formatDescription: format) else {
+            invalidateOutput(reason: "video sequence header creation failed")
+            return false
+        }
+        guard doOutput(first ? .zero : .one, chunkStreamId: .video, message: message) else { return false }
+        Task { await connection?.log(.debug, "video sequence header queued", detail: "size=\(message.payload.count) first=\(first)") }
+        return true
     }
 
     /// Creates a new stream.
@@ -380,14 +398,15 @@ public actor RTMPStream {
         self.fcPublishName = fcPublishName
         self.requestTimeout = connection.requestTimeout
         Task {
-            await self.startOutputConsumer()
             await connection.addStream(self)
         }
     }
 
     deinit {
+        // 逐層停掉管線：publish task group → output consumer → 輸出佇列 → mixer bridge。
         publishTask?.cancel()
-        outputContinuation?.finish()
+        outputConsumerTask?.cancel()
+        outputQueue.invalidate()
         mixerOutputBridge.finish()
         outputs.removeAll()
     }
@@ -404,13 +423,16 @@ public actor RTMPStream {
             }
         }
         do {
-            if outputContinuation == nil {
-                startOutputConsumer()
-            }
+            // 先建立 output consumer（含世代綁定），再註冊 stream、createStream。
+            // 每次 play / publish 都重建 consumer，確保世代與目前連線一致。
+            await startOutputConsumer()
             await connection?.addStream(self)
             if id == RTMPStream.defaultID {
                 try await createStream()
             }
+            // 重新開始輸出：重設格式與 keyframe 等待狀態，強制下一個 GOP 從
+            // keyframe 起送。
+            waitingForVideoKeyFrame = true
             audioFormat = nil
             videoFormat = nil
             let response = try await withCheckedThrowingContinuation { continuation in
@@ -473,10 +495,8 @@ public actor RTMPStream {
             }
         }
         do {
-            if outputContinuation == nil {
-                await connection?.log(.debug, "publish: initializing outputConsumer")
-                startOutputConsumer()
-            }
+            // 重建 output consumer（新世代），再註冊 stream、createStream。
+            await startOutputConsumer()
             await connection?.addStream(self)
             if id == RTMPStream.defaultID {
                 await connection?.log(.debug, "publish: creating stream")
@@ -485,6 +505,8 @@ public actor RTMPStream {
             }
             audioFormat = nil
             videoFormat = nil
+            // 重設 keyframe 等待：session 開場必須等到一顆已送出的 IDR 才放行 P 幀。
+            waitingForVideoKeyFrame = true
             hasSentVideoFrame = false
             info.resourceName = name
             howToPublish = type
@@ -666,17 +688,18 @@ public actor RTMPStream {
         try await pause(!isPaused)
     }
 
-    func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) {
-        guard connection != nil else {
-            logger.warn("doOutput dropped: connection is nil")
-            return
+    /// 把一則已組好的 chunk 放進 stream 輸出佇列（仍待 consumer hop 到 connection）。
+    /// 回傳 false 代表這則沒進佇列（未連線 / 佇列關閉 / 佇列滿），呼叫端必須視為
+    /// 「輸出已中斷」。佇列滿或終止時 enqueue 會作廢整個 epoch，這裡再觸發
+    /// invalidateOutput 把管線與 transport 一併收掉。
+    @discardableResult
+    func doOutput(_ type: RTMPChunkType, chunkStreamId: RTMPChunkStreamId, message: some RTMPMessage) -> Bool {
+        guard connection != nil, outputQueue.isOpen else { return false }
+        guard outputQueue.enqueue(RTMPOutputItem(type: type, chunkStreamId: chunkStreamId, message: message)) else {
+            invalidateOutput(reason: "stream output lost message on \(chunkStreamId)")
+            return false
         }
-        let result = outputContinuation?.yield(RTMPOutputItem(type: type, chunkStreamId: chunkStreamId, message: message))
-        if case .terminated = result {
-            Task { await connection?.log(.warn, "doOutput dropped: outputContinuation terminated (\(chunkStreamId))") }
-        } else if case .dropped = result {
-            Task { await connection?.log(.warn, "doOutput dropped: outputContinuation buffer full (\(chunkStreamId))") }
-        }
+        return true
     }
 
     func dispatch(_ message: some RTMPMessage, type: RTMPChunkType) {
@@ -775,8 +798,12 @@ public actor RTMPStream {
     func deleteStream(underlyingError: (any Swift.Error)? = nil) async {
         // 不要求 fcPublishName：重連 teardown 時也要停止管線，
         // 且不能清除 lastPublishName（resumePublishing 需要它）。
+        // 依序停：publish task group → 編碼器 → 排空並作廢 output consumer。
         stopPublishTasks()
         outgoing.stopRunning()
+        // 正常停止保留已入列尾幀；若傳輸已壞，connection 的世代檢查會拒絕它們。
+        // 排空完成才作廢此 consumer，後續重連不可沿用任何舊輸出工作。
+        await finishOutputConsumer()
         // 清理 publish/play 等待中的 pending continuation，
         // 讓 withCheckedThrowingContinuation 正常結束（避免 task 洩漏 + 重連後 invalidState）。
         // 傳遞底層錯誤（如 ENOSR），不只丟 .invalidState。
@@ -841,6 +868,11 @@ public actor RTMPStream {
 
     private func startPublishTasks() {
         publishTask?.cancel()
+        // +1 建立新世代：舊 task group 尚未真正結束前，其 append/encode 會被
+        // generation 檢查擋掉，不會混進新管線。
+        publishGeneration &+= 1
+        let generation = publishGeneration
+        waitingForVideoKeyFrame = true
 
         let (audioStream, audioContinuation) = AsyncStream.makeStream(
             of: (AVAudioPCMBuffer, AVAudioTime).self,
@@ -854,7 +886,7 @@ public actor RTMPStream {
 
         let videoOutput = outgoing.videoOutputStream
         let audioOutput = outgoing.audioOutputStream
-        let videoInput = outgoing.prepareVideoInputStream()
+        let (videoInput, videoInputGeneration) = outgoing.prepareVideoInputStreamWithGeneration()
 
         publishTask = Task { [weak self] in
             guard let self else { return }
@@ -862,22 +894,24 @@ public actor RTMPStream {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await (buffer, when) in audioStream {
-                        await self.append(buffer, when: when)
+                        await self.appendPublishedAudio(buffer, when: when, generation: generation)
                     }
                 }
                 group.addTask {
                     for await (buffer, when) in audioOutput {
-                        await self.append(buffer, when: when)
+                        await self.appendPublishedAudio(buffer, when: when, generation: generation)
                     }
                 }
                 group.addTask {
                     for await sampleBuffer in videoOutput {
-                        await self.append(sampleBuffer)
+                        await self.appendPublishedVideo(sampleBuffer, generation: generation)
                     }
                 }
                 group.addTask {
                     for await video in videoInput {
-                        self.outgoing.append(video: video)
+                        guard !Task.isCancelled else { break }
+                        // 直接在輸入工作編碼；OutgoingStream 會在 codec 鎖內驗證世代。
+                        self.outgoing.append(video: video, generation: videoInputGeneration)
                     }
                 }
             }
@@ -886,27 +920,91 @@ public actor RTMPStream {
     }
 
     private func stopPublishTasks() {
+        // +1 並重設 keyframe 等待：所有舊世代 task 立即失效。
+        publishGeneration &+= 1
+        outgoing.invalidateVideoInputGeneration()
+        waitingForVideoKeyFrame = true
         publishTask?.cancel()
         publishTask = nil
         mixerOutputBridge.finish()
     }
 
-    private func startOutputConsumer() {
-        let (stream, continuation) = AsyncStream.makeStream(
-            of: RTMPOutputItem.self,
-            bufferingPolicy: .bufferingOldest(256)
-        )
-        outputContinuation = continuation
-        Task { [weak self] in
+    // 進入 RTMP actor 的音訊／編碼影格先驗證發布世代、取消狀態與推流狀態。
+    // 原始影格的 encode 不經此 actor，由 OutgoingStream 在 codec 鎖內另驗世代。
+
+    private func appendPublishedVideo(_ sample: CMSampleBuffer, generation: UInt64) {
+        guard generation == publishGeneration, !Task.isCancelled, readyState == .publishing else { return }
+        append(sample)
+    }
+
+    private func appendPublishedAudio(_ buffer: AVAudioBuffer, when: AVAudioTime, generation: UInt64) {
+        guard generation == publishGeneration, !Task.isCancelled, readyState == .publishing else { return }
+        append(buffer, when: when)
+    }
+
+    /// 停止 stream 輸出 consumer 並作廢輸出 epoch。同時清掉 connectionOutputGeneration，
+    /// 之後新 consumer 會重新向 connection 取世代。
+    private func stopOutputConsumer() {
+        outputConsumerTask?.cancel()
+        outputConsumerTask = nil
+        outputQueue.invalidate()
+        connectionOutputGeneration = nil
+    }
+
+    /// 正常拆除時等待尾幀排空。await 期間若另一個流程已建立新佇列，
+    /// 舊拆除流程不得再 cancel 新 consumer；因此排完後還要確認同一世代。
+    private func finishOutputConsumer() async {
+        let generation = outputGeneration
+        let task = outputConsumerTask
+        outputQueue.finish()
+        await task?.value
+        guard generation == outputGeneration else { return }
+        stopOutputConsumer()
+    }
+
+    /// 啟動 stream 輸出 consumer：把 outputQueue 的 RTMPOutputItem 逐筆 hop 到
+    /// connection 的 doOutput 送出。啟動時記下 connection 當下的世代；consumer
+    /// 每次送出都帶此世代，重連後 connection 世代改變即拒收（雙重把關）。
+    private func startOutputConsumer() async {
+        stopOutputConsumer()
+        let generation = outputGeneration
+        guard let connection else { return }
+        let connectionGeneration = await connection.outputGeneration
+        // await 途中世代可能又變（另一次 start/stop），確認無誤才繼續。
+        guard generation == outputGeneration else { return }
+        connectionOutputGeneration = connectionGeneration
+        let stream = outputQueue.start()
+        let queueGeneration = outputGeneration
+        outputConsumerTask = Task { [weak self] in
             for await item in stream {
-                guard let self else { return }
-                let conn = await self.connection
-                guard let conn else { continue }
-                // 斷線/重連期間跳過，避免無謂的 actor hop 與 log 刷屏。
-                guard await conn.connected else { continue }
-                let length = await conn.doOutput(item.type, chunkStreamId: item.chunkStreamId, message: item.message)
-                await self.appendByteCount(length)
+                guard !Task.isCancelled, let self else { break }
+                await self.sendOutput(item, generation: queueGeneration, connectionGeneration: connectionGeneration)
             }
+        }
+    }
+
+    private func sendOutput(_ item: RTMPOutputItem, generation: UInt64, connectionGeneration: UInt64) async {
+        // 本地雙重檢查後才 hop；hop 到 connection 後它會再驗一次世代。
+        // stale consumer 絕不能把訊息送進新連線。
+        guard generation == outputGeneration, !Task.isCancelled, let connection else { return }
+        let length = await connection.doOutput(item.type, chunkStreamId: item.chunkStreamId,
+                                              message: item.message, expectedGeneration: connectionGeneration)
+        // doOutput 內可能因失敗而作廢世代；世代不符就不再累加 byteCount。
+        guard generation == outputGeneration else { return }
+        appendByteCount(length)
+    }
+
+    /// 輸出連續性中斷的統一收尾：停 consumer + 停 publish + 停編碼器，並通知
+    /// connection 關閉當下 transport（帶世代，避免誤關新連線）。之後由 connection
+    /// 的 recv loop 走既有重連路徑。
+    private func invalidateOutput(reason: String) {
+        let generation = connectionOutputGeneration
+        let connection = connection
+        stopOutputConsumer()
+        stopPublishTasks()
+        outgoing.stopRunning()
+        if let generation {
+            Task { await connection?.invalidateOutput(expectedGeneration: generation, reason: reason) }
         }
     }
 
@@ -1028,13 +1126,34 @@ extension RTMPStream: _Stream {
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
+                guard readyState == .publishing, outputQueue.isOpen else { return }
+                let isKeyFrame = !sampleBuffer.isNotSync
+                // 編碼格式變了（重新協商 / 換 session）等同 GOP 重新開始，必須重新等 keyframe。
+                if videoFormat != sampleBuffer.formatDescription { waitingForVideoKeyFrame = true }
+                // 在等 keyframe 時，非 keyframe 一律不送：下游此刻缺 SPS/PPS 與
+                // 參考幀，送 P 幀只會解出壞畫面。
+                guard !waitingForVideoKeyFrame || isKeyFrame else { return }
+                let recovering = waitingForVideoKeyFrame
+                // 已在正常輸出（非 recovering）、格式未變、又是 keyframe：
+                // 於每個 sync 前重送一次 sequence header。原因是下游 / server 端
+                // 的 fallback 可能在我們無感的情況下換掉 SPS/PPS，週期性重送確保
+                // 解碼端拿到正確參數。
+                let repeatHeader = isKeyFrame && !recovering && videoFormat == sampleBuffer.formatDescription
+                if recovering {
+                    // 讓下面的 videoFormat didSet 把 header 當「第一次」重送（type-0 位置）。
+                    videoFormat = nil
+                }
                 let decodeTimeStamp = sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp : sampleBuffer.presentationTimeStamp
                 sendMetadataIfNeeded(videoFormat: sampleBuffer.formatDescription)
-                // Emit the sequence header (if the format changed) BEFORE the
-                // timestamp advances, so a type-0 header carries the position of
-                // the previous frame; the following type-1 frame then adds its
-                // own delta once instead of double-counting it.
+                // sequence header 必須在時間戳推進「之前」送出：這樣 type-0 header
+                // 帶的是前一顆 frame 的 wire 位置，接著的 type-1 frame 再加自己的
+                // delta，時間軸才不會重複計算。同理，週期性 keyframe 前的重送也用
+                // type-1（delta 0），不推進時間軸。
+                if repeatHeader, let format = sampleBuffer.formatDescription,
+                   !sendVideoSequenceHeader(format, first: false) { return }
                 videoFormat = sampleBuffer.formatDescription
+                // 送 header 期間佇列可能已作廢（例如輸出失敗），再次確認。
+                guard outputQueue.isOpen else { return }
                 // A/V 對齊補償：量測到的 video wire 落後 audio 的固定 offset，
                 // 對 video 幀 PTS 加上補償（audio 為基準，補 video）。補償在
                 // 啟動 ~3s 後生效，wire 一次向前跳動對齊（<2000ms clamp 內）。
@@ -1051,12 +1170,23 @@ extension RTMPStream: _Stream {
                     compositionTime = Int32((sampleBuffer.presentationTimeStamp.seconds - videoTimestamp.updatedAt) * 1000)
                 }
                 guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, compositionTime: compositionTime, sampleBuffer: sampleBuffer) else {
-                        Task { await connection?.log(.debug, "append(video): RTMPVideoMessage creation failed") }
+                        // 訊息組不出來（通常是格式異常）：視為輸出中斷，走統一收尾。
+                        invalidateOutput(reason: "video message creation failed")
                         return
                     }
                     videoSentBytes += message.payload.count
                     hasSentVideoFrame = true
-                    doOutput(.one, chunkStreamId: .video, message: message)
+                    // 只有實際入列（doOutput == true）才視為送出成功。這正是
+                    // 「請求不等於成功」在 stream 層的體現：入列失敗就維持等 keyframe。
+                    if doOutput(.one, chunkStreamId: .video, message: message) {
+                        waitingForVideoKeyFrame = false
+                        if recovering {
+                            // 從「等 keyframe」恢復的第一顆已排入：記錄解碼邊界，便於
+                            // 事後追蹤重連/恢復發生的時間點。
+                            let generation = publishGeneration
+                            Task { await connection?.log(.info, "Video decode boundary queued", detail: "generation=\(generation) pts=\(decodeTimeStamp.seconds)", always: true) }
+                        }
+                    }
                 } else {
                 videoInputFrames += 1
                 if sampleBuffer.formatDescription?.isCompressed == false {
@@ -1109,9 +1239,10 @@ extension RTMPStream: _Stream {
     public func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {
         switch audioBuffer {
         case let audioBuffer as AVAudioCompressedBuffer:
-            // Same ordering rule as video: emit the sequence header before the
-            // timestamp advances so the type-0 header rides the wire position
-            // of the previous frame.
+            // 只有推流中且輸出佇列仍開啟才送。音訊不因壅塞丟棄（見 backpressureSignal）。
+            guard readyState == .publishing, outputQueue.isOpen else { return }
+            // 與 video 相同規則：sequence header 必須在時間戳推進前送出，type-0
+            // header 才帶得到前一顆 frame 的 wire 位置。
             audioFormat = audioBuffer.format
             // A/V resync：音訊 capture 時間落後 video playhead 超過門檻時，把
             // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
@@ -1221,7 +1352,10 @@ extension RTMPStream: _Stream {
     public func dispatch(_ event: NetworkMonitorEvent) async {
         switch event {
         case .reset:
+            // 連線重置（斷線/重連）：停掉三段管線並重設狀態，等 startReconnection
+            // 之後重新 publish。
             stopPublishTasks()
+            stopOutputConsumer()
             outgoing.stopRunning()
             // 重推時重新量測 A/V offset 補償（來源 offset 每次連線可能不同）。
             avOffsetCompensation = 0

@@ -11,12 +11,16 @@ enum VTSessionError: Swift.Error {
 protocol VTSessionConvertible {
     func setOption(_ option: VTSessionOption) -> OSStatus
     func setOptions(_ options: Set<VTSessionOption>) -> OSStatus
-    /// Encode a frame. Returns true if VT dropped the frame.
+    /// 編碼一顆 frame；回傳 true 表示 VT 同步丟棄了它。
+    /// `outputState` 在 VT 非同步 callback 內回報「實際輸出是否為 keyframe /
+    /// 是否失敗」，是壓縮路徑用來判斷 keyframe 是否真的成功的依據。
+    /// 解壓縮路徑（VTDecompressionSession）用不到，會忽略此參數。
     @discardableResult
     func convert(
         _ sampleBuffer: CMSampleBuffer,
         forceKeyFrame: Bool,
-        continuation: AsyncStream<CMSampleBuffer>.Continuation?
+        continuation: AsyncStream<CMSampleBuffer>.Continuation?,
+        outputState: VideoEncoderOutputState
     ) throws -> Bool
     func invalidate()
     /// Read a property from the VT session (e.g., numberOfPendingFrames).

@@ -25,7 +25,10 @@ final class VideoCodec {
     private var outputContinuation: AsyncStream<CMSampleBuffer>.Continuation?
     private var startedAt: CMTime = .zero
     private var invalidateSession = true
-    private var lastKeyFramePresentationTimeStamp: CMTime?
+    /// 追蹤此 VT session 的輸出狀態：等 keyframe / 非同步失敗 / 最後已確認的
+    /// keyframe。`session` 一被替換就換成新的實例，避免舊 session 的 callback
+    /// 回來時污染新 session（見 VideoEncoderOutputState）。
+    private var encoderOutputState = VideoEncoderOutputState()
     private var presentationTimeStamp: CMTime = .zero
     private(set) var isRunning = false
     private(set) var inputFormat: CMFormatDescription? {
@@ -39,8 +42,12 @@ final class VideoCodec {
     }
     private(set) var session: (any VTSessionConvertible)? {
         didSet {
+            // 先作廢舊 state（舊 session 尚在途的 callback 立即被忽略），再 invalidate
+            // 舊 session，最後換上全新的 state。順序不能顛倒：若先換新 state，舊
+            // callback 可能在換的瞬間被新 state 放行。
+            encoderOutputState.invalidate()
             oldValue?.invalidate()
-            lastKeyFramePresentationTimeStamp = nil
+            encoderOutputState = VideoEncoderOutputState()
             invalidateSession = false
         }
     }
@@ -113,7 +120,6 @@ final class VideoCodec {
             inputFormat = nil
         }
         outputFormat = nil
-        lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
         dropRatio = 1
         frameCounter = 0
@@ -165,6 +171,12 @@ final class VideoCodec {
             updateMeasuredFrameRate(sampleBuffer.presentationTimeStamp)
         }
         do {
+            // 上一輪若 VT callback 回報非同步 encode 失敗，先在此把錯誤拋出，
+            // 觸發下方 catch 的 session 重建（resetSessionState），而不是繼續餵
+            // 一個已壞掉的 session。
+            if let status = encoderOutputState.takeFailure() {
+                throw VTSessionError.failedToConvert(status: status)
+            }
             inputFormat = sampleBuffer.formatDescription
             if invalidateSession {
                 logger.info("VideoCodec creating new session")
@@ -181,18 +193,19 @@ final class VideoCodec {
                 return
             }
             if sampleBuffer.formatDescription?.isCompressed == true {
-                try session.convert(sampleBuffer, forceKeyFrame: false, continuation: continuation)
+                try session.convert(sampleBuffer, forceKeyFrame: false, continuation: continuation, outputState: encoderOutputState)
             } else {
                 if useFrame(sampleBuffer.presentationTimeStamp) {
+                    // forceKeyFrame 由 state 決定：開場 / GOP 斷點後為 true，
+                    // 之後依 interval 週期性要求。
                     let forceKeyFrame = shouldForceKeyFrame(sampleBuffer.presentationTimeStamp)
-                    let dropped = try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: continuation)
+                    let dropped = try session.convert(sampleBuffer, forceKeyFrame: forceKeyFrame, continuation: continuation, outputState: encoderOutputState)
                     if dropped {
+                        // VT 同步回報 frameDropped：同樣視為 GOP 斷點，回到等 keyframe。
+                        encoderOutputState.dropped()
                         logger.debug("VideoCodec frame dropped by VT", sampleBuffer.presentationTimeStamp)
                     }
                     updateAdaptiveDropRatio()
-                    if forceKeyFrame {
-                        lastKeyFramePresentationTimeStamp = sampleBuffer.presentationTimeStamp
-                    }
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                 } else {
                     logger.debug("VideoCodec frame filtered by useFrame", sampleBuffer.presentationTimeStamp)
@@ -260,14 +273,13 @@ final class VideoCodec {
     }
 
     private func shouldForceKeyFrame(_ presentationTimeStamp: CMTime) -> Bool {
-        let duration = settings.effectiveMaxKeyFrameIntervalDuration
-        guard 0 < duration else {
-            return false
-        }
-        guard let lastKeyFramePresentationTimeStamp else {
-            return true
-        }
-        return Double(duration) <= (presentationTimeStamp - lastKeyFramePresentationTimeStamp).seconds
+        // 判斷交給 state：它記錄的是「最後一顆被確認的 keyframe」而非「最後一次
+        // 要求 keyframe」。舊寫法（用 lastKeyFramePresentationTimeStamp）會把
+        // 「已要求」誤當「已成功」，若該 keyframe 被 VT 丟棄就整段卡住。
+        encoderOutputState.shouldForceKeyFrame(
+            at: presentationTimeStamp.seconds,
+            interval: Double(settings.effectiveMaxKeyFrameIntervalDuration)
+        )
     }
 
 }
@@ -295,7 +307,6 @@ extension VideoCodec: Runner {
         invalidateSession = true
         inputFormat = nil
         outputFormat = nil
-        lastKeyFramePresentationTimeStamp = nil
         presentationTimeStamp = .zero
         outputContinuation?.finish()
         outputContinuation = nil

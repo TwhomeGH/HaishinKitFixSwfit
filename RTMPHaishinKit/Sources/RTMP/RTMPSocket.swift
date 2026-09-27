@@ -207,7 +207,12 @@ final actor RTMPSocket {
         // Keeping a hard cap protects against encoder-throttle bugs.
         let oomGuardLimit = backpressureSignal?.oomGuardLimit ?? Self.maxQueueBytesOut
         if sendQueue.totalBytes + data.count > oomGuardLimit {
-            onLog?(.init(level: .error, message: "OOM guard: dropped incoming (upstream throttle failed)", detail: "size=\(data.count) queue=\(sendQueue.totalBytes) limit=\(oomGuardLimit)", always: true))
+            // OOM 防護：佇列已達動態上限。此時若只丟這筆，後續封包會缺少前導
+            // （SPS/PPS、type-0 header、參考幀），下游會解出壞畫面；因此改為
+            // 關閉 transport，讓上游走重連路徑重建乾淨的解碼點。上限本身由
+            // backpressureSignal.oomGuardLimit 依 bitrate / GOP 動態縮放。
+            onLog?(.init(level: .error, message: "OOM guard: closing transport to preserve media continuity", detail: "size=\(data.count) queue=\(sendQueue.totalBytes) limit=\(oomGuardLimit)", always: true))
+            close()
             return
         }
 

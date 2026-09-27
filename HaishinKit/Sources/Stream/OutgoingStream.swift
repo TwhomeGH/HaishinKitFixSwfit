@@ -119,6 +119,20 @@ package final class OutgoingStream: @unchecked Sendable {
         }
     }
 
+    /// 供 RTMP 取得成對的輸入 stream 與世代；兩者必須在同一次鎖內取得，
+    /// 避免中途 stop/start 後把舊 stream 誤綁到新編碼器。
+    package func prepareVideoInputStreamWithGeneration() -> (AsyncStream<CMSampleBuffer>, UInt64) {
+        withLock {
+            videoInputGeneration &+= 1
+            return (prepareVideoInputStream(), videoInputGeneration)
+        }
+    }
+
+    /// 停止 publish 工作時先封住舊輸入，無須等待 Task cancellation 傳播。
+    package func invalidateVideoInputGeneration() {
+        withLock { videoInputGeneration &+= 1 }
+    }
+
     /// The asynchronous sequence for video input buffer.
     package var videoInputStream: AsyncStream<CMSampleBuffer> {
         withLock { videoInputStreamLocked() }
@@ -168,6 +182,9 @@ package final class OutgoingStream: @unchecked Sendable {
     private let audioCodec = AudioCodec()
     private let videoCodec = VideoCodec()
     private var _videoInputStream: AsyncStream<CMSampleBuffer>?
+    /// 原始影格消費工作的世代，由同一把 codec 鎖保護。
+    /// 舊工作即使在 cancel 後才醒來，也不得餵資料給已重啟的編碼器。
+    private var videoInputGeneration: UInt64 = 0
 
     package func setVideoCodecLogHandler(_ handler: @Sendable @escaping (String) -> Void) {
         withLock { videoCodec.onLog = handler }
@@ -210,8 +227,13 @@ package final class OutgoingStream: @unchecked Sendable {
     }
 
     /// Appends a video buffer.
-    package func append(video sampleBuffer: CMSampleBuffer) {
-        withLock { videoCodec.append(sampleBuffer) }
+    package func append(video sampleBuffer: CMSampleBuffer, generation: UInt64? = nil) {
+        withLock {
+            // 驗證與 encode 必須同鎖，不能在鎖外先比對再餵給新 session。
+            // 讓編碼維持在原本工作執行緒，不占用 RTMP actor 處理控制訊息的時間。
+            if let generation, generation != videoInputGeneration { return }
+            videoCodec.append(sampleBuffer)
+        }
     }
 
     package func restartVideoCodec() {
@@ -246,6 +268,7 @@ extension OutgoingStream: Runner {
         withLock {
             guard _isRunning else { return }
             _isRunning = false
+            videoInputGeneration &+= 1
             videoCodec.stopRunning()
             audioCodec.stopRunning()
             _videoInputContinuation = nil
