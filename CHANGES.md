@@ -4,6 +4,37 @@
 
 ---
 
+## 60. 更新過時的 OutgoingStream buffer count 測試 + SRT 邊界夾限 + CI 日誌 ANSI
+
+**檔案**：`HaishinKit/Tests/Stream/OutgoingStreamTests.swift`、
+`HaishinKit/Sources/Stream/OutgoingStream.swift`、
+`SRTHaishinKit/Sources/SRT/SRTStream.swift`、
+`.github/workflows/swift-tests.yml`
+
+### 60a. 診斷
+
+`computeVideoInputBufferCountsLocked` 早先是 `max(1, min(30, …))`，`OutgoingStreamTests`
+在 `73231cd0` 依此寫下「夾在 [1, 30]」。`24c0e34d` 把自動模式改成純估量
+（`max(0, …)`、不再夾限），測試沒同步更新 → HaishinKit iOS 測試紅燈
+（8x8 → 163840、100000×100000 → 0）。亦即**程式是刻意改的、測試過時**。
+
+### 60b. 修正
+
+- 測試改為驗證純估量語意：1920x1080 → 5、1280x720 → 11、8x8 → 163840、
+  100000×100000 → 0（移除 `[1, 30]` 假設）。
+- `videoInputBufferCounts` 註解改為明示「自動模式為未夾限估量」。
+- 唯一需要有效容量的消費端是 `SRTStream`（`.bufferingNewest`）：改在該邊界
+  `max(1, outgoing.videoInputBufferCounts)` 自我夾限（`0` 會丟棄所有視訊影格）。
+
+### 60c. CI：避免 ANSI 色碼污染日誌摘要
+
+`colorize-test-log.sh` 原本在 `tee` **之前**，把 ANSI 色碼一併寫進落盤日誌，於是
+`failures.md`／Step Summary 內的 `\033[31m` 在不渲染 ANSI 的地方顯示成 `�[31m`
+（看似亂碼）。改為先 `tee` 落盤（乾淨原文）、再 `| colorize`（僅終端上色），
+三個測試 job 同步調整。
+
+---
+
 ## 59. 修正 RTMP video composition time 在 A/V 補償下變成負值（無畫面）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、

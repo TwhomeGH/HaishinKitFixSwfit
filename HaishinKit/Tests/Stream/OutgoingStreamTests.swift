@@ -9,13 +9,15 @@ import Testing
 /// 併發案例請在 Apple 端搭配 Thread Sanitizer 執行以驗證鎖正確。
 @Suite("OutgoingStream：buffer count 與執行緒安全")
 struct OutgoingStreamTests {
-    @Test("NV12 估算：1920x1080 → 5、1280x720 → 11，且夾在 [1, 30]")
+    @Test("NV12 估算：1920x1080 → 5、1280x720 → 11（純估量，不夾限）")
     func autoCountFromResolution() {
         let stream = OutgoingStream()
         #expect(stream.computeVideoInputBufferCounts(for: CGSize(width: 1920, height: 1080)) == 5)
         #expect(stream.computeVideoInputBufferCounts(for: CGSize(width: 1280, height: 720)) == 11)
-        #expect(stream.computeVideoInputBufferCounts(for: CGSize(width: 8, height: 8)) == 30)
-        #expect(stream.computeVideoInputBufferCounts(for: CGSize(width: 100_000, height: 100_000)) == 1)
+        // 自動模式只是「多少原始幀塞得進位元組預算」的估量，不再夾限 [1, 30]：
+        // 極小尺寸算出很大、單幀超過預算算出 0。需要有效容量的消費端自行夾限。
+        #expect(stream.computeVideoInputBufferCounts(for: CGSize(width: 8, height: 8)) == 163_840)
+        #expect(stream.computeVideoInputBufferCounts(for: CGSize(width: 100_000, height: 100_000)) == 0)
     }
 
     @Test("setVideoInputBufferCounts 覆寫 / 還原自動計算")

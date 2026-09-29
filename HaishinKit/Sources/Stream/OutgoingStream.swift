@@ -105,8 +105,12 @@ package final class OutgoingStream: @unchecked Sendable {
     private var _videoInputBufferCounts = 1
     /// Specifies the video buffering count. Auto-computed from video resolution
     /// and `maxVideoBufferBytes` unless manually set via `setVideoInputBufferCounts()`.
-    /// In auto mode this is an estimate, not the live queue's capacity.
-    /// Oversized frames may produce an estimate of zero and are reported as drops.
+    /// In auto mode this is an estimate of how many raw frames fit the byte
+    /// budget, not the live queue's capacity (RTMP bounds its queue by bytes via
+    /// `maxVideoBufferBytes` / `maxVideoBufferDuration`). It is intentionally NOT
+    /// clamped: oversized frames estimate to 0, tiny frames estimate high.
+    /// Consumers that need a valid buffering capacity must clamp it themselves
+    /// (see `SRTStream`).
     package private(set) var videoInputBufferCounts: Int {
         get { withLock { _videoInputBufferCounts } }
         set { withLock { _videoInputBufferCounts = newValue } }

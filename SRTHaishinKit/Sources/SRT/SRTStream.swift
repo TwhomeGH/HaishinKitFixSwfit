@@ -157,9 +157,13 @@ public actor SRTStream {
         // (RTMPStream does this via prepareVideoInputStream() at publish start.)
         _ = outgoing.prepareVideoInputStream()
         let (audioStream, audioContinuation) = AsyncStream.makeStream(of: (AVAudioPCMBuffer, AVAudioTime).self)
+        // `videoInputBufferCounts` is an unclamped estimate (0 for oversized
+        // frames); `.bufferingNewest(0)` would drop every frame. Clamp to a
+        // valid capacity here, at the point that actually consumes it.
+        let bufferingCount = max(1, outgoing.videoInputBufferCounts)
         let (videoStream, videoContinuation) = AsyncStream.makeStream(
             of: CMSampleBuffer.self,
-            bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts)
+            bufferingPolicy: .bufferingNewest(bufferingCount)
         )
         mixerAudioContinuation = audioContinuation
         mixerVideoContinuation = videoContinuation
