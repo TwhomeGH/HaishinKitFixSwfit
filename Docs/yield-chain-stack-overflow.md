@@ -24,7 +24,7 @@ ReplayKit extension（`ReplyKIT`）在 iOS 27 beta 上反覆出現 `bug_type: 30
 
 `processSampleBuffer` 以 30fps 影片 + ~100Hz 音訊 高頻率觸發 `Task`，每個 task 進入 `MediaMixer.append()` 後，在**同一個 cooperative thread** 上觸發多層 yield：
 
-```
+```swift
 processSampleBuffer  →  Task  (cooperative thread)
   └─ await mixer.append(sampleBuffer)
        └─ MediaMixer.append()                          ← actor, await 進入
@@ -116,7 +116,7 @@ override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBuf
 ## 受影響檔案
 
 | 檔案 | 修改內容 |
-|------|----------|
+| ------ | ---------- |
 | `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift` | `mixer(_:didOutput:)` video/audio 兩方法：yield 包入 `Task { }` |
 | `SRTHaishinKit/Sources/SRT/SRTStream.swift` | 同上 |
 | `Examples/iOS/Screencast/SampleHandler.swift` | 新增 boolean gate 節流；video config + append 合併成單一 Task |

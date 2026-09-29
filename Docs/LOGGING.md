@@ -5,7 +5,7 @@ HaishinKit 的日誌系統分兩層，app 可不下 Xcode 就把 framework 內�
 ## 兩層日誌
 
 | 層 | 物件 | 輸出 |
-|----|------|------|
+| ---- | ------ | ------ |
 | **module logger** | `logger`（`HaishinKit/Sources/Util/Constants.swift`，`HaishinKitLogger`） | mixer/codec/util 的內部日誌（音訊軌來源格式、AEC、resync、stall、channelMap 等），同時寫 os_log |
 | **RTMP connection** | `RTMPConnection.log()` → `onLog` | RTMP 層（socket、publish、throughput、timestamp）與被轉送進來的 module logger 日誌 |
 

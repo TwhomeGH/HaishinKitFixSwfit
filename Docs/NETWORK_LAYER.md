@@ -12,7 +12,7 @@ HaishinKit.swift 的網路層使用 Apple 的 Network 框架（NWConnection）�
 
 ## 架構
 
-```
+```swift
 ┌─────────────────────────────────────┐
 │      RTMPSocket                     │
 │  NWConnection 包裝                  │
@@ -61,7 +61,7 @@ init(qualityOfService: DispatchQoS, securityLevel: StreamSocketSecurityLevel) {
 ### 安全等級
 
 | 等級 | 說明 |
-|------|------|
+| ------ | ------ |
 | `none` | 純 TCP 連線 |
 | `negotiatedSSL` | TLS 協商 |
 | `ssLv2` | SSL 版本 2 |
@@ -139,7 +139,7 @@ final class RTMPChunkBuffer {
 ### Chunk 類型
 
 | 類型 | 標頭大小 | 說明 |
-|------|----------|------|
+| ------ | ---------- | ------ |
 | 0 | 11 bytes | 完整標頭（時間戳、長度、類型、串流 ID） |
 | 1 | 7 bytes | 時間戳 + 長度 + 類型 |
 | 2 | 3 bytes | 僅時間戳 |

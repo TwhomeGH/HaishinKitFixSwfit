@@ -50,9 +50,11 @@
 **檢查事項**:
 
 1. **URL 格式**
-   ```
+
+   ```log
    rtmps://live.restream.io/live/STREAM_KEY
    ```
+
    - 使用 `rtmps://`（強制 TLS）
    - App 名稱固定為 `live`
    - Stream key 從 Restream 儀表板取得
@@ -62,7 +64,8 @@
    - 金鑰包含在路徑的最後一部分
 
 3. **連線測試**
-   ```
+
+   ```log
    rtmps://live.restream.io/live/YOUR_STREAM_KEY
    ```
 
@@ -92,6 +95,7 @@
    - 檢查 `isRunning` 狀態
 
 **診斷方式**:
+
 - 檢查 `onLog` 是否有 `audio stall detected` 或 `Restarting audio pipeline` 日誌
 - 比對 `audioInputFrames`（PCM 輸入）與 `audioSentFrames`（壓縮輸出）是否一致
 
@@ -101,6 +105,7 @@
 但畫面實際播放節奏看起來不是每 1000 秒一幀。
 
 **判斷方式**:
+
 - 直接解析 FLV video tag timestamp delta；若主要為 `16/17/20/33ms`，代表實際
   video cadence 正常
 - 搜尋 FLV payload 是否含 `onMetaData`、`framerate` 或 `@setDataFrame`
@@ -108,6 +113,7 @@
   不是 RTMP video timestamp 被寫壞
 
 **修復方向**:
+
 - 確保 `onMetaData` 在 `NetStream.Publish.Start` 後送出，而不是在 `publish`
   command 前送出
 - 第一筆 metadata timestamp 應為 `0`
@@ -132,6 +138,7 @@
    - 修復：加入 `do-catch` 處理，確保錯誤時清理
 
 **解決方案**:
+
 - 降低編碼位元率
 - 實作背壓機制
 - 監控 `queueBytesOut` 報告
@@ -169,7 +176,7 @@ let connection = RTMPConnection(minimumLogLevel: .info)
 `minimumLogLevel` 控制哪些等級的日誌會觸發 `onLog` 回呼：
 
 | 設定值 | 觸發等級 | 用途 |
-|--------|---------|------|
+| -------- | --------- | ------ |
 | `.trace` | trace, debug, info, warn, error | 完整診斷（含每筆 socket send/recv、每幀發送） |
 | `.debug` | debug, info, warn, error | 一般除錯 |
 | `.info`（預設） | info, warn, error | 生產環境 |
@@ -209,7 +216,7 @@ for await event in await networkMonitor.event {
 **常見錯誤碼**:
 
 | 錯誤碼 | 等級 | 說明 |
-|--------|------|------|
+| -------- | ------ | ------ |
 | `NetConnection.Connect.Success` | status | 連線成功 |
 | `NetConnection.Connect.Failed` | error | 連線失敗 |
 | `NetConnection.Connect.Rejected` | error | 連線被拒絕 |
@@ -220,7 +227,7 @@ for await event in await networkMonitor.event {
 ## 版本相容性
 
 | 平台 | 最低版本 | 注意事項 |
-|------|----------|----------|
+| ------ | ---------- | ---------- |
 | iOS | 15.0+ | 需要實體裝置測試相機 |
 | macOS | 12.0+ | 螢幕錄製需要權限 |
 | tvOS | 15.0+ | 無相機支援 |

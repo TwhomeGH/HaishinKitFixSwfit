@@ -11,12 +11,14 @@
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift:6`
 
 **原始碼：**
+
 ```swift
 static let defaultWindowSizeC = Int(UInt8.max)  // = 255
 ```
 
 **問題：**
 `windowSizeC` 用作 `NWConnection.receive(maximumLength:)` 的參數，限制每次 read 最大讀取 255 bytes。對於 RTMP 串流：
+
 - 一個 H.264 keyframe 可能 50~200KB → 需要 **200~800 次 read 調用**
 - 每次 read 涉及 actor hop → `withCheckedThrowingContinuation` → NWConnection callback → resume → chunk 解析
 - 極高 CPU 開銷，低吞吐量
@@ -31,6 +33,7 @@ static let defaultWindowSizeC = Int(UInt8.max)  // = 255
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift:150-156`
 
 **原始碼：**
+
 ```swift
 Task {
     for await data in stream where connected {
@@ -41,12 +44,14 @@ Task {
 ```
 
 **問題：**
+
 - `try await send(data)` 拋出錯誤時，Task 直接終止
 - `outputs` 的 `AsyncStream` 是 **unbounded**，且 continuation 仍然存活
 - 後續所有 `send()` 呼叫 yield 的資料**永遠堆積在記憶體中** → 無界成長直到 OOM
 - `queueBytesOut` 再也無法扣減，網路監控報告錯誤
 
 **修正：**
+
 - 加入 `do-catch`，錯誤時呼叫 `close()` 清理資源
 - 用 `guard connected else { break }` 取代 `where connected` filter
 - 確保錯誤時 `outputs` continuation 被 finish
@@ -58,6 +63,7 @@ Task {
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift:178-183`
 
 **原始碼：**
+
 ```swift
 if viability == false {
     close()
@@ -68,6 +74,7 @@ if viability == false {
 `NWConnection` 在網路切換（WiFi→5G、暫時斷線）時會先觸發 `viability=false`，但之後可能自動恢復。**立即關閉** 斷送了 NWConnection 框架的內建恢復能力。這也是首次推流遇到短暫網路抖動就永久失敗的原因之一。
 
 **修正：**
+
 - 移除 `close()` 呼叫，僅記錄日誌
 - 讓 `NWConnection` 的 state machine 處理恢復（`.failed` / `.cancelled` 才真正關閉）
 
@@ -78,6 +85,7 @@ if viability == false {
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift:114-128`
 
 **原始碼：**
+
 ```swift
 while connected {
     let data = try await recv()
@@ -90,6 +98,7 @@ while connected {
 當 `connected` 在兩次 `recv()` 迭代之間被設為 `false`，`while` 迴圈退出，但 AsyncStream continuation 未被 finish。`RTMPConnection` 的 `for await data in await socket.recv()` 會**永久掛起**，導致連線無法正常關閉。
 
 **修正：**
+
 - 加入 `defer { continuation.finish() }` 確保無論如何都會 finish
 
 > ⚠️ **2026-08 現況：** receive 已重構為 **callback 遞迴 + actor hop**（見「缺陷十一」），`recv()` 不再使用 `while connected` + continuation loop，改由 `isReceiveStopped` flag 決定是否 re-arm、`receiveContinuation?.finish()` 在 error/EOF/close 三種路徑確定性收尾。此缺陷的成因（continuation 未 finish）已不存在。
@@ -109,6 +118,7 @@ while connected {
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSession.swift:30-37`, `RTMPConnection.swift:365-368`
 
 **問題流程：**
+
 1. `RTMPSession.connect()` 先調用 `connection.connect(command)`
 2. `RTMPConnection.connect()` 連線成功後遍歷 `streams` 陣列呼叫 `createStream()`
 3. 但此時 `RTMPSession._stream` 是 **lazy property**，尚未初始化，不在 `streams` 陣列中
@@ -123,7 +133,8 @@ Stream ID 保持為 `0`，publish 指令使用錯誤的 stream ID，伺服器拒
 ## 缺陷七：三層 AsyncStream 無背壓
 
 **資料路徑：**
-```
+
+```swift
 RTMPStream.outputContinuation (closure)
   → RTMPConnection.outputContinuation ([Data])
     → RTMPSocket.outputs (Data)
@@ -162,14 +173,14 @@ func doOutput(...) {
 3. `RTMPConnection.dispatch()` 將狀態由 `.handshakeDone` 改成 `.connected`。
 4. 後續 `createStream` command 正常送出，例如 log 出現：
 
-```text
-[RTMP] debug Command sent cmd=createStream txn=2
-```
+    ```log
+    [RTMP] debug Command sent cmd=createStream txn=2
+    ```
 
 5. 但 `listen(_:)` 原本只在 `.handshakeDone` case 解析 RTMP chunk。狀態變成 `.connected` 後，socket 收到的資料落入 `default: break`，沒有進入 `inputBuffer.put(data)`，也不會 dispatch `_result txn=2`。
 6. caller 最後只看到 timeout：
 
-```text
+```log
 [RTMP] error Command timeout cmd=createStream txn=2
 [RTMP] error createStream: failed requestTimedOut
 [RTMP] error publish: stream id is 0 after createStream
@@ -205,7 +216,7 @@ case .handshakeDone, .connected:
 
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
 
-### 問題流程
+### 問題流程 - 單一 RTMP message 被拆成大量 socket send operation
 
 `RTMPConnection.doOutput()` 會把一個 RTMP message 切成多個 chunk，再透過 `[Data]` 送到 socket 層。原本 `RTMPSocket.send(_ chunks:)` 對每個 chunk 都呼叫一次 `outputs.yield(data)`，output task 再對每個 chunk 執行一次 `NWConnection.send`。
 
@@ -217,13 +228,13 @@ case .handshakeDone, .connected:
 - `AsyncStream.Continuation.yield` 若因 `.bufferingOldest` 丟資料或 stream 已終止，原本沒有修正 queue 統計。
 - `totalBytesOut` 在 enqueue 與實際 send 完成時都累加，導致 throughput/佇列診斷數字失真。
 
-### 影響
+### 影響 - 高碼率或 keyframe 期間 CPU 與 callback 壓力偏高
 
 - 高碼率或 keyframe 期間 CPU 與 callback 壓力偏高。
 - socket backpressure 指標可能漂移，導致誤判網路塞車或錯過真正壅塞。
 - throughput log 可能被 double count 汙染，不利於判斷 RTMP 管線是否真的有送出資料。
 
-### 修正
+### 修正 - 先把同一個 RTMP message 的 chunks 合併成單一 `Data`
 
 - `send(_ chunks:)` 先把同一個 RTMP message 的 chunks 合併成單一 `Data`，再 enqueue 一次。
 - `send(_ iterator:)` 同樣合併後 enqueue，避免 iterator 逐片送出。
@@ -243,7 +254,7 @@ case .handshakeDone, .connected:
 ## 總結
 
 | 優先級 | 缺陷 | 影響 | 狀態 |
-|--------|------|------|------|
+| -------- | ------ | ------ | ------ |
 | 🔥 Critical | `windowSizeC=255` 接收緩衝區過小 | 高 CPU、低吞吐、首次連接慢 | ✅ 已修 |
 | 🔥 Critical | output Task 死亡不清理 | 推流一段時間後 OOM | ✅ 已修 |
 | 🔴 High | viability 下降立即關閉 | 短暫抖動就斷連，無法恢復 | ✅ 已修 |
@@ -257,7 +268,7 @@ case .handshakeDone, .connected:
 ### 本次新增修正
 
 | 優先級 | 缺陷 | 影響 |
-|--------|------|------|
+| -------- | ------ | ------ |
 | 🔥 Critical | recv() 錯誤時無限迴圈 | 斷線後 CPU 100%，無法清理 |
 | 🔥 Critical | close() 未清理所有 pending operations | 部分 caller 永久 hang |
 | 🔴 High | connect 失敗 output continuation 未清理 | Task zombie |
@@ -269,7 +280,7 @@ case .handshakeDone, .connected:
 ### 本次 Session 修正（2026-07）
 
 | 優先級 | 缺陷 | 影響 |
-|--------|------|------|
+| -------- | ------ | ------ |
 | 🔴 High | Backpressure 汰舊不換新 (guard + return → if) | 超過上限時新舊資料全丟，等同無作用 |
 | 🟡 Medium | `close()` continuation guard 重複 | `if let continuaton { if self.continuation != nil }` 判斷同一個 optional |
 | 🟡 Medium | `recv() throws -> Data` dead code | 與 `recvOnce()` 完全重複，無 caller |
@@ -287,7 +298,7 @@ case .handshakeDone, .connected:
 #### A. 位元率爆衝根因修復
 
 | 檔案 | 修改 | 原理 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `HaishinKit/Sources/Network/NetworkMonitor.swift` | `currentBytesOutPerSecond` 改 EMA 平滑（α=0.3） | 單一 1s 窗口在 socket 卡住→恢復時 = backlog 爆量吞吐，平滑後不會被誤讀為可持續頻寬 |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | insufficientBW 路徑 `bitRate = min(current, derived)`，**只降不升** | 修復「burst 吞吐 ×8 讀回當目標」的自我放大迴路 |
 | `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift` | `.status` 恢復 ratchet 封頂：`min(max, lastStableBitRate + max/5)`，且爬升路徑不再更新 `lastStableBitRate` | 避免振盪回 max 造成的 VBR 1.5× keyframe burst（15k+ spike） |
@@ -361,6 +372,7 @@ private func armNextReceive() {
 **檔案位置：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、`MoQTHaishinKit/Sources/MoQTSocket.swift`
 
 **原始碼（舊設計）：**
+
 ```swift
 private func recvOnce() async throws -> Data {
     return try await withCheckedThrowingContinuation { continuation in
@@ -380,11 +392,13 @@ func recv() -> AsyncStream<Data> {
 ```
 
 **問題：**
+
 1. **continuation 洩漏：** `connection?.receive` 若 `connection` 為 `nil`（`close()` 與 receive 競態），optional chaining 靜默跳過，`withCheckedThrowingContinuation` 永遠不 resume → recv loop 永久掛起，strict concurrency 下還會 trap "leaked continuation"。
 2. **取消脆弱：** `Task.cancel()` 無法 resume 一個 pending 的 `withCheckedContinuation`，只有 NWConnection callback 能；取消與 teardown 依賴 forceCancel 恰好觸發 callback，脆弱。
 3. **與 send 側不對稱：** send 側已是 `sendNextChunk → didSendChunk → sendNextChunk` 的 callback 遞迴，receive 側是唯一的異類。
 
 **修正：callback 遞迴 + actor hop（`armNextReceive → didReceive → armNextReceive`）**
+
 ```swift
 private func armNextReceive() {
     guard !isReceiveStopped, let connection else { return }
@@ -394,6 +408,7 @@ private func armNextReceive() {
     }
 }
 ```
+
 - **無 continuation 可洩漏**：`isReceiveStopped` flag + `receiveContinuation?.finish()` 決定生命週期
 - **stack 有界**：re-arm 在 actor task 上執行，不在 NWConnection callback 的 stack frame 內遞迴
 - **每次恰一個 outstanding receive**：NWConnection 期待的 contract，避免重複 arm

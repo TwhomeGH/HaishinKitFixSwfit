@@ -6,7 +6,7 @@
 
 崩潰線索：
 
-```
+```swift
 frame  0: Data.InlineSlice.replaceSubrange            ← crash site (chunk 編碼)
 frame  1: Data._Representation.replaceSubrange
 frame  2: RTMPDataF0V (AnyIterator<Data> closure)      ← putMessage 內
@@ -25,7 +25,7 @@ frame 11: Error.SendableRzs5NeverORs [RECUR x3]       ← 重入
 
 舊架構：
 
-```
+```swift
 RTMPStream.append (actor, sync)
   └─ doOutput() → yield(@Sendable () async -> Int)     ← layer 1: yield closure
        └─ consumer: for-await output → await output()  ← cooperative thread, 同步
@@ -112,7 +112,7 @@ Task { [weak self] in
 ### 4. buffer 策略調整
 
 | 項目 | 舊值 | 新值 | 理由 |
-|------|------|------|------|
+| ------ | ------ | ------ | ------ |
 | buffer 上限 | 128 | 64 | 記憶體減半 |
 | 溢出策略 | `.bufferingOldest` | `.bufferingNewest` | 直播場景丟舊幀保新幀更合理 |
 

@@ -13,7 +13,7 @@
 所有透過 `UIntX(data: Data[...])` 路徑讀取整數的地方：
 
 | 檔案 | 使用模式 |
-|------|----------|
+| ------ | ---------- |
 | `HaishinKit/Sources/Util/ByteArray.swift` | `UInt32(data: data[pos-4..<pos]).bigEndian` |
 | `RTMPHaishinKit/Sources/Util/ByteArray.swift` | 同上 |
 | `SRTHaishinKit/Sources/TS/ByteArray.swift` | 同上 |
@@ -70,6 +70,6 @@ init(data: Data) {
 ## 受影響檔案
 
 | 檔案 | 修改內容 |
-|------|----------|
+| ------ | ---------- |
 | `HaishinKit/Sources/Extension/ExpressibleByIntegerLiteral+Extension.swift` | `init(data:)` 改用 `copyMemory`，避免 `withUnsafeBytes<Self>` 特化 |
 | `MoQTHaishinKit/Sources/Extension/ExpressibleByIntegerLiteral+Extension.swift` | 同上 |

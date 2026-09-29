@@ -13,7 +13,7 @@ HaishinKit.swift 的 RTMP（Real-Time Messaging Protocol）實作支援 RTMP 與
 
 ## 協定堆疊
 
-```
+```log
 ┌─────────────────────────────────────┐
 │      應用層                          │
 │  RTMPCommandMessage, RTMPDataMessage │
@@ -45,6 +45,7 @@ HaishinKit.swift 的 RTMP（Real-Time Messaging Protocol）實作支援 RTMP 與
 ### RTMPHandshake
 
 處理 RTMP Handshake 程序：
+
 1. C0/C1 封包（版本 + 時間戳 + 隨機位元組）
 2. S0/S1 封包（版本 + 時間戳 + 隨機位元組）
 3. C2 封包（S1 時間戳 + 當前時間 + S1 隨機資料）
@@ -53,6 +54,7 @@ HaishinKit.swift 的 RTMP（Real-Time Messaging Protocol）實作支援 RTMP 與
 ### RTMPChunk
 
 實作 Chunk 分塊機制：
+
 - Chunk 類型：0、1、2、3
 - 不同類型對應不同標頭大小
 - 訊息長度、時間戳、串流 ID 處理
@@ -63,7 +65,7 @@ HaishinKit.swift 的 RTMP（Real-Time Messaging Protocol）實作支援 RTMP 與
 支援以下訊息類型：
 
 | 類型 | 說明 |
-|------|------|
+| ------ | ------ |
 | 0x01 | 設定 Chunk 大小 |
 | 0x02 | 中止訊息 |
 | 0x03 | 確認 |
@@ -85,6 +87,7 @@ HaishinKit.swift 的 RTMP（Real-Time Messaging Protocol）實作支援 RTMP 與
 ### 1. URL 解析
 
 RTMP 連線 URL 解析出：
+
 - 主機與連接埠
 - 通訊協定（rtmp/rtmps）
 - 從路徑元件解析應用名稱
@@ -113,6 +116,7 @@ for await data in await socket.recv() {
 ### 3. Connect 命令
 
 connect 命令包含：
+
 - `app`：應用程式名稱（從 URL 路徑解析）
 - `flashVer`：Flash 版本字串
 - `tcUrl`：不含認證資訊的 URL
@@ -126,6 +130,7 @@ connect 命令包含：
 ### 4. 建立串流
 
 成功連線後：
+
 1. 透過 `createStream` 命令建立串流
 2. 設定 Chunk 大小與視窗確認
 3. 使用 `publish` 命令發布串流
@@ -133,17 +138,19 @@ connect 命令包含：
 ## Restream.io 特定考量
 
 Restream.io 通常使用：
+
 - RTMPS 通訊協定（`rtmps://live.restream.io/live/串流金鑰`）
 - 串流金鑰作為路徑的最後一部分
 - 不需要額外的 URL 認證（直接使用串流金鑰）
 
 ### URL 格式範例
 
-```
+```url
 rtmps://live.restream.io/live/串流金鑰
 ```
 
 其中：
+
 - 主機：`live.restream.io`
 - 連接埠：443（RTMPS 預設）
 - 應用名稱：`live`
@@ -160,7 +167,7 @@ rtmps://live.restream.io/live/串流金鑰
 ### 常見錯誤碼
 
 | 代碼 | 說明 |
-|------|------|
+| ------ | ------ |
 | `NetConnection.Connect.Failed` | 連線失敗（網路問題） |
 | `NetConnection.Connect.Rejected` | 連線被拒絕（需要認證） |
 | `NetStream.Publish.BadName` | 串流名稱無效 |
@@ -176,7 +183,7 @@ rtmps://live.restream.io/live/串流金鑰
 ## 設定參數
 
 | 參數 | 預設值 | 說明 |
-|------|--------|------|
+| ------ | -------- | ------ |
 | `defaultTimeout` | 15 秒 | 連線逾時 |
 | `defaultWindowSizeS` | 250000 | 視窗大小 |
 | `defaultChunkSizeS` | 8192 | Chunk 大小 |

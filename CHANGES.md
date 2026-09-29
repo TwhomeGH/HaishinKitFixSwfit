@@ -2191,7 +2191,7 @@ private func didAudioSessionRouteChange(_ notification: Notification) {
 ### 兩層的關係
 
 | 情況 | 第一層（routeChange） | 第二層（stall） |
-|------|:-:|:-:|
+| ------ |:-:|:-:|
 | 語音模式切換 → capture 中斷 | ✅ 即時重接 | 備援 |
 | 語音模式切換 → AVAudioConverter 損毀 | ❌ 無效 | ✅ ~3s 重啟 codec |
 | `routeChangeNotification` 未觸發 | ❌ 無效 | ✅ 備援恢復 |
@@ -2200,6 +2200,6 @@ private func didAudioSessionRouteChange(_ notification: Notification) {
 ### 改動檔案總覽
 
 | 檔案 | 修改類型 |
-|------|---------|
+| ------ | --------- |
 | `HaishinKit/Sources/Mixer/MediaMixer.swift` | 新增 `didAudioSessionRouteChange()`、route 通知註冊、`deinit` 清理 |
 | `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift` | 新增 audio stall 檢測分支，啟用 `restartAudioPipeline()` |

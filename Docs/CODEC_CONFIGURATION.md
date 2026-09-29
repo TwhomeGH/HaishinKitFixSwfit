@@ -9,7 +9,7 @@ HaishinKit.swift 的編解碼器設定提供彈性的視訊與音訊編碼選項
 ### 支援格式
 
 | 格式 | 說明 |
-|------|------|
+| ------ | ------ |
 | H.264 | 先進視訊編碼（AVC） |
 | H.265 | 高效視訊編碼（HEVC） |
 | VP9 | Google 視訊編碼 |
@@ -44,7 +44,7 @@ public enum Format: String, CaseIterable {
 ### 支援格式
 
 | 格式 | 說明 |
-|------|------|
+| ------ | ------ |
 | AAC | 先進音訊編碼 |
 | Opus | 網際網路音訊編碼 |
 | PCM | 脈衝編碼調變 |
@@ -87,7 +87,7 @@ public enum BitRateMode: String {
 ### 視訊設定
 
 | 參數 | 預設值 | 說明 |
-|------|--------|------|
+| ------ | -------- | ------ |
 | `videoSize` | 1280x720 | 解析度 |
 | `expectedFrameRate` | 30.0 | 目標 FPS |
 | `bitRate` | 2000000 | 位元率（bps） |
@@ -144,7 +144,7 @@ RTMP 發布時，`restartVideoEncoding(reason:)` 會重接 publish tasks 與 cod
 ### 音訊設定
 
 | 參數 | 預設值 | 說明 |
-|------|--------|------|
+| ------ | -------- | ------ |
 | `sampleRate` | 44100.0 | 音訊取樣率 |
 | `bitRate` | 128000 | 位元率（bps） |
 | `isLowLatencyRateControlEnabled` | false | 低延遲模式 |
@@ -154,7 +154,7 @@ RTMP 發布時，`restartVideoEncoding(reason:)` 會重接 publish tasks 與 cod
 `AudioCodecSettings` 提供兩組 AAC 推薦值，語意不同：
 
 | API | 取向 | 格式 | Bitrate | 適用情境 |
-|-----|------|------|---------|----------|
+| ----- | ------ | ------ | --------- | ---------- |
 | `bestAacFormat` / `bestAacBitrate` | 裝置支援與低碼率效率優先 | HE-AAC v2 → HE-AAC v1 → AAC LC | 48k / 72k / 128k | 明確想省頻寬、且下游確認支援 HE-AAC 的情境 |
 | `recommendedRtmpFormat` / `recommendedRtmpBitrate` | RTMP/FLV 相容性優先 | AAC LC | 128k | RTMP 推流、回放錄檔、需要廣泛播放器相容的預設 |
 

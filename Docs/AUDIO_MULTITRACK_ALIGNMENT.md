@@ -57,7 +57,7 @@ actor 忙碌時**靜默丟棄音訊幀**。mic 與 app 若**非相關性掉幀**
 ## 根因（修復前程式碼位置）
 
 | 位置 | 問題 |
-|------|------|
+| ------ | ------ |
 | `AudioRingBuffer.swift` `append` | 來源 PTS 只拿來算單軌 gap（skip），樣本進 buffer 後只剩 FIFO |
 | `AudioMixerByMultiTrack.swift` `render` | render 直接順序消耗各軌 ring buffer，無跨軌時間對齊 |
 | `AudioMixerByMultiTrack.swift` `track(_:didOutput:)` | 混音時鐘只由 main track 錨定（sampleTime/anchor 只設一次） |
@@ -137,7 +137,7 @@ target，在混音前對 mic 幀做 NLMS（normalized least mean squares）自�
 **設定**（`AudioMixerSettings`，皆可選、向後相容 Codable）：
 
 | 欄位 | 說明 |
-|------|------|
+| ------ | ------ |
 | `isEchoCancellationEnabled` | 開啟 AEC（預設 false）。**路由感知**：耳機/聽筒/藍牙耳機時自動停用（無物理回音，省 CPU 零 artifacts），喇叭/外部輸出才啟用 |
 | `echoCancellationReferenceTrack` | **必填**：指向你的 app 音訊軌（預設 `UInt8.max` = 未設定 → AEC 停用） |
 | target（mic） | **自動推導**：兩軌情境下取「非 reference 的軌」，**與 mainTrack 無關** |

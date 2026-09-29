@@ -81,7 +81,7 @@ IncomingStream.append() → 播放
 ## 關鍵設計模式
 
 | 模式 | 使用位置 | 說明 |
-|------|----------|------|
+| ------ | ---------- | ------ |
 | Factory | StreamSessionBuilderFactory | 根據 URL scheme 建立對應的 Session |
 | Builder | StreamSessionBuilder | 鏈式設定 Session 參數 |
 | Actor | RTMPConnection / RTMPStream | Swift actor 保證執行緒安全 |

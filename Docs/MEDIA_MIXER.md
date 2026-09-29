@@ -17,6 +17,7 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 ### 中斷事件（Interruption）
 
 監聽 `AVAudioSession.interruptionNotification`：
+
 - **Began**：記錄 `isAudioSessionInterrupted = true`，`audioIO.suspend()` 卸除所有 AVCaptureDevice 音訊輸入，`session.startRunningIfNeeded()` 保持視訊運作
 - **Ended + shouldResume**：依中斷期間是否收到有效 route change 決定 `audioIO.resume()` 或 `audioIO.reset()`，再呼叫輸出端 `restartAudioEncoding(reason:)`
 - **Ended without shouldResume**：不自動恢復音訊 capture，清除延後 reset 狀態，交由上層或後續 session 事件處理
@@ -26,7 +27,7 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 監聽 `AVAudioSession.routeChangeNotification`：
 
 | 狀態 | 原因 | 動作 |
-|------|------|------|
+| ------ | ------ | ------ |
 | 非 interruption 中 | `.oldDeviceUnavailable` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
 | 非 interruption 中 | `.newDeviceAvailable` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
 | 非 interruption 中 | `.routeConfigurationChange` | `audioIO.reset()` 後 `restartAudioEncoding(reason:)` |
@@ -64,7 +65,7 @@ Audio session event 與輸出端 recovery reason 會包含：
 
 ## 架構
 
-```
+```swift
 ┌─────────────────────────────────────┐
 │      MediaMixer                     │
 │  核心串流管理                        │
@@ -85,6 +86,7 @@ Audio session event 與輸出端 recovery reason 會包含：
 ### MediaMixer
 
 主要的混合器類別管理：
+
 - 多個視訊/音訊軌道
 - 擷取 Session 設定
 - 輸出路由
@@ -103,6 +105,7 @@ actor MediaMixer {
 ### VideoMixerSettings
 
 控制視訊混合參數：
+
 ```swift
 public struct VideoMixerSettings {
     public var mode: VideoMixerMode
@@ -115,6 +118,7 @@ public struct VideoMixerSettings {
 ### AudioMixerSettings
 
 控制音訊混合參數：
+
 ```swift
 public struct AudioMixerSettings {
     public var tracks: [AudioTrackSettings]
@@ -127,6 +131,7 @@ public struct AudioMixerSettings {
 ### StreamOutput
 
 串流輸出可以是：
+
 - RTMPStream（發布用）
 - AVPlayer（播放用）
 - View（顯示用）
@@ -159,6 +164,7 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 ### 視訊特效
 
 支援多種視訊特效：
+
 - 濾鏡（模糊、銳化）
 - 變換（旋轉、縮放）
 - 疊加圖形
@@ -167,6 +173,7 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 ### 音訊特效
 
 支援音訊特效：
+
 - 濾波器（低通、高通）
 - 音量控制
 - 等化器
@@ -177,6 +184,7 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 ### VideoToolbox 整合
 
 使用 VideoToolbox 進行：
+
 - H.264/H.265 編碼
 - VP9/AV1 解碼
 - 硬體加速處理
@@ -184,6 +192,7 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 ### AudioToolbox 整合
 
 使用 AudioToolbox 進行：
+
 - AAC/Opus 編碼
 - 音訊處理濾波器
 - 即時音訊操作

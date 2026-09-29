@@ -28,7 +28,7 @@ private func receive() {
 
 另一個相關的遞迴問題發生在 Swift compiler 對 `ExpressibleByIntegerLiteral.init(data:)` 的泛型特化：
 
-```
+```swift
 readUInt32()
   → UInt32(data: Data[...]) 
     → ExpressibleByIntegerLiteral.init(data: Data)  ← 泛型
@@ -67,6 +67,7 @@ private func runReceiveLoop() async {
 **優點：** 每個 iteration 都有 suspension point，沒有同步遞迴，stack 有界。
 
 **代價（後來才暴露）：**
+
 - 每個 iteration 建立一個 `withCheckedThrowingContinuation`。
 - **continuation 洩漏：** 若 `connection` 在 resume 前變成 `nil`（`close()` 與 receive 競態），`connection?.receive` 被靜默跳過，continuation 永遠不 resume → `recv()` 永久掛起，strict concurrency 下還會有 "leaked continuation" runtime trap。
 - **取消困難：** `Task.cancel()` 無法 resume 一個 pending 的 `withCheckedContinuation`；只有 NWConnection 的 callback 才能。receive 的取消與 close 的 teardown 依賴 callback 恰好在 forceCancel 後觸發，脆弱。
@@ -110,11 +111,13 @@ private func didReceive(content: Data?, error: NWError?) async {
 ```
 
 **為什麼安全（不再 stack overflow）：**
+
 - NWConnection 的 completion handler 在 `networkQueue` 上觸發後立即返回；實際處理（`didReceive`）透過 `Task { await ... }` hop 到 actor，**不在 completion handler 的 stack frame 內遞迴**。
 - 每次 `armNextReceive` 都在一個新的 actor task 上執行，receive 之間有完整的 async boundary，stack 有界。
 - 這保留了 callback 驅動（與 send 側對稱、每次恰好一個 outstanding receive），同時斷開了同步遞迴鏈。
 
 **為什麼比 async/await loop 好：**
+
 - **無 continuation 洩漏：** 完全沒有 `withCheckedThrowingContinuation`，receive 的生命週期由 `isReceiveStopped` flag + `receiveContinuation?.finish()` 決定，`close()` 是確定性 teardown。
 - **取消即停止 re-arm：** `stopReceive()` 設 `isReceiveStopped = true`，下一次 callback 進來立即 `finish()` 並返回，不會再 arm。pending 的 receive 由 `connection = nil` 的 forceCancel 觸發 callback（帶 error）收尾。
 - **與 send 側對稱：** 與 `sendNextChunk → didSendChunk → sendNextChunk` 完全一致的遞迴 callback 節奏。
@@ -125,7 +128,7 @@ private func didReceive(content: Data?, error: NWError?) async {
 ## 受影響檔案
 
 | 檔案 | 修改內容 |
-|------|----------|
+| ------ | ---------- |
 | `ReplyKIT/Socket.swift` | `receive()` → `runReceiveLoop()` async loop |
 | `liveAPP/Socket.swift` | `receive(from:)` → `runReceiveLoop()` async loop |
 | `MoQTHaishinKit/Sources/MoQTSocket.swift` | `receive(on:continuation:)` → `startReceiveLoop()` async loop（2026-08 再改為 callback 遞迴 + actor hop） |

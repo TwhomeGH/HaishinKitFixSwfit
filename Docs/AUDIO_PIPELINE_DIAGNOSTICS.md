@@ -45,7 +45,7 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 （samples/s 或次/s）。
 
 | 欄位 | 意義 |
-|------|------|
+| ------ | ------ |
 | `outputFrames` | 該軌經 resample 後送到混音器的幀數 |
 | `resampleNoDataCount` | `resample()` 某次 append **完全沒產出**（ring buffer 來不及提供完整輸入塊，underrun） |
 | `alignDroppedSamples` | 跨軌 `align()` 丟棄的樣本（非 main track 超前播放頭，判定為過期） |
@@ -62,7 +62,7 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 ## 判讀
 
 | 觀察 | 意義 |
-|------|------|
+| ------ | ------ |
 | `alignFireCount` 幾乎每秒都增加（delta ≥ 1/s） | `align()` 每幀都在對非 main track 硬丟/硬補 → content-level 斷音典型訊號 |
 | `lastAlignDiff` 持續在死區外 | 兩軌時間軸持續錯開，不是一次性 anchor 差 |
 | `alignDroppedSamples` 持續增加 | 真實音訊被丟 |

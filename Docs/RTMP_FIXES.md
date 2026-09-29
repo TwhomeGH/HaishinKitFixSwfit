@@ -1,6 +1,7 @@
 # RTMP 協議修復與架構改進文檔
 
 ## 版本信息
+
 - **日期**: 2026-06-29
 - **版本**: 1.3.3
 - **狀態**: ✅ 完成（含 createStream 重試與錯誤傳播、RTMP_ChunkBuffer capacity 修正、AsyncStream YieldResult @unknown default）
@@ -10,8 +11,10 @@
 ## 1. 關鍵 Bug 修復 (已完成)
 
 ### 1.1 RTMP Handshake 封包生成錯誤 (P0)
+
 **文件**: `RTMPHandshake.swift`  
 **問題**: C0/C1/C2 封包格式不符合 RTMP 規範
+
 - C0 應為單獨 1 字節版本號 (0x03)
 - C1 應為 1536 字節 (時間戳4 + 零填充4 + 隨機數據1528)
 - C2 應包含: S1時間戳4 + 客戶端當前時間4 + S1隨機數據1528
@@ -19,61 +22,71 @@
 **修復**: 重寫 `c0c1packet` 和 `c2packet()` 方法，嚴格區分 C0（1字節）、C1（1536字節）、C2（1536字節），修正 S1 隨機數據索引計算
 
 ### 1.2 Extended Timestamp 解析錯誤 (P0)
+
 **文件**: `RTMPChunk.swift:219-225`  
 **問題**: 當 timestamp == 0xFFFFFF 時讀取擴展時間戳，但根據 RTMP 規範，只要 timestamp >= 0xFFFFFF 就應讀取擴展時間戳
 
-**修復**: 
+**修復**:
+
 - 新增 `isExtended` 屬性追蹤擴展時間戳狀態
 - Type 0/1/2 chunk 中若 raw timestamp == 0xFFFFFF 則設置 `isExtended = true`
 - Type 3 chunk 繼承前一個 chunk 的 `isExtended` 狀態
 - 只有當 `isExtended == true` 時才讀取 4 字節擴展時間戳
 
 ### 1.3 Aggregate Message 類型錯誤 (P0)
+
 **文件**: `RTMPMessage.swift:610`  
 **問題**: `RTMPAggregateMessage.type` 設置為 `.windowAck` (0x05)，實際聚合消息類型應為 0x16
 
 **修復**: 修正 message type 為 `.aggregate`
 
 ### 1.4 Chunk Stream ID 解析邊界檢查 (P1)
+
 **文件**: `RTMPChunk.swift:172-193`  
 **問題**: 讀取擴展 chunk stream ID（0 和 1 情況）時無邊界檢查，可能導致崩潰
 
 **修復**: 在 `getBasicHeader()` 方法中增加 `remaining` 檢查：
+
 - 至少 1 字節才讀取 header
 - 情況 0 (2字節) 需要至少 2 字節剩餘
 - 情況 1 (3字節) 需要至少 3 字節剩餘
 
 ### 1.6 RTMPChunkBuffer 無限增長導致 `EXC_BREAKPOINT` 崩潰 (P0)
+
 **文件**: `RTMPChunk.swift`, `RTMPConnection.swift`  
 **問題**: 伺服器發送 `SetChunkSize` 訊息時，`chunkSizeC = Int(message.size)` 觸發 `inputBuffer.chunkSize.didSet`，執行 `data += Data(count: chunkSize - data.count + headerSize)`。若 `message.size` 異常巨大（如 `UInt32.max`），`Data(count:)` 嘗試分配 GB 級記憶體，Foundation 的 `ensureUniqueBufferReference` 觸發 `_assertionFailure` 崩潰。
 
 此外 `RTMPChunkBuffer.put(_:)` 無上限增長 buffer，每次收到網路資料都重新分配 `data.count + remaining` 大小的 Data，若消費速度跟不上接收速度，buffer 持續膨脹。
 
 **修復**:
+
 - `RTMPChunkBuffer` 新增 `defaultMaxBufferSize = 10MB` 常量
 - `put(_:)`: 當未讀資料 + 新資料超過上限時，直接以新資料取代（放棄舊資料，防止 OOM）
 - `chunkSize.didSet`: 加入 `chunkSize <= defaultMaxBufferSize` 驗證，超出範圍跳過擴容
 - `RTMPConnection.dispatch`: `chunkSizeC = min(Int(message.size), RTMPChunkBuffer.defaultMaxBufferSize)` 限制伺服器端 chunk size
 - **⚠️ 重要修正**: 最初改為 `reserveCapacity` 只能增加 `capacity` 無法增加 `count`，導致後續 `replaceSubrange` 越界崩潰（詳見 1.7）
 **文件**: `RTMPTimestamp.swift:20-58`  
-**問題**: 
+**問題**:
 - 32 位時間戳在 49.7 天後回滾，現有邏輯拋出 `invalidSequence`
 - Type 3 chunk 時間戳增量累加方式不正確（將絕對時間戳當作增量）
 
 **修復**:
+
 - 新增 `lastRawTimestamp`、`rolloverCount`、`lastDelta` 屬性
 - Type 0: 檢測 32 位回滾，計算連續時間戳
 - Type 1/2: 記錄 delta 值，用於後續 Type 3
 - Type 3: 使用 `lastDelta` 增加時間戳，而非誤用絕對時間戳
 
 ### 1.7 `reserveCapacity` 不更新 `data.count` 導致 `EXC_BREAKPOINT` (P0)
+
 **文件**: `RTMPChunk.swift:131-141`, `RTMPStream.swift:772`  
 **日期**: 2026-06-27  
 **版本**: 1.3.1  
 **問題**: 1.6 修復將 `chunkSize.didSet` 改為 `reserveCapacity`，但此 API 只增加 `capacity` 不增加 `count`。當 RTMP 握手期間 `chunkSizeS = chunkSize`（預設 8192）時，`outputBuffer.chunkSize` 從 128 增大為 8192，`data.capacity` 被擴容但 `data.count` 仍為 146。後續 `putMessage` 內呼叫 `data.replaceSubrange(position..<position+8192, ...)` 因範圍超出 `data.count` 而崩潰（EXC_BREAKPOINT / SIGTRAP）。
 
 **崩潰現場** (`ReplyKIT-2026-06-27-071028.ips`):
-```
+
+```swift
 Thread 5: com.apple.root.default-qos.cooperative
 frame 0: Data.InlineSlice.replaceSubrange(_:with:count:)  ← 越界檢查觸發 trap
 frame 1: Data._Representation.replaceSubrange
@@ -83,12 +96,14 @@ frame 8: RTMPStream.startOutputConsumer                  ← output consumer
 ```
 
 **根因鏈**:
+
 1. `RTMPConnection.chunkSizeS` 是 computed property（`RTMPConnection.swift:794-796`），直接代理 `outputBuffer.chunkSize`
 2. 握手成功時 `chunkSizeS = chunkSize`（預設 8192）觸發 `didSet`
 3. `didSet` 用 `reserveCapacity(8210)` 只擴容不更新 `count`
 4. `putMessage` 內 `replaceSubrange(12..<8204, ...)` 因 `data.count=146` 越界
 
 **修復** (`RTMPChunk.swift:131-141`):
+
 ```swift
 // 修改前
 data.reserveCapacity(data.count + needed + Self.headerSize)
@@ -117,41 +132,51 @@ let length = await conn.doOutput(item.type, ...)
 ## 2. 架構改進 (已完成)
 
 ### 2.1 文件清理與重構
+
 **文件**: `RTMPConnection.swift`  
 **目標**: 消除重複屬性宣告、修復狀態管理不一致
 **完成內容**:
+
 - 移除重複的 `socket`、`chunks`、`streams` 等屬性
 - 修正 `readyState` 枚舉與使用方法
 - 修正 `connect()` 中 `readyState.handshakeSentC0C1` 為 `readyState.versionSent`
 - 保持向後兼容
 
 ### 2.2 發送背壓控制
+
 **文件**: `RTMPSocket.swift`  
 **目標**: 防止發送隊列無限增長導致 OOM
 **完成內容**:
+
 - 新增 `maxQueueBytesOut = 5MB` 常量
 - `send()` 方法檢查 `queueBytesOut < maxQueueBytesOut`
 - 超過限制時記錄警告並丟棄數據
 - 適用於所有 send 重載
 
 ### 2.3 TLS 配置改進
+
 **文件**: `RTMPSocket.swift`  
 **目標**: 完善的 TLS 支援
 **完成內容**: 保留 Network framework 預設的 `.tls` 配置，支援標準 RTMPS 連線
 
 ### 2.4 E-RTMP 增強 (Enhancing RTMP)
+
 **文件**: `RTMPEnhanced.swift`, `RTMPMessage.swift`  
 **目標**: 支援編碼器協商與多軌道
 
 #### 編碼器協商
+
 **完成內容**:
+
 - `RTMPAudioFourCC`/`RTMPVideoFourCC` 新增 `init(bytes:)` 構造器
 - 新增 `EnhancedRTMPCapability` 枚舉
 - 新增 `enhancedAudioType`/`enhancedVideoType` 計算屬性
 - 完善編碼器類型推斷
 
 #### 多軌道支持
+
 **完成內容**:
+
 - `RTMPAudioMessage` 和 `RTMPVideoMessage` 新增 `trackId` 參數
 - Enhanced RTMP 模式下編碼 track ID:
   - Opus 音頻: packet type 後追加 1 字節 track ID
@@ -163,21 +188,27 @@ let length = await conn.doOutput(item.type, ...)
 ## 3. 新增功能 (已完成)
 
 ### 3.1 協議狀態機
+
 **文件**: `RTMPConnection.swift`  
 **目標**: 輕量級有限狀態機，驗證所有狀態轉換合法性
 **完成內容**:
+
 - 新增 `ConnectionState` 枚舉（內置於 `RTMPConnection`）
 - `canTransition(to:)` 方法驗證每個轉換：
-  ```
+
+  ```swift
   .uninitialized → .connecting → .versionSent → .ackSent → .handshakeDone → .connected
   ```
+
 - 所有無效轉換（如 `.uninitialized → .connected`）直接拋出 `Error.invalidState`
 - 替換原有鬆散的 `ReadyState` 枚舉
 
 ### 3.2 自動重連與指數退避
+
 **文件**: `RTMPConnection.swift`  
 **目標**: 網絡中斷後自動重連，支援指數退避
 **完成內容**:
+
 - 新增 `isReconnectEnabled`、`maxReconnectAttempts`、`reconnectBaseDelay`、`reconnectMaxDelay` 參數
 - 新增 `scheduleReconnect()` 方法
 - 指數退避公式: `min(baseDelay << (attempt-1), maxDelay)`
@@ -186,9 +217,11 @@ let length = await conn.doOutput(item.type, ...)
 - 認證拒絕 (`connectRejected`) 不走重連，直接拋錯
 
 ### 3.3 VP9/AV1 解碼器支援
+
 **文件**: `RTMPEnhanced.swift`, `VideoCodecSettings.swift`, `VideoCodecSettings.Format+Extension.swift`  
 **目標**: 擴展編碼器支援至 VP9/AV1
 **完成內容**:
+
 - `VideoCodecSettings.Format` 新增 `.vp9` 和 `.av1` cases
 - `codecType`: VP9 = `0x76703039` (vp09), AV1 = `0x61763031` (av01)
 - `isSupported` 回傳 `true` (基礎架構已就緒)
@@ -197,24 +230,29 @@ let length = await conn.doOutput(item.type, ...)
 - 補齊 `RTCHaishinKit` 與 `VideoCodecSettings` 的 switch exhaustive 匹配
 
 ### 3.4 ReplyKit 通訊層改進
+
 **文件**: `ReplyKIT/Socket.swift`  
 **範圍**: App↔Extension 間 TCP Socket（非 RTMP）
 
 **SocketClient (Socket.swift)**:
+
 - 新增 `SocketState` 有限狀態機，驗證所有轉換合法性
 - 新增電路斷路器：連續 5 次失敗後停止重連 60 秒冷卻
 - 冷卻後自動恢復重連
 - `.failed` 追蹤連續失敗次數，`.cancelled` 不計入
 
 ### 3.5 RTMPConnection 重連回呼（給消費方）
+
 **文件**: `RTMPConnection.swift`  
 **動機**: 底層既有重連機制，消費方（如 ReplyKIT 的 SampleHandler）不需獨立重試迴圈。透過回呼接收事件，只處理媒體管線協調。
 
 **新增 API**:
+
 - `ReconnectState` 枚舉：`.started(attempt:, maxAttempts:)` / `.succeeded` / `.failed(Error)` / `.exhausted`
 - `onReconnectStateChanged: (@Sendable (ReconnectState) async -> Void)?`
 
 **消費方使用範例（替代 `attemptReconnect`）**:
+
 ```swift
 rtmpConnection.isReconnectEnabled = true
 rtmpConnection.onReconnectStateChanged = { state in
@@ -233,30 +271,36 @@ rtmpConnection.onReconnectStateChanged = { state in
 ---
 
 ### 3.6 重連後 VideoCodec 輸出串流修復 (v1.3.2)
+
 **文件**: `RTMPStream.swift`, `VideoCodec.swift`, `AsyncStreamedFlow.swift`  
 **動機**: 重連後影片軌永久消失，音訊正常。
 
 **根因**:
+
 1. `dispatch(.reset)` 未呼叫 `outgoing.stopRunning()`，導致編碼器未重啟，`startRunning()` 變 no-op
 2. `VideoCodec.outputStream` 為手動 lazy cache，舊/新發佈 task 共用同一條 AsyncStream 造成競爭
 3. `AudioCodec` 使用 `@AsyncStreamedFlow`（自動建立新 stream）不受影響
 
 **修復**:
+
 - `RTMPStream.dispatch(.reset)` 增加 `outgoing.stopRunning()`，確保編碼器完整拆解後重啟
 - `VideoCodec.outputStream` 改用 `@AsyncStreamedFlow`，對齊 AudioCodec 行為
 - `AsyncStreamedFlow` 新增 `continuation` 公開 getter，讓 VideoCodec 可傳給 `session.convert()`
 
 ### 3.7 診斷日誌 hot path 保護 (v1.3.2)
+
 **文件**: `RTMPStream.swift`, `RTMPConnection.swift`, `RTMPLogEvent.swift`, `RTMPSocket.swift`  
 **動機**: `onLog` 設計缺失等級過濾，append hot path 逐幀 `Task { await ... }` spawn 造成 actor contention。
 
 **修復**:
+
 - `RTMPLogLevel` 新增 `severity` 排序
 - `RTMPConnection` 新增 `minimumLogLevel` 參數（預設 `.info`），`log()` 內過濾
 - Socket `onLog` 轉送同步過濾
 - append hot path 移除 per-frame `Task`，改為計數器累積，由 `dispatch(.status)` 週期彙總一條 `"publish throughput"` 事件
 
 **使用**:
+
 ```swift
 // 生產環境（預設）：只收 info/warn/error
 RTMPConnection(minimumLogLevel: .info)
@@ -270,8 +314,9 @@ RTMPConnection(minimumLogLevel: .trace)
 ## 4. 代碼變更清單
 
 ### 修改文件
+
 | 文件 | 變更類型 | 說明 |
-|------|----------|------|
+| ------ | ---------- | ------ |
 | `RTMPHandshake.swift` | 重寫 | 修復 C0/C1/C2 封包格式 |
 | `RTMPChunk.swift` | 修改 | 修復 extended timestamp + 邊界檢查 |
 | `RTMPMessage.swift` | 修改 | 修復 aggregate type + 多軌道支援 |
@@ -287,8 +332,9 @@ RTMPConnection(minimumLogLevel: .trace)
 | `RTMPLogEvent.swift` | 修改 | 新增 severity 排序（v1.3.2） |
 
 ### 刪除文件
+
 | 文件 | 原因 |
-|------|------|
+| ------ | ------ |
 | `Sources/RTMP/RTMPStateMachine.swift` | 錯誤位置，邏輯重複 |
 
 ---
@@ -296,12 +342,14 @@ RTMPConnection(minimumLogLevel: .trace)
 ## 4. 測試計畫
 
 ### 單元測試建議
+
 - ✅ Handshake 封包生成/解析測試 (`RTMPHandshake.swift`)
 - ✅ Chunk 解析邊界測試 (`RTMPChunk.swift`)
 - ✅ 時間戳回滾測試 (`RTMPTimestamp.swift`)
 - ✅ 發送背壓測試 (`RTMPSocket.swift`)
 
 ### 集成測試建議
+
 - ✅ 完整 RTMP 連接流程
 - ✅ E-RTMP 編碼器協商
 - ✅ 多軌道發送
@@ -310,6 +358,7 @@ RTMPConnection(minimumLogLevel: .trace)
 ---
 
 ### 7.2 onMetaData 音訊中繼資料遺失導致 YouTube 顯示位元率為 0 (P1)
+
 **文件**: `RTMPStream.swift:830-851`  
 **日期**: 2026-07-02  
 **版本**: 1.3.4  
@@ -317,6 +366,7 @@ RTMPConnection(minimumLogLevel: .trace)
 **問題**: `makeMetadata()` 將所有音訊中繼資料（`audiocodecid`、`audiodatarate`、`audiosamplerate`）包裹在 `if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription` guard 內。`publish()` 呼叫時音訊編碼器尚未產生輸出，`audioInputFormat` 為 `nil`，導致 **整個音訊中繼資料區塊被跳過**。YouTube 收到不含 `audiodatarate` 的 `onMetaData`，預設位元率為 0，顯示「音訊串流目前的位元率 (0) 低於建議值」。
 
 **修復**:
+
 - `audiocodecid` 和 `audiodatarate` 來自 `audioSettings`（總有預設值 64000 bps），不再依賴 `audioInputFormat`
 - 只有 `audiosamplerate` 保留在 `audioInputFormat` guard 內，因為它需要實際的輸入取樣率
 
@@ -341,6 +391,7 @@ if let audioFormat = outgoing.audioInputFormat?.audioStreamBasicDescription {
 ---
 
 ### 7.3 Send Pipeline 最佳化：消除 chunk 逐筆複製與 `[Data]` 中間層
+
 **文件**: `RTMPChunk.swift:268-301`, `RTMPConnection.swift:598-630`, `RTMPSocket.swift:89-116`  
 **日期**: 2026-07-02  
 **版本**: 1.3.4  
@@ -377,6 +428,7 @@ outputContinuation.yield(data)
 ---
 
 ### 7.4 onMetaData 發送時序過早導致 HTTP-FLV 顯示 `1/1000` fps (P1)
+
 **文件**: `RTMPStream.swift`
 **日期**: 2026-09-01
 
@@ -387,6 +439,7 @@ outputContinuation.yield(data)
 （實際 fps 正常），但 FLV 內找不到 `onMetaData`、`framerate` 或 `@setDataFrame`。
 
 **影響**:
+
 - 下游 demuxer/player 無法從 metadata 得到 `framerate`
 - 診斷頁或播放器可能退回顯示 FLV timestamp timebase（毫秒，`1/1000`），看起來像
   異常 fps
@@ -394,6 +447,7 @@ outputContinuation.yield(data)
   metadata 缺失造成顯示/推斷錯誤
 
 **修復**:
+
 - `onMetaData` 改為等 `publishStart` 回應後才送出
 - 第一筆 metadata 使用 timestamp `0`
 - 若 publish 成功時 video format 尚未可用，第一個 encoded video frame 到達時，
@@ -402,6 +456,7 @@ outputContinuation.yield(data)
 - reset/reconnect 時清除 metadata 發送狀態，確保每次重新 publish 都會重新送出
 
 **驗證方式**:
+
 1. 拉取 HTTP-FLV 樣本，確認包含 `onMetaData` 與 `framerate`
 2. 解析 FLV video tag timestamp delta，應維持在實際幀間距（例如 16/17/20/33ms）
 3. 若播放器仍顯示 `1/1000`，先確認 metadata 是否被 server 轉發，再檢查下游 parser
@@ -420,12 +475,14 @@ outputContinuation.yield(data)
 ## 7. 關鍵 Bug 修復 (v1.3.3)
 
 ### 7.1 createStream 無重試、錯誤被吞掉導致推流失敗 (P0)
+
 **文件**: `RTMPStream.swift:650-684`, `RTMPConnection.swift:550`  
 **日期**: 2026-06-29  
 **問題**: `createStream()` 在 server 短暫無回應時直接失敗，錯誤被內部 catch 吞掉，`publish()` 只能看到 `id == 0`。內網 RTMP server 經常出現 txn=1 (connect) 成功但 txn=2 (createStream) 在 3 秒內無回應的情況。
 
 **現場 log** (`log-4.txt`):
-```
+
+```log
 [RTMP] error Command timeout cmd=createStream txn=2
 [RTMP] error createStream: failed requestTimedOut
 [RTMP] debug publish: stream created id=0
@@ -434,6 +491,7 @@ outputContinuation.yield(data)
 ```
 
 **修復**:
+
 - `createStream()` 改為 `async throws`，錯誤向上傳播
 - 內建重試迴圈：預設 3 次，每次間隔 500ms（總計 ~4.5s 容忍期）
 - 每次失敗透過 `connection?.log()` → `onLog` 記錄嘗試次數與錯誤

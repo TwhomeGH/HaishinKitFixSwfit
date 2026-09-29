@@ -23,7 +23,7 @@ open Package.swift
 
 ## 專案結構
 
-```
+```log
 HaishinKit.swift/
 ├── HaishinKit/          # 核心框架
 │   ├── Sources/
@@ -63,7 +63,7 @@ HaishinKit.swift/
 ### 命名慣例
 
 | 項目 | 慣例 | 範例 |
-|------|------|------|
+| ------ | ------ | ------ |
 | 類型 | PascalCase | `RTMPConnection` |
 | 屬性 | camelCase | `connected` |
 | 列舉 | PascalCase | `HowToPublish` |

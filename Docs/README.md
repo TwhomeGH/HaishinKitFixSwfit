@@ -16,7 +16,7 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 ### 支援平台
 
 | 平台 | 最低版本 |
-|------|----------|
+| ------ | ---------- |
 | iOS | 15.0+ |
 | macOS | 12.0+ |
 | tvOS | 15.0+ |
@@ -24,7 +24,7 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 
 ### 架構
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                      應用層                                   │
 ├─────────────────────────────────────────────────────────────┤
@@ -41,7 +41,7 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 ## 模組結構
 
 | 模組 | 說明 |
-|------|------|
+| ------ | ------ |
 | `HaishinKit` | 核心框架：MediaMixer、Codec、Network、Session、Stream |
 | `RTMPHaishinKit` | RTMP/RTMPS 通訊協定實作 |
 | `SRTHaishinKit` | SRT（Secure Reliable Transport）通訊協定 |
@@ -60,8 +60,6 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 ```
 
 或在 Xcode 中：**File → Add Package Dependencies...** → 輸入 `https://github.com/TwhomeGH/HaishinKitFixSwfit.git`
-
-
 
 ### 基本 RTMP 發布
 
@@ -96,7 +94,7 @@ try await session.stream.publish("streamKey")
 ## 文件索引
 
 | 文件 | 說明 |
-|------|------|
+| ------ | ------ |
 | [架構](ARCHITECTURE.md) | 系統架構與資料流 |
 | [RTMP 通訊協定](RTMP_PROTOCOL.md) | RTMP 實作細節 |
 | [Composition Time 與 A/V 補償](RTMP_COMPOSITION_TIME.md) | CTS（PTS−DTS）在 A/V 偏移補償下的正確性與負 CTS 缺陷 |

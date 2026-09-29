@@ -38,7 +38,7 @@ var outputStream: AsyncStream<CMSampleBuffer> {
 ### 影響
 
 | 情境 | 影響 |
-|------|------|
+| ------ | ------ |
 | `videoOutputStream` 被多次存取 | 只有最後一次存取的 consumer 收到資料，其餘永久飢餓 |
 | Encoder 在 consumer 啟動前產出 frame | `_outputContinuation == nil`，frame 靜默丟棄 |
 | 重連後重新建立 consumer task | 需要重新存取 `outputStream`，新舊 stream 銜接不連續 |
@@ -146,7 +146,7 @@ for stream in streams {
 ### 影響
 
 | 情境 | 結果 |
-|------|------|
+| ------ | ------ |
 | 斷線重連後未 republish | Stream 停留在 `.idle`，無資料推送 |
 | 有資料混入（任務未清理） | 資料使用錯誤 stream ID，伺服器拒絕或錯誤路由 |
 | 使用者手動呼叫 `connect()` | 但不會自動呼叫 `publish()`，需自行監聽重連事件 |
@@ -177,7 +177,7 @@ for stream in streams {
 兩個 Codec 使用完全不同的機制管理輸出 stream：
 
 | 面向 | AudioCodec | VideoCodec |
-|------|-----------|------------|
+| ------ |-----------|------------|
 | 屬性包裝 | `@AsyncStreamedFlow` property wrapper | 手動 computed property |
 | Continuation 管理 | `didSet` 自動 finish 舊的 | 直接覆蓋，遺棄舊的 |
 | Yield 方式 | `_outputStream.yield(value)` | 傳遞 `continuation` 給 session.convert |
@@ -229,7 +229,7 @@ var outputStream: AsyncStream<CMSampleBuffer>
 ### 影響
 
 | 情境 | 結果 |
-|------|------|
+| ------ | ------ |
 | 重連後 VideoCodec outputStream 被舊 task 污染 | 影片幀永久消失，音訊正常 |
 | 重新發佈後新 task 無法獨佔消費 | AsyncStream 多消費者競爭，幀丟失 |
 | 無 `@AsyncStreamedFlow` 自動 refresh | cached stream 跨越 publish cycle 存活 |
@@ -309,7 +309,7 @@ Client recv() 收到 S0+S1+S2 (同一個 TCP packet)
 ### 關鍵錯誤鏈
 
 | 環節 | 結果 |
-|------|------|
+| ------ | ------ |
 | 握手成功（S0+S1+S2 已完整收到） | ✅ |
 | S2 檢測公式 bug | ❌ `hasS2Packet` 永遠 false |
 | Handshake 無法 transition 到 `.handshakeDone` | ❌ |
@@ -364,7 +364,7 @@ RTMPConnection(
 ### 效果
 
 | 設定 | `fourCcList` | `videoFourCcInfoMap` | `audioFourCcInfoMap` | `capsEx` |
-|------|-------------|---------------------|---------------------|---------|
+| ------ |-------------|---------------------|---------------------| --------- |
 | `true`（預設） | `["hvc1","opus"]` | `canDecode\|canEncode` | `canEncode` | `0x01` |
 | `false` | `nil` | `nil` | `nil` | `0` |
 
@@ -418,7 +418,7 @@ if 0 < capsEx {
 #### 驗證方式
 
 | 測試條件 | SRS log 結果 | 連線 |
-|---------|-------------|------|
+| --------- |-------------| ------ |
 | E-RTMP 開啟 + `capsEx: 1`（修正前） | `connect app, tcUrl=...` + 立即 `on_close` | ❌ |
 | E-RTMP 關閉 + `capsEx: 0` **仍送出**（修正前） | `timeout 30000 ms`，無 `connect app` log | ❌ |
 | E-RTMP 關閉 + `capsEx` 不送出（修正後） | 待測試 | ❓ |
@@ -466,7 +466,7 @@ Task {
 ### 提供的診斷事件
 
 | 位置 | 事件 | 時機 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `RTMPConnection.state.didSet` | `State: old => new` | 每次連線狀態轉換 |
 | `performConnect` | `TCP connecting` | TCP 連線前 |
 | | `TCP connect failed` | TCP 連線失敗 |
@@ -552,7 +552,7 @@ UInt32(data:) 在 LE 機器上：
 ### 影響
 
 | 欄位 | Wire 上為 3 bytes BE | 被誤讀為 | 實際應為 | 倍率 |
-|------|---------------------|---------|---------|------|
+| ------ |---------------------| --------- |---------| ------ |
 | `messageLength` | `[0x00,0x00,0x50]` (= 80) | 20480 | 80 | 256x |
 | `timestamp` | `[0x00,0x00,0x01]` (= 1ms) | 256 | 1 | 256x |
 
@@ -575,7 +575,7 @@ SRS 回應 889 bytes（含 _result + 控制訊息）
 ### SRS 端與 Client 端 log 交叉比對
 
 | SRS log | Client log | 意義 |
-|---------|-----------|------|
+| --------- |-----------| ------ |
 | `simple handshake success` | `Socket recv size=3073` | 握手完成 |
 | `connect app, tcUrl=...` | `State: ackSent => handshakeDone` | Connect command 送出 |
 | `send_bytes=3962` (含回應) | `Socket recv size=16 + 873` | SRS 回應已收到 |
@@ -601,7 +601,7 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 ### 受影響的讀取點
 
 | 行號 | 欄位 | 位元組數 | Wire Endian | 修正前 |
-|------|------|---------|------------|--------|
+| ------ | ------ | --------- |------------| -------- |
 | 212, 220, 227 | timestamp | 3 | Big | ❌ `data[...].bigEndian` |
 | 215, 223 | messageLength | 3 | Big | ❌ `data[...].bigEndian` |
 | 239 | extended timestamp | 4 | Big | ✅ 4-byte 是對的 |
@@ -614,7 +614,7 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 ### 問題嚴重性
 
 | # | 問題 | 嚴重性 | 影響範圍 | 類別 |
-|---|------|--------|----------|------|
+|---| ------ | -------- | ---------- | ------ |
 | 0 | S2 封包檢測公式錯誤 | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
 | 🔥 1 | **Chunk 3-byte BE 讀取錯誤** | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
 | 2 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
@@ -627,7 +627,7 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 ### 修復狀態
 
 | # | 修復 | 檔案 |
-|---|------|------|
+|---| ------ | ------ |
 | 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
 | 🔥 1 | ✅ `UInt32(data:...).bigEndian` → 手動 shift | `RTMPChunk.swift` |
 | 2 | ✅ `@AsyncStreamedFlow` property wrapper | `VideoCodec.swift`, `AsyncStreamedFlow.swift` |

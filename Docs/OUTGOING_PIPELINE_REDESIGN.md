@@ -35,12 +35,12 @@ tasks.append(Task { for await video in outgoing.videoInputStream { outgoing.appe
 **問題**：
 
 | 面向 | 影響 |
-|------|------|
+| ------ | ------ |
 | 生命週期 | 每個 Task 獨立運行，無法集體取消或等待完成 |
 | 重連競態 | `stopMixerInputConsumers()` 砍掉所有 Task 再重建，中間有空窗 |
 | 防禦程式 | `close()` 裡有 `stopMixerInputConsumers()` + `startMixerInputConsumers()` 的無意義重啟 |
 
-```
+```swift
 publish() 順序：
   outgoing.startRunning()
   stopMixerInputConsumers()   ← 砍掉全部舊 Task
@@ -54,7 +54,7 @@ publish() 順序：
 
 每個編碼幀從 encoder 輸出到 socket 發送，需要跨越 **兩個 actor**：
 
-```
+```swift
 Encoder (VideoToolbox callback)
   ↓
 videoOutputStream consumer Task
@@ -79,7 +79,7 @@ videoOutputStream consumer Task
 
 ### 2.2 架構圖
 
-```
+```swift
 MediaMixer ──→ mixer(_:didOutput:) ──→ mixerVideoContinuation
                                            │
                               TaskGroup sub-task (actor hop needed)
@@ -200,7 +200,7 @@ private func stopPublishTasks() {
 ### 2.5 調用點
 
 | 方法 | 行為 |
-|------|------|
+| ------ | ------ |
 | `publish()` | `startPublishTasks()` 建立 TaskGroup |
 | `close()` | `stopPublishTasks()` → `outgoing.stopRunning()` |
 | `deleteStream()` | `stopPublishTasks()` → `outgoing.stopRunning()` |
@@ -265,7 +265,7 @@ publishTask = Task { ... await withTaskGroup { group in
 `VideoCodec.append()` 和 `AudioCodec.append()` 有兩類 guard 失敗會靜默丟幀，且完全無日誌：
 
 | 位置 | guard | 意涵 |
-|------|-------|------|
+| ------ | ------- | ------ |
 | `VideoCodec:58` | `isRunning` | 編碼器未啟動，幀被丟棄 |
 | `VideoCodec:70` | `session, _outputContinuation` | VT session 未建成或輸出流未就緒 |
 | `AudioCodec:52` | `isRunning` | 編碼器未啟動 |
@@ -349,7 +349,7 @@ TCP `socket.connect()` 失敗時，state 留在 `.connecting` 但 `connected = f
 **檔案**: `VideoCodec.swift:107-118`, `VideoCodecSettings.swift:134`
 
 | 項目 | 值 |
-|------|-----|
+| ------ | ----- |
 | 預設 | `0.0` |
 | 效果 | 0 = passthrough，所有幀不攔截 |
 | 設定方式 | `videoSettings.frameInterval = VideoCodecSettings.frameInterval30` |
@@ -371,7 +371,7 @@ private func useFrame(_ pts: CMTime) -> Bool {
 **檔案**: `VideoCodecSettings.swift:124`, `VideoCodec.swift:120-128`
 
 | 項目 | 值 |
-|------|-----|
+| ------ | ----- |
 | 預設 | `2` 秒 |
 | 作用一 | VideoToolbox 編碼器參數：`kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration = 2` |
 | 作用二 | HaishinKit 軟體補強：`shouldForceKeyFrame()` 在幀上打 `forceKeyFrame` flag |
@@ -390,14 +390,14 @@ private func shouldForceKeyFrame(_ pts: CMTime) -> Bool {
 ### 5.3 `expectedFrameRate` — 功耗提示與 KeyFrame 計算
 
 | 項目 | 值 |
-|------|-----|
+| ------ | ----- |
 | 預設 | `nil` |
 | 效果 | 告知 VideoToolbox 預期幀率以優化功耗；用於計算 `maxKeyFrameInterval`（以幀數計） |
 | 計算邏輯 | nil + `frameInterval = 0` → 預設以 30fps 計算，得出 `maxKeyFrameInterval = 60` 幀 |
 
 ### 5.4 三者關係
 
-```
+```swift
 frameInterval          maxKeyFrameIntervalDuration      expectedFrameRate
 (本地過濾)              (IDR 間隔秒數)                   (編碼器提示)
      │                        │                              │
@@ -419,7 +419,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 ### Actor Hop 次數
 
 | 路徑 | 舊設計 | 新設計 |
-|---|---|---|
+| --- | --- | --- |
 | mixer → encoder (video) | 1 hop (RTMPStream) | 1 hop (RTMPStream) |
 | mixer → encoder (audio) | 1 hop (RTMPStream) | 1 hop (RTMPStream) |
 | **encoder → RTMP (video)** | **1 hop (RTMPStream)** | **0 hop** |
@@ -431,7 +431,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 以每幀 8.3ms 為例：
 
 | 指標 | 舊設計 | 新設計 |
-|------|--------|--------|
+| ------ | -------- | -------- |
 | RTMPStream actor hop/幀 | 2 (mixer + output) | 1 (mixer only) |
 | 排程延遲/幀 | ~2-4µs × 2 | ~2-4µs × 1 |
 | Task 生命週期 | 5 個獨立 Task | 1 個 TaskGroup（5 子任務） |
@@ -445,7 +445,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 所有診斷訊息走兩條通道：
 
 | 通道 | 範圍 | 使用方式 |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `connection.onLog` | RTMPConnection, RTMPStream, RTMPSocket | `await connection.setOnLog { ... }` |
 | `logger.onLog` | VideoCodec, AudioCodec, OutgoingStream | `logger.onLog = { level, msg in ... }` |
 
@@ -454,7 +454,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 ### 核心診斷訊息
 
 | 日誌訊息 | 來源 | 意義 |
-|----------|------|------|
+| ---------- | ------ | ------ |
 | `mixer->stream: video pts=X` | RTMPStream | MediaMixer → RTMPStream 收到未壓縮幀 |
 | `outgoing->rtmp: video pts=X size=Y` | RTMPStream | 壓縮幀走新路徑，零 actor hop 送入輸出 |
 | `outgoing->rtmp: audio size=Y` | RTMPStream | 同上，音訊 |
@@ -474,7 +474,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 ### 變更檔案
 
 | 檔案 | 變更類型 | 說明 |
-|------|---------|------|
+| ------ | --------- | ------ |
 | `RTMPStream.swift` | 重構 | TaskGroup + RTMPOutgoingState + 診斷 log |
 | `RTMPConnection.swift` | 修復 | 狀態機 ×3 |
 | `OutgoingStream.swift` | 修復 | `videoInputStream` cache + `stopRunning` 清理 |
@@ -491,7 +491,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 ### 建議後續優化
 
 | 優化方向 | 適用場景 | 複雜度 |
-|----------|---------|--------|
+| ---------- | --------- | -------- |
 | 移除 RTMPStream actor，改用 lock-based class | 進一步消除 mixer 路徑的 actor hop | 高（協定層需重構） |
 | 將 RTMPConnection.doOutput 也移出 actor | 完全消除 actor hop | 中 |
 | MPSC ring buffer 取代 AsyncStream | 120fps+ 4K | 高 |
@@ -514,7 +514,7 @@ useFrame()              shouldForceKeyFrame()           VTSession.setOption
 
 原本 `mixerAudioContinuation` / `mixerVideoContinuation` 標記為 `nonisolated(unsafe)`，且 mixer 回呼透過 `Task { continuation?.yield(...) }` 將 frame 送入 pipeline。
 
-```
+```swift
 // 原始（每幀開 Task）
 nonisolated func mixer(_:didOutput:) {
     let c = mixerVideoContinuation      // nonisolated(unsafe)
@@ -523,6 +523,7 @@ nonisolated func mixer(_:didOutput:) {
 ```
 
 **問題**:
+
 1. `nonisolated(unsafe)` 繞過 compiler 隔離檢查
 2. 每秒 80+ 次 Task 分配（30fps video + ~50fps audio PCM）
 
@@ -541,7 +542,7 @@ nonisolated func mixer(_:didOutput:) {
 
 橋接器改為 `DispatchQueue.async` 序列化 yield：
 
-```
+```swift
 // 直接 yield（前版）：MediaMixer 暴衝 30 幀 → buffer(5) 丟 25 幀 → 撕裂
 // DispatchQueue（現在）：序列化 yield → 自然 pace → buffer 不溢滿
 ```
@@ -563,13 +564,14 @@ func computeVideoInputBufferCounts(for size: CGSize) -> Int {
 ```
 
 | 解析度 | 每幀大小 | 自動 buffer 幀數 |
-|-------|---------|----------------|
+| ------- | --------- | ---------------- |
 | 1080p | ~3.0 MB | 5 |
 | 720p | ~1.4 MB | 10 |
 | 540p | ~0.8 MB | 18 |
 | 360p | ~0.3 MB | 30 (上限) |
 
 **API 變更**:
+
 - `setVideoInputBufferCounts(Int)` 保留但傳 -1 可恢復自動模式
 - 新增 `maxVideoBufferBytes` 屬性
 
@@ -580,6 +582,7 @@ func computeVideoInputBufferCounts(for size: CGSize) -> Int {
 原本 Video 有 `restartVideoPipeline()` 但 Audio 完全沒有對應機制。
 
 **新增**:
+
 - `audioInputFrames` 計數器（PCM 送入 codec 時累加）
 - `audioStallCount` 累計器
 - 在 `NetworkMonitorEvent.status` 中檢測：`audioInputFrames > 0 && audioSentFrames == 0` 達 3 次連續 interval → 觸發 `restartAudioPipeline()`
@@ -592,7 +595,7 @@ VideoCodec.outputStream 原本想改 `.bufferingNewest(60)` 但造成撕裂（po
 ### 9.7 變更檔案總表
 
 | 檔案 | 變更 |
-|------|------|
+| ------ | ------ |
 | `MediaMixerOutputBridge.swift` | **新增**：bridge 層，DispatchQueue pacing |
 | `RTMPConnection.swift` | 改 `.bufferingNewest(256)`（原本 unbounded 造成 latency 無限累積） |
 | `RTMPStream.swift` | 改用 bridge、audio stall 檢測、status gap warn log |
@@ -635,8 +638,6 @@ compositionTime = (pts.seconds - videoTimestamp.updatedAt) * 1000
 
 **效果**: 可從 onLog 確認撕裂或 frame 丟失是否來自 VT 內部（因 encoder 塞車主動丟幀）。
 
-
-
 ### 9.10 RTMPTimestamp.syncToUpdatedAt 移除
 
 移除 `syncToUpdatedAt` 方法。原本在 pipeline restart 時用於將 video timestamp 對齊 audio，但實際因下一幀 resync 立即覆寫而無效。副作用是 sync 將 `updatedAt` 跳到未來 → 接下來多幀 `delta=0` → ffmpeg 報 `Non-monotonous DTS`。A/V 各自 PTS 來自同一個系統時鐘，restart 後自然對齊。
@@ -645,7 +646,7 @@ compositionTime = (pts.seconds - videoTimestamp.updatedAt) * 1000
 
 橋接器改為 `DispatchQueue.async` 序列化 yield：
 
-```
+```swift
 // 直接 yield（前版）：MediaMixer 暴衝 30 幀 → buffer(5) 丟 25 幀 → 撕裂
 // DispatchQueue（現在）：序列化 yield → 自然 pace → buffer 不溢滿
 ```
@@ -659,7 +660,7 @@ compositionTime = (pts.seconds - videoTimestamp.updatedAt) * 1000
 `restartVideoPipeline()` 原本只呼叫 `outgoing.restartVideoCodec()`，留下多項殘留狀態導致 pipeline 永遠無法恢復：
 
 | 殘留狀態 | 影響 |
-|----------|------|
+| ---------- | ------ |
 | `_videoInputStream` 快取 | 跨 task 世代共享，舊 task 的 for-await loop 可能繼續競爭消費 |
 | `videoInputContinuation` 未清除 | yield 到已 finish 或從屬於舊 task 的 stream |
 | `audioCodec.outputStream` 從未被取代 | 音訊 pipeline 重啟後完全無輸出（audioSentFrames = 0） |
@@ -684,7 +685,7 @@ private func restartVideoPipeline(reason: String) async {
 
 `outgoing.stopRunning()` 的完整清除鏈：
 
-```
+```swift
 OutgoingStream.stopRunning()
   ├── videoCodec.stopRunning()
   │     ├── session = nil / invalidateSession = true
@@ -711,7 +712,7 @@ let streamTime = UInt32(videoTimestamp.updatedAt * 1000)
 #### 9.11.3 效果
 
 | 場景 | 修復前 | 修復後 |
-|------|--------|--------|
+| ------ | -------- | -------- |
 | Pipeline restart 後 encoder 無輸出 | videoFrames=0 持續，stallCount 累積 → 無限重啟 | 新 task 獨佔全新 stream，正常輸出 |
 | Audio 管線隨 video restart 一起停擺 | audioSentFrames=0 持續 | `startRunning()` 重新建立 audioCodec outputStream |
 | **seq header 用 timestamp=0 打斷 timeline** | **(新問題)** seq header 用 chunk .zero 把串流時間重置 → Twitch #2000 | 不重置 videoFormat（格式相同不送 seq header）；若真的格式變更則用 `updatedAt * 1000` 作為 seq header timestamp |
@@ -730,12 +731,14 @@ let currentFps = frameInterval > 0 ? 1.0 / frameInterval : 60.0
 ```
 
 若相機實際只有 30fps：
+
 - baseline = 60 (錯誤)
 - 降 15% → target = 51fps
 - `frameInterval = 1/51 ≈ 0.0196`
 - 但 `useFrame` 最多讓 30fps 通過 → throttle 完全沒作用
 
 ProMotion 80fps 場景下：
+
 - `expectedFrameRate = nil` 時 `useFrame` 全放行
 - 80fps → VT 過載 → throttle 降 15% → 68fps → 仍然太高
 - framerate 在 22~66fps 之間劇烈振盪
@@ -767,7 +770,7 @@ private func updateAdaptiveFrameInterval() {
 ```
 
 | 相機 FPS | 舊 baseline | 舊 target | 新 baseline | 新 target (85%) |
-|----------|------------|-----------|------------|----------------|
+| ---------- | ------------ | ----------- | ------------ | ---------------- |
 | 30 | 60 (錯) | 51 (無效) | 30 | 25.5 ✅ |
 | 60 | 60 | 51 | 60 | 51 |
 | 80 (ProMotion) | 60 (錯) | 51 (太弱) | 80 | 68 |
@@ -778,12 +781,13 @@ private func updateAdaptiveFrameInterval() {
 
 原本的 recovery 需要 30 次連續 clear checks 才恢復 10%，且任何 pending spike 都會重置 `clearStreak`，導致 throttle 一旦啟動就卡死在低幀率：
 
-```
+```swift
 videoInputFrames=33 videoFrames=15  ← 被卡在 15fps，VT 早就恢復了
 pending frames = 1                  ← VT 實際很健康，但 recovery 太慢
 ```
 
 **重新設計原則**：
+
 1. **持續過載才介入**：`highPendingStreak >= 3` 才降速，單次 spike 不觸發
 2. **快速恢復**：5 次連續 clear checks（~170ms @ 30fps）就恢復 baseline，不是 30 次
 3. **直接恢復**：恢復時 `frameInterval = 0` 一步到位，不做 10% 漸進
@@ -828,6 +832,7 @@ videoSettings.prioritizeEncodingSpeedOverQuality = true
 ```
 
 `expectedFrameRate = 30` 的效果：
+
 - `useFrame` 確保最多 30fps 送入 encoder（無論相機是 60/80/120fps）
 - `adaptiveFrameThrottle` 從真實 30fps baseline 計算，降速有效
 - VT 負載穩定 → bitrate 波動大幅減少
@@ -871,7 +876,7 @@ return frameCounter % dropRatio == 0
 
 `RTMPStream.outputContinuation` 與 `RTMPConnection.outputContinuation` 都使用 `.bufferingNewest(256)`。當網路塞車時 buffer 滿了會靜默丟棄最舊的 RTMP chunk：
 
-```
+```swift
 doOutput → yield(RTMPOutputItem) → AsyncStream(bound=256) 滿了 → drop oldest
                                                                     │
                                                      Twitch 收到不完整串流 → #2000
@@ -895,7 +900,7 @@ let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
 
 #### 9.14.3 背壓鏈
 
-```
+```swift
 Encoder → RTMPStream.outputContinuation (unbounded)
            → Connection.doOutput → RTMPChunkBuffer.putMessage
            → Connection.outputContinuation (unbounded)
@@ -909,7 +914,7 @@ Encoder → RTMPStream.outputContinuation (unbounded)
 ### 9.15 變更檔案總表（更新）
 
 | 檔案 | 變更 |
-|------|------|
+| ------ | ------ |
 | `RTMPStream.swift` | `startOutputConsumer()` 移除 `bufferingPolicy: .bufferingNewest(256)` → unbounded |
 | `RTMPConnection.swift` | `startOutputConsumer()` 移除 `bufferingPolicy: .bufferingNewest(256)` → unbounded |
 
@@ -930,7 +935,7 @@ let (videoStream, videoContinuation) = AsyncStream.makeStream(
 
 `videoInputBufferCounts` 是根據記憶體預算計算的（~4 for 1080p），但這個 buffer 的 consumer 需要經過 actor hop：
 
-```
+```swift
 Camera 60fps (16.7ms interval)
   → bridge.yieldVideo (DispatchQueue, 低延遲)
   → videoContinuation (bufferingNewest 4 slots = ~67ms 緩衝)
@@ -942,7 +947,7 @@ Camera 60fps (16.7ms interval)
 
 **日誌表現**：
 
-```
+```swift
 videoInputFrames=33 videoFrames=23    ← 60fps 來源只剩 ~34fps 到達 encoder
 videoInputFrames=35 videoFrames=25    ← ~24fps 實際編碼輸出
 ```
@@ -962,7 +967,7 @@ bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
 ```
 
 | 解析度 | 舊 slots | 舊緩衝時間 (60fps) | 新 slots | 新緩衝時間 (60fps) |
-|-------|---------|-------------------|---------|-------------------|
+| ------- | --------- | ------------------- | --------- | ------------------- |
 | 1080p (1334×1920) | 4 | 67ms | 8 | 133ms |
 | 720p | 10 | 167ms | 20 | 333ms |
 | 540p | 18 | 300ms | 36 | 600ms |
@@ -974,7 +979,7 @@ bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
 ### 9.17 變更檔案總表（更新）
 
 | 檔案 | 變更 |
-|------|------|
+| ------ | ------ |
 | `RTMPStream.swift` | bridge video continuation buffer 從 `videoInputBufferCounts` 改為 `videoInputBufferCounts * 2` |
 
 ### 9.18 移除 Mixer Raw Video 的 Actor Hop
@@ -984,7 +989,8 @@ bufferingPolicy: .bufferingNewest(outgoing.videoInputBufferCounts * 2)
 #### 9.18.1 問題
 
 原本 mixer video callback 經過完整的橋接路徑：
-```
+
+```swift
 Mixer callback (nonisolated)
   → MediaMixerOutputBridge.yieldVideo
   → videoContinuation (bufferingNewest 4~8)
@@ -1024,7 +1030,7 @@ nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSam
 關鍵變更：
 
 | 項目 | 處理方式 |
-|------|---------|
+| ------ | --------- |
 | `_videoInputFrames` counter | `NSLock` 保護，nonisolated 存取 |
 | `audioSampleAccess`/`videoSampleAccess` | 改為 computed property，`NSLock` 保護 backing store |
 | `outgoing.append(sampleBuffer)` | `OutgoingStream` 為 `@unchecked Sendable`，`outgoing` 改為 `nonisolated let` |
@@ -1033,7 +1039,7 @@ nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSam
 
 `startPublishTasks` 中移除了 `videoStream`/`videoContinuation` 的建立與 for-await loop，TaskGroup 從 5 子任務減為 4：
 
-```
+```swift
   audioStream (actor hop, 音訊維持序列化)
   audioOutput (零 actor hop, 壓縮音訊輸出)
   videoOutput (零 actor hop, 壓縮視訊輸出)
@@ -1043,7 +1049,7 @@ nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSam
 #### 9.18.3 效果
 
 | 指標 | 修復前 | 修復後 |
-|------|--------|--------|
+| ------ | -------- | -------- |
 | mixer video → encoder actor hop | 1（await self.append） | **0** |
 | bridge buffer 溢出丟幀 | 60fps 下丟 ~50% | 完全消除（bridge 已移除） |
 | `videoInputFrames` | ~34fps（60fps 來源） | 預期接近 60fps |
@@ -1052,7 +1058,7 @@ nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSam
 `§8 建議後續優化` 中將第一項從「移除 RTMPStream actor」改為：
 
 | 優化方向 | 適用場景 | 複雜度 |
-|----------|---------|--------|
+| ---------- | --------- | -------- |
 | ~~移除 RTMPStream actor，改用 lock-based class~~ **已完成** mixer video 路徑已無 actor hop | 60fps+ 4K streaming | 低 |
 | 移除 audio mixer 路徑的 actor hop | 進一步降低延遲 | 中（需要序列化 AVAudioConverter） |
 | 將 RTMPConnection.doOutput 也移出 actor | 完全消除 actor hop | 中 |
@@ -1061,7 +1067,7 @@ nonisolated public func mixer(_ mixer: MediaMixer, didOutput sampleBuffer: CMSam
 ### 9.19 變更檔案總表
 
 | 檔案 | 變更 |
-|------|------|
+| ------ | ------ |
 | `RTMPStream.swift` | mixer video callback 改為 nonisolated direct path；`outgoing` 從 `lazy var` 改為 `nonisolated let`；加入 `inflowLock` + `_videoInputFrames`/`_audioInputFrames`/`_audioSampleAccess`/`_videoSampleAccess` lock-backed 存取；`videoInputFrames`/`audioInputFrames` 改為 computed property；`audioSampleAccess`/`videoSampleAccess` 改為 computed property；`startPublishTasks` 移除 videoStream/videoContinuation；TaskGroup 移除 videoStream for-await loop |
 | `OutgoingStream.swift` | 無變更（原本就是 `@unchecked Sendable`） |
 | `MediaMixerOutputBridge.swift` | 無變更（仍供 audio 路徑使用） |
@@ -1080,8 +1086,9 @@ let bytesPerFrame = Int(size.width * size.height * 1.5)
 ```
 
 不準確的情況：
+
 | 格式 | bytes/pixel | 後果 |
-|------|------------|------|
+| ------ | ------------ | ------ |
 | NV12 | 1.5 | 正確 |
 | BGRA | 4.0 | 低估 → buffer 過多 → 超過 `maxVideoBufferBytes` 記憶體預算 |
 | P010 (10-bit) | 3.0 | 低估 |
@@ -1110,7 +1117,7 @@ func computeVideoInputBufferCounts(for size: CGSize) -> Int {
 注意：初次 publish 時第一個 frame 尚未到達，用 fallback（NV12 假設）；後續 restart 重建 stream 時會用實際觀察值。
 
 | 檔案 | 變更 |
-|------|------|
+| ------ | ------ |
 | `OutgoingStream.swift` | 新增 `observedVideoBytesPerFrame` 觀察欄位；`append(_ sampleBuffer:)` 從 `CVPixelBufferGetDataSize` 取得實際大小；`computeVideoInputBufferCounts` 優先使用觀察值 |
 
 ### 9.21 `useFrame` 重新設計 — expectedFrameRate 不再做幀率上限
@@ -1136,7 +1143,7 @@ return interval <= presentationTimeStamp.seconds - self.presentationTimeStamp.se
 
 **後果**：相機送 60fps，但 `expectedFrameRate = 30` 時 `interval = 33ms`，60fps 的 16.7ms 間隔全部被 filter → 精準鎖在 30fps。改 bitrate 無效（`useFrame` 不看 bitrate）。日誌表現：
 
-```
+```swift
 videoInputFrames=60 videoFrames=30   ← 輸入 60fps，useFrame 砍到 30
 pending frames = 1                   ← VT 完全健康，是 source 端被過濾
 ```
@@ -1159,7 +1166,7 @@ private func useFrame(_ presentationTimeStamp: CMTime) -> Bool {
 ```
 
 | 條件 | 行為 |
-|------|------|
+| ------ | ------ |
 | `frameInterval = 0`（預設） | 全放行，以相機實際幀率為準 |
 | `frameInterval > 0` | 用戶明確限幀（如 `frameInterval30`）或 throttle 介入 |
 | `expectedFrameRate` | 只當 VT hint（`makeOptions` 已設 `kVTCompressionPropertyKey_ExpectedFrameRate`），不再濾幀 |
@@ -1174,7 +1181,7 @@ private func useFrame(_ presentationTimeStamp: CMTime) -> Bool {
 
 崩潰 stack：
 
-```
+```swift
 Data.InlineSlice.replaceSubrange
 RTMPSocket.didSendChunk   ← sendBuffer.removeSubrange(0..<sendOffset)
 ```
@@ -1190,6 +1197,7 @@ if sendBuffer.count + data.count > Self.maxQueueBytesOut {
 ```
 
 **時序**：
+
 1. `sendNextChunk()` → `sendOffset = 64KB`（chunk 在 flight）
 2. `send(newData)` 觸發 backpressure → `removeFirst(dropSize)` → `sendBuffer.count` 縮小
 3. `didSendChunk` 執行 `sendBuffer.removeSubrange(0..<sendOffset)` → `sendOffset > sendBuffer.count` → **out of bounds trap（EXC_BREAKPOINT）**
@@ -1234,6 +1242,7 @@ if sendOffset >= sendBuffer.count / 2 {
 #### 9.23.1 動機
 
 原設計三項效能/延遲問題：
+
 1. `Data` 連續緩衝區 + `sendOffset`，`didSendChunk` 的 `removeSubrange(0..<offset)` 每次搬移最高 7.5MB（O(n) 壓縮）
 2. 64KB chunk → 6000 Kbps 下每 ~87ms 一次 actor hop + Task 分配
 3. `maxQueueBytesOut = 15MB` → 網路塞車時累積 20 秒延遲才觸發 drop
@@ -1257,13 +1266,14 @@ private struct SendQueue {
 ```
 
 | 操作 | 舊（Data） | 新（SendQueue） |
-|------|-----------|-----------------|
+| ------ | ----------- | ----------------- |
 | append | O(1) 攤銷 | O(1) 攤銷 |
 | 取 chunk | `subdata` 複製 64KB | `peek` 複製 128KB |
 | 送出後清理 | `removeSubrange` O(n) 搬移 | `consume` O(1) 游標推進 |
 | 記憶體 | 15MB 單塊 | 分段，2MB 上限 |
 
 **其他變更**：
+
 - `maxQueueBytesOut = 2MB`（延遲上限 20s → ~2.6s @ 6000 Kbps）
 - `sendChunkSize = 128KB`（減少 actor hop 次數一半）
 - Backpressure drop 改為**拒絕新進資料**：佇列滿時直接不 append，永不破壞已排隊資料
@@ -1279,7 +1289,7 @@ if sendQueue.totalBytes + data.count > Self.maxQueueBytesOut {
 #### 9.23.3 效果
 
 | 指標 | 舊 | 新 |
-|------|-----|-----|
+| ------ | ----- | ----- |
 | buffer 壓縮 | O(n) 搬移 7.5MB | O(1) 游標 |
 | chunk size | 64KB | 128KB |
 | 延遲上限 | 20s（15MB） | ~2.6s（2MB） |
@@ -1301,7 +1311,7 @@ func peekSegment(maxBytes: Int) -> Data {
 ```
 
 | 場景 | 行為 |
-|------|------|
+| ------ | ------ |
 | 音訊（~1KB） | 整筆直接送 |
 | 一般 video frame（~50KB） | 整筆直接送 |
 | 大 keyframe（>256KB） | 切成 256KB 塊 |
@@ -1323,7 +1333,7 @@ let chunk = sendQueue.peek(maxBytes: Self.sendChunkSize)
 ```
 
 | 指標 | 逐筆 send（9.23.4） | 合併 send（9.23.5） |
-|------|--------------------|--------------------|
+| ------ | -------------------- | -------------------- |
 | send 往返/秒 | ~100+（每 message 一筆） | ~5-10（每 256KB 一筆） |
 | 吞吐天花板 | 受限於每筆 completion 延遲 | 受限於網路頻寬 |
 | 佇列堆積 | 健康連結也會堆 | 只在真塞車時堆 |
@@ -1339,7 +1349,7 @@ let chunk = sendQueue.peek(maxBytes: Self.sendChunkSize)
 
 Socket 斷線後 `RTMPConnection.close()` 把 `outputContinuation = nil`，重連窗口期間（exponential backoff 1s/2s/4s...）stream 的輸出 consumer 仍把緩衝資料逐一送給已死的 connection：
 
-```
+```swift
 doOutput dropped: no outputContinuation (audio)   ← 每秒數百次
 doOutput dropped: no outputContinuation (video)
 ```
@@ -1376,7 +1386,7 @@ for await item in stream {
 
 `RTMPConnection.connected` 只有在 `state == .connected` 才為 true（connect command 回覆後）。handshake 完成後發送 connect command 時，`connected` 仍是 false：
 
-```
+```swift
 .ackSent 收到 S2 → state = .handshakeDone
   → makeConnectionMessage() → doOutput(.command, connect command)  ← connected=false
 ```
@@ -1417,7 +1427,7 @@ func resumePublishing() async {
 
 `lastPublishName` 為 nil → 靜默 return → **publish tasks 永不啟動**。日誌表現：
 
-```
+```swift
 Connect success
 createStream: stream id 1
 🎉 RTMP 重連成功          ← resumePublishing 瞬間 return，重連看起來成功
@@ -1472,13 +1482,13 @@ for stream in streams {
 原則：**RTMP 輸出層永不主動丟。** 丟包（更精確說：跳幀）只發生在**編碼前 raw frame**，安全性：
 
 | 丟包位置 | 後果 |
-|---------|------|
+| --------- | ------ |
 | 編碼前 raw frame | player 只看到瞬間降幀率，GOP / A/V sync 完整 ✅ |
 | 編碼後 RTMP message | P-frame 依賴鏈斷掉 → 卡到下一顆 IDR ❌ |
 
 新增 `SocketBackpressure`（nonisolated、NSLock 保護）作為 socket 佇列狀態的非同步共享視角。RTMPSocket 在每次 enqueue/dequeue 後 publish `sendQueue.totalBytes`；RTMPStream 的 nonisolated mixer 路徑（60fps 相機 callback）在**每個 raw frame 進 encoder 前**詢問：
 
-```
+```swift
 Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
                                                           │
         camera callback (nonisolated) ── shouldDropVideoFrame/AudioFrame ──► 跳過 encoder feed
@@ -1487,7 +1497,7 @@ Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
 **連續漸進降級（取代三級硬停）**：
 
 | 佇列水位 | 影片 drop ratio | 音訊 |
-|----------|----------------|------|
+| ---------- | ---------------- | ------ |
 | < 256KB | 0%（健康連結，正常送） | 永不 drop |
 | 256KB → 1.5MB | 線性 0% → 90% | 永不 drop |
 | ≥ 1.5MB | 90%（60fps → ~6fps 下限） | 永不 drop |
@@ -1496,7 +1506,7 @@ Socket queue bytes → SocketBackpressure.update (lock) → 各級狀態
 
 `RTMPSocket.send()` 的 2MB 上限降級為 **OOM guard**（`.error` log，正常應不可達）——上游 drop ratio 會在任何資料到達上限前停止生產。OOM guard 上限**依 bitrate 動態計算**（`SocketBackpressure.updateVideoSettings`，隨 bitrate 調整或用戶 `setVideoSettings` 更新）：
 
-```
+```swift
 OOM guard = videoDropEnd(1.5MB) + max(256KB, GOP bytes × 35%) + 256KB margin
           = 1.5MB + 最大 keyframe 預算 + 餘裕，下限 2MB、上限 8MB
 ```
@@ -1504,7 +1514,7 @@ OOM guard = videoDropEnd(1.5MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 原因：drop ratio 觸發瞬間，**已編好的 keyframe** 仍在管線中會流進 socket。若 guard 太小（固定 2MB），高碼率下大 keyframe 會撞上 guard 被丟掉——正好回到我們要消除的情境。隨 bitrate 放大 guard 讓它吸收在途 keyframe；正常運作的穩定態延遲仍由 drop ratio 上限限制，guard 放大不影響延遲。
 
 | bitrate | GOP bytes (2s) | keyframe 預算(35%) | OOM guard |
-|---------|---------------|-------------------|-----------|
+| --------- | --------------- | ------------------- | ----------- |
 | 6Mbps | 1.5MB | 525KB | ~2.3MB |
 | 12Mbps | 3MB | 1.05MB | ~2.8MB |
 | 20Mbps | 5MB | 1.75MB | ~3.5MB |
@@ -1516,7 +1526,7 @@ OOM guard = videoDropEnd(1.5MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 #### 9.26.3 檔案變更
 
 | 檔案 | 變更 |
-|------|------|
+| ------ | ------ |
 | `SocketBackpressure.swift` | **重寫**：三級硬停 → 連續 drop ratio（0%→90% 線性爬升）；音訊永不 drop |
 | `RTMPSocket.swift` | `send`/`didSendChunk`/`close`/`connect` publish queue 狀態；silent drop → 動態 OOM guard（`.error`）；`sendNextChunk` 跨 message 合併（見 9.23.5） |
 | `RTMPConnection.swift` | 持有 `nonisolated let backpressureSignal`，接線至 socket 與所有 stream |
@@ -1525,7 +1535,7 @@ OOM guard = videoDropEnd(1.5MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 #### 9.26.4 效果
 
 | 指標 | 修復前 | 修復後 |
-|------|--------|--------|
+| ------ | -------- | -------- |
 | 塞車時輸出層丟 RTMP message | 可能丟 keyframe / audio → 卡頓 | **永不主動丟**（OOM guard 除外） |
 | 丟包位置 | 編碼後（破壞 GOP） | 編碼前 raw frame（安全） |
 | 塞車時畫面 | 凍結 3.5~5.9s（video 全停） | 平滑降幀 60→30→15→6fps，**永不歸零** |
@@ -1555,7 +1565,7 @@ OOM guard = videoDropEnd(1.5MB) + max(256KB, GOP bytes × 35%) + 256KB margin
 Sequence header 不是「無時間戳」——它的時間戳決定伺服器 clock 落點，**必須乘在真實的線上累計時間（wire cumulative）上**：
 
 | 情境 | chunkType | 修復前 | 一版（`0`） | 二版（真實值） |
-|------|-----------|--------|-------------|----------------|
+| ------ | ----------- | -------- | ------------- | ---------------- |
 | 首次格式 / (重)發佈 | type-0（絕對） | `updatedAt*1000`（鏡頭相對值，可能倒退） | `0`（重發佈時把 clock 倒回原點 → DTS 照樣倒退） | `UInt32(cumulativeTime*1000)`（乘在現行 wire 位置上，clock 不動） |
 | mid-stream 格式變更 | type-1（delta） | `updatedAt*1000`（被當 delta 加倍） | `0`（時間軸不動） | `0`（delta 本就不應推進，即真實值） |
 
@@ -1568,7 +1578,7 @@ Sequence header 不是「無時間戳」——它的時間戳決定伺服器 clo
 #### 9.27.3 效果
 
 | 指標 | 修復前 | 修復後 |
-|------|--------|--------|
+| ------ | -------- | -------- |
 | ffmpeg Non-monotonous DTS | 重連/重發佈後倒退 ~920ms | 不再倒退（type-0 乘在 wire 位置、type-1 delta 為 0） |
 | 平台 Max bitrate | 232 Mbps（DTS clamp 量測假象） | 回到真實 encoder 峰值（≈1.2× VBR 上限） |
 | (重)發佈後線程 | clock 重置 / 幀擠在同一 DTS | 沿現行位置連續前進，A/V 同步不受影響 |
