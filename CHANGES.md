@@ -4,6 +4,50 @@
 
 ---
 
+## 59. 修正 RTMP video composition time 在 A/V 補償下變成負值（無畫面）
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPVideoCompositionTime.swift`（新）、
+`RTMPHaishinKit/Sources/RTMP/RTMPFoundation.swift`、
+`RTMPHaishinKit/Tests/RTMP/RTMPVideoCompositionTimeTests.swift`（新）、
+`Docs/RTMP_COMPOSITION_TIME.md`（新）、`.cortexkit/verify-cts.swift`
+
+### 59a. 診斷
+
+串流在 wire 上每個 video frame 的 FLV composition time（CTS）都是 **−134/−135ms**，
+但 H.264 以 IPPP（`has_b_frames == 0`）輸出，CTS 本應為 0。VLC/ffmpeg 持續噴
+`Invalid timestamps stream=1, pts=..., dts=...`。在 mpegts.js 低延遲設定
+（`isLive + liveBufferLatencyChasing + enableStashBuffer:false`）下，`pts < dts` 的
+視訊樣本被全部丟棄 → MSE 無 buffer、`readyState` 卡在 `HAVE_METADATA`，連線活著卻
+**完全沒有畫面**。
+
+根因在 `RTMPStream.append(_:)`：#57 附近的 A/V 偏移自動補償只把 `avOffsetCompensation`
+加進 DTS 時間軸，但 CTS 的「無 decodeTimeStamp」分支用**未補償**的
+`presentationTimeStamp` 去減**已補償**的 `videoTimestamp.updatedAt`，得
+`CTS = PTS − (PTS + comp) = −comp`。且補償在此公式下自我抵銷
+（`wire PTS = (PTS+comp) + (−comp) = PTS`），呈現時間沒有真正位移。
+
+### 59b. 修正
+
+把 CTS 的計算抽成純函式
+`RTMPVideoCompositionTime.offset(hasValidDecodeTimeStamp:presentationTime:decodeTime:ctsOffset:)`，
+`RTMPStream.append` 與 `CMSampleBuffer.getCompositionTime` 都改用它。契約是**保證 ≥ 0**：
+無重排（無 decodeTimeStamp）一律回 0；有重排才回 `PTS − DTS + ctsOffset`（clamp 0）。
+A/V 補償只作用在 wire DTS/PTS，不再混入 CTS。修正後補償也才真正讓
+`wire PTS = sourcePTS + comp` 生效。
+
+### 59c. 效果 / 驗證
+
+- 單元測試 `RTMPVideoCompositionTimeTests`（Swift Testing）：無重排恆為 0（含來源
+  PTS/DTS 分歧的情況）、有重排為 `PTS−DTS+offset`、負值 clamp 0、掃描網格恆非負。
+- `.cortexkit/verify-cts.swift` 搭配**真實原始碼**編譯執行：重現舊公式 −comp，並驗證
+  新函式恆為 0 且 `wire PTS = sourcePTS + comp`，全數 PASS。
+- 實測同一段 wire bytes（只改 CTS 三個位元組、同一播放設定）：修正前
+  `buffered=null / readyState=1`（無畫面），修正後 `buffered=2.118s / readyState=2`
+  （可播）。詳見 `Docs/RTMP_COMPOSITION_TIME.md`。
+
+---
+
 ## 58. CI：新增 Thread Sanitizer job
 
 **檔案**：`.github/workflows/swift-tests.yml`

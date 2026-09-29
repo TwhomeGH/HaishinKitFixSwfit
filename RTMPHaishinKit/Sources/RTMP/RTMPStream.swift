@@ -1191,12 +1191,11 @@ extension RTMPStream: _Stream {
                 }
                 let timedelta = videoTimestamp.update(frameTime, source: "video")
                 frameCount += 1
-                let compositionTime: Int32
-                if sampleBuffer.decodeTimeStamp.isValid {
-                    compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
-                } else {
-                    compositionTime = Int32((sampleBuffer.presentationTimeStamp.seconds - videoTimestamp.updatedAt) * 1000)
-                }
+                // composition time = wire PTS − wire DTS（保證 ≥ 0）。無 B-frame 時
+                // PTS == DTS 故為 0；A/V 補償同時作用於 DTS 與 PTS，不可混入此值
+                // （舊寫法以未補償 PTS 減已補償 updatedAt 會得到負 CTS，下游丟幀）。
+                // 計算抽到 RTMPVideoCompositionTime 以便單元測試。
+                let compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
                 guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, compositionTime: compositionTime, sampleBuffer: sampleBuffer) else {
                         // 訊息組不出來（通常是格式異常）：視為輸出中斷，走統一收尾。
                         invalidateOutput(reason: "video message creation failed")
