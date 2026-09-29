@@ -323,6 +323,7 @@ public actor RTMPStream {
     /// publish 管線的世代。startPublishTasks / stopPublishTasks 各 +1，讓舊的
     /// task group（即使 cancellation 尚未生效）無法再 append / encode 新資料。
     private var publishGeneration: UInt64 = 0
+    private var lastVideoDiagnosticSnapshot: VideoPipelineSnapshot?
     private var outputGeneration: UInt64 { outputQueue.generation }
     /// 啟動 output consumer 時記下的「連線輸出世代」。送出時帶回 connection 比對，
     /// 重連後世代不符即拒收，避免 stale consumer 灌錯連線。
@@ -870,6 +871,7 @@ public actor RTMPStream {
         publishTask?.cancel()
         // +1 建立新世代：舊 task group 尚未真正結束前，其 append/encode 會被
         // generation 檢查擋掉，不會混進新管線。
+        lastVideoDiagnosticSnapshot = nil
         publishGeneration &+= 1
         let generation = publishGeneration
         waitingForVideoKeyFrame = true
@@ -892,6 +894,13 @@ public actor RTMPStream {
             guard let self else { return }
             await connection?.log(.info, "startPublishTasks: task started", always: true)
             await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(nanoseconds: 5_000_000_000) }
+                        catch { break }
+                        await self.logVideoQueueDiagnostics(generation: generation)
+                    }
+                }
                 group.addTask {
                     for await (buffer, when) in audioStream {
                         await self.appendPublishedAudio(buffer, when: when, generation: generation)
@@ -919,8 +928,27 @@ public actor RTMPStream {
         }
     }
 
+    /// 統一唯讀入口，不等待 RTMP 或 Mixer actor；UI 與日誌可各自保存前次快照。
+    public nonisolated func videoPipelineSnapshot() -> VideoPipelineSnapshot {
+        mixerOutputBridge.snapshot(encoderInput: outgoing.videoQueueSnapshot())
+    }
+
+    private func logVideoQueueDiagnostics(generation: UInt64) async {
+        guard generation == publishGeneration, !Task.isCancelled else { return }
+        let snapshot = videoPipelineSnapshot()
+        let detail = "publish=\(generation) " + snapshot.summary(since: lastVideoDiagnosticSnapshot)
+        lastVideoDiagnosticSnapshot = snapshot
+        await connection?.log(.info, "VideoQueue", detail: detail, always: true)
+    }
+
     private func stopPublishTasks() {
+        if publishTask != nil {
+            let final = "publish=\(publishGeneration) " + videoPipelineSnapshot().summary(since: lastVideoDiagnosticSnapshot)
+            let connection = self.connection
+            Task { await connection?.log(.info, "VideoQueue stop", detail: final, always: true) }
+        }
         // +1 並重設 keyframe 等待：所有舊世代 task 立即失效。
+        lastVideoDiagnosticSnapshot = nil
         publishGeneration &+= 1
         outgoing.invalidateVideoInputGeneration()
         waitingForVideoKeyFrame = true
@@ -1605,6 +1633,7 @@ extension RTMPStream: MediaMixerOutput {
         inflowLock.unlock()
         // Network congestion: drop the raw frame BEFORE the encoder so the
         // encoded stream stays intact (only the frame rate dips temporarily).
+        mixerOutputBridge.recordVideo(mixer, dropped: dropForBackpressure, pts: sampleBuffer.presentationTimeStamp.seconds)
         if !dropForBackpressure {
             outgoing.append(sampleBuffer)
         }

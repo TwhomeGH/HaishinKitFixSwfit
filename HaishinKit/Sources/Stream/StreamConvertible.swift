@@ -109,6 +109,12 @@ extension _Stream {
         outgoing.restartAudioCodec()
     }
 
+    /// Maximum residence time for queued raw video; takes effect without restarting.
+    public var maxVideoBufferDuration: TimeInterval {
+        get { outgoing.maxVideoBufferDuration }
+        set { outgoing.maxVideoBufferDuration = newValue }
+    }
+
     public var maxVideoBufferBytes: Int {
         get { outgoing.maxVideoBufferBytes }
         set { outgoing.maxVideoBufferBytes = newValue }

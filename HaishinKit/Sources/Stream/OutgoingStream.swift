@@ -27,8 +27,36 @@ package final class OutgoingStream: @unchecked Sendable {
     /// Default 15 MB (~5 frames at 1080p, ~10 at 720p).
     package var maxVideoBufferBytes: Int {
         get { withLock { _maxVideoBufferBytes } }
-        set { withLock { _maxVideoBufferBytes = newValue } }
+        set { withLock { _maxVideoBufferBytes = max(0, newValue); updateVideoQueueLimitsLocked() } }
     }
+
+    private var _maxVideoBufferDuration: TimeInterval = 0.1
+    package var maxVideoBufferDuration: TimeInterval {
+        get { withLock { _maxVideoBufferDuration } }
+        set { withLock {
+            _maxVideoBufferDuration = newValue.isFinite ? max(0, newValue) : 0.1
+            updateVideoQueueLimitsLocked()
+        } }
+    }
+
+    private var videoQueue: AdaptiveMediaQueue<CMSampleBuffer>?
+    private var videoQueueMissingDrops = 0
+    private var videoQueueGeneration: UInt64 = 0
+
+    private func updateVideoQueueLimitsLocked() {
+        videoQueue?.update(maxBytes: _maxVideoBufferBytes, maxAge: _maxVideoBufferDuration,
+                           maxFrames: _videoInputBufferCountsOverridden ? _videoInputBufferCounts : nil)
+    }
+
+    package func videoQueueSnapshot() -> VideoQueueStageSnapshot {
+        guard lock.try() else { return VideoQueueStageSnapshot(availability: .ownerLockBusy) }
+        defer { lock.unlock() }
+        return VideoQueueStageSnapshot(availability: videoQueue == nil ? .unavailable : .available,
+            generation: videoQueueGeneration, missingDrops: videoQueueMissingDrops,
+            queue: videoQueue?.snapshot())
+    }
+
+    package func videoQueueDiagnostics() -> String { videoQueueSnapshot().summary() }
 
     private var _isRunning = false
     package private(set) var isRunning: Bool {
@@ -66,10 +94,7 @@ package final class OutgoingStream: @unchecked Sendable {
             withLock {
                 let oldSize = videoCodec.settings.videoSize
                 videoCodec.settings = newValue
-                // videoSize 變更時重新計算 buffer count（auto mode 下）。注意：
-                // AsyncStream 的 bufferingPolicy 在建立時就固定（見 videoInputStream），
-                // 因此這裡只影響「下一次」建立 videoInputStream 的計數；mid-stream 改
-                // 解析度不會改動已存在 stream 的 buffer。
+                // Diagnostic estimate only. The live queue accounts actual bytes per frame.
                 if !_videoInputBufferCountsOverridden, videoCodec.settings.videoSize != oldSize {
                     _videoInputBufferCounts = computeVideoInputBufferCountsLocked(for: videoCodec.settings.videoSize)
                 }
@@ -80,8 +105,8 @@ package final class OutgoingStream: @unchecked Sendable {
     private var _videoInputBufferCounts = 1
     /// Specifies the video buffering count. Auto-computed from video resolution
     /// and `maxVideoBufferBytes` unless manually set via `setVideoInputBufferCounts()`.
-    /// Every write site already clamps to `>= 1` (`computeVideoInputBufferCounts`
-    /// and `setVideoInputBufferCounts`), so no observer clamp is needed here.
+    /// In auto mode this is an estimate, not the live queue's capacity.
+    /// Oversized frames may produce an estimate of zero and are reported as drops.
     package private(set) var videoInputBufferCounts: Int {
         get { withLock { _videoInputBufferCounts } }
         set { withLock { _videoInputBufferCounts = newValue } }
@@ -105,6 +130,7 @@ package final class OutgoingStream: @unchecked Sendable {
                 // 立即以當前 videoSize 重新計算
                 _videoInputBufferCounts = computeVideoInputBufferCountsLocked(for: videoCodec.settings.videoSize)
             }
+            updateVideoQueueLimitsLocked()
         }
     }
 
@@ -124,13 +150,21 @@ package final class OutgoingStream: @unchecked Sendable {
     package func prepareVideoInputStreamWithGeneration() -> (AsyncStream<CMSampleBuffer>, UInt64) {
         withLock {
             videoInputGeneration &+= 1
+            videoQueue?.finish()
+            videoQueue = nil
+            _videoInputStream = nil
             return (prepareVideoInputStream(), videoInputGeneration)
         }
     }
 
     /// 停止 publish 工作時先封住舊輸入，無須等待 Task cancellation 傳播。
     package func invalidateVideoInputGeneration() {
-        withLock { videoInputGeneration &+= 1 }
+        withLock {
+            videoInputGeneration &+= 1
+            videoQueue?.finish()
+            videoQueue = nil
+            _videoInputStream = nil
+        }
     }
 
     /// The asynchronous sequence for video input buffer.
@@ -142,13 +176,14 @@ package final class OutgoingStream: @unchecked Sendable {
         if let stream = _videoInputStream {
             return stream
         }
-        let counts = _videoInputBufferCounts
-        var captured: AsyncStream<CMSampleBuffer>.Continuation?
-        let stream = AsyncStream(CMSampleBuffer.self, bufferingPolicy: .bufferingNewest(counts)) { continuation in
-            captured = continuation
-        }
+        let queue = AdaptiveMediaQueue<CMSampleBuffer>(
+            maxBytes: _maxVideoBufferBytes, maxAge: _maxVideoBufferDuration,
+            maxFrames: _videoInputBufferCountsOverridden ? _videoInputBufferCounts : nil
+        )
+        videoQueueGeneration &+= 1
+        videoQueue = queue
+        let stream = queue.stream()
         _videoInputStream = stream
-        _videoInputContinuation = captured
         return stream
     }
 
@@ -176,7 +211,7 @@ package final class OutgoingStream: @unchecked Sendable {
             bytesPerFrame = Int(size.width * size.height * 1.5)
         }
         guard bytesPerFrame > 0 else { return 5 }
-        return max(1, min(30, _maxVideoBufferBytes / bytesPerFrame))
+        return max(0, _maxVideoBufferBytes / bytesPerFrame)
     }
 
     private let audioCodec = AudioCodec()
@@ -189,12 +224,6 @@ package final class OutgoingStream: @unchecked Sendable {
     package func setVideoCodecLogHandler(_ handler: @Sendable @escaping (String) -> Void) {
         withLock { videoCodec.onLog = handler }
     }
-    private var _videoInputContinuation: AsyncStream<CMSampleBuffer>.Continuation? {
-        didSet {
-            oldValue?.finish()
-        }
-    }
-
     /// Create a new instance.
     package init() {
     }
@@ -214,7 +243,12 @@ package final class OutgoingStream: @unchecked Sendable {
             }
             // Yield outside the lock: AsyncStream's yield is non-blocking but we
             // don't want to hold the lock across the consumer's wakeup.
-            withLock { _videoInputContinuation }?.yield(sampleBuffer)
+            let queue = withLock { () -> AdaptiveMediaQueue<CMSampleBuffer>? in
+                if videoQueue == nil { videoQueueMissingDrops += 1 }
+                return videoQueue
+            }
+            let size = sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? CMSampleBufferGetTotalSampleSize(sampleBuffer)
+            queue?.offer(sampleBuffer, bytes: size)
         default:
             break
         }
@@ -271,7 +305,8 @@ extension OutgoingStream: Runner {
             videoInputGeneration &+= 1
             videoCodec.stopRunning()
             audioCodec.stopRunning()
-            _videoInputContinuation = nil
+            videoQueue?.finish()
+            videoQueue = nil
             _videoInputStream = nil
         }
     }

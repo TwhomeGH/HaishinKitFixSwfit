@@ -54,11 +54,21 @@ final class VideoCaptureUnit: CaptureUnit {
     }
     #endif
 
-    @AsyncStreamedFlow(.bufferingNewest(30))
-    var inputs: AsyncStream<(UInt8, CMSampleBuffer)>
+    private let inputQueue: AdaptiveMediaFlow<(UInt8, CMSampleBuffer)>
+    private let outputQueue: AdaptiveMediaFlow<CMSampleBuffer>
+    var inputs: AsyncStream<(UInt8, CMSampleBuffer)> { inputQueue.stream() }
+    var output: AsyncStream<CMSampleBuffer> { outputQueue.stream() }
 
-    @AsyncStreamedFlow(.bufferingNewest(30))
-    var output: AsyncStream<CMSampleBuffer>
+    func setQueueLimits(totalBytes: Int, maxAge: TimeInterval) {
+        // Independent branches share an explicit aggregate reservation.
+        let perBranch = max(0, totalBytes) / 2
+        inputQueue.update(maxBytes: perBranch, maxAge: maxAge)
+        outputQueue.update(maxBytes: perBranch, maxAge: maxAge)
+    }
+
+    func queueDiagnostics() -> String {
+        "input{\(inputQueue.diagnostics())} output{\(outputQueue.diagnostics())}"
+    }
 
     var dynamicRangeMode: DynamicRangeMode = .sdr {
         didSet {
@@ -96,8 +106,12 @@ final class VideoCaptureUnit: CaptureUnit {
 
     private let session: (any CaptureSessionConvertible)
 
-    init(_ session: (some CaptureSessionConvertible)) {
+    init(_ session: (some CaptureSessionConvertible),
+         inputQueue: AdaptiveMediaFlow<(UInt8, CMSampleBuffer)> = AdaptiveMediaFlow(),
+         outputQueue: AdaptiveMediaFlow<CMSampleBuffer> = AdaptiveMediaFlow()) {
         self.session = session
+        self.inputQueue = inputQueue
+        self.outputQueue = outputQueue
     }
 
     func append(_ track: UInt8, buffer: CMSampleBuffer) {
@@ -165,18 +179,18 @@ final class VideoCaptureUnit: CaptureUnit {
     }
 
     func finish() {
-        _inputs.finish()
-        _output.finish()
+        inputQueue.finish()
+        outputQueue.finish()
     }
 }
 
 extension VideoCaptureUnit: VideoMixerDelegate {
     // MARK: VideoMixerDelegate
     func videoMixer(_ videoMixer: VideoMixer<VideoCaptureUnit>, track: UInt8, didInput sampleBuffer: CMSampleBuffer) {
-        _inputs.yield((track, sampleBuffer))
+        inputQueue.offer((track, sampleBuffer), bytes: sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? CMSampleBufferGetTotalSampleSize(sampleBuffer))
     }
 
     func videoMixer(_ videoMixer: VideoMixer<VideoCaptureUnit>, didOutput sampleBuffer: CMSampleBuffer) {
-        _output.yield(sampleBuffer)
+        outputQueue.offer(sampleBuffer, bytes: sampleBuffer.imageBuffer.map { CVPixelBufferGetDataSize($0) } ?? CMSampleBufferGetTotalSampleSize(sampleBuffer))
     }
 }

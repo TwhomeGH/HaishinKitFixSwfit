@@ -130,7 +130,24 @@ public final actor MediaMixer {
     private var needsAudioResetAfterInterruption = false
     private var deferredAudioResetReason: String?
     private lazy var audioIO = AudioCaptureUnit(session, isMultiTrackAudioMixingEnabled: isMultiTrackAudioMixingEnabled)
-    private lazy var videoIO = VideoCaptureUnit(session)
+    private nonisolated let videoInputQueue = AdaptiveMediaFlow<(UInt8, CMSampleBuffer)>()
+    private nonisolated let videoOutputQueue = AdaptiveMediaFlow<CMSampleBuffer>()
+    private lazy var videoIO = VideoCaptureUnit(session, inputQueue: videoInputQueue, outputQueue: videoOutputQueue)
+
+    /// Combined reservation for the two raw-video branches. Updates existing queues.
+    public func setVideoQueueLimits(totalBytes: Int, maxAge: TimeInterval = 0.1) {
+        videoIO.setQueueLimits(totalBytes: totalBytes, maxAge: maxAge)
+    }
+
+    /// Does not await the mixer actor, so stalled processing remains observable.
+    public nonisolated func videoPipelineSnapshot() -> VideoMixerSnapshot {
+        VideoMixerSnapshot(input: videoInputQueue.snapshot(), output: videoOutputQueue.snapshot())
+    }
+
+    public nonisolated func videoPipelineDiagnostics() -> String {
+        let snapshot = videoPipelineSnapshot()
+        return "input{\(snapshot.input.summary())} output{\(snapshot.output.summary())}"
+    }
     private lazy var session: (any CaptureSessionConvertible) = captureSessionMode.makeSession()
     @ScreenActor
     private lazy var displayLink = DisplayLinkChoreographer()
