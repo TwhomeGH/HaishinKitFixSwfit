@@ -220,6 +220,7 @@ package final class OutgoingStream: @unchecked Sendable {
 
     private let audioCodec = AudioCodec()
     private let videoCodec = VideoCodec()
+    package var videoEncoderSnapshot: VideoPipelineEventsSnapshot { videoCodec.diagnostics.snapshot() }
     private var _videoInputStream: AsyncStream<CMSampleBuffer>?
     /// 原始影格消費工作的世代，由同一把 codec 鎖保護。
     /// 舊工作即使在 cancel 後才醒來，也不得餵資料給已重啟的編碼器。

@@ -81,16 +81,20 @@ public struct VideoPipelineSnapshot: Codable, Sendable {
     public let bridgeReceived: Int
     public let pressureDrops: Int
     public let lastPTS: Double?
+    public let encoder: VideoPipelineEventsSnapshot?
+    public let output: VideoPipelineEventsSnapshot?
 
     public init(sampledAt: TimeInterval, mixer: VideoMixerSnapshot?, encoderInput: VideoQueueStageSnapshot,
-                bridgeReceived: Int, pressureDrops: Int, lastPTS: Double?) {
-        schemaVersion = 1
+                bridgeReceived: Int, pressureDrops: Int, lastPTS: Double?,
+                encoder: VideoPipelineEventsSnapshot? = nil, output: VideoPipelineEventsSnapshot? = nil) {
+        schemaVersion = 2
+        self.encoder = encoder; self.output = output
         self.sampledAt = sampledAt; self.mixer = mixer; self.encoderInput = encoderInput
         self.bridgeReceived = bridgeReceived; self.pressureDrops = pressureDrops
         self.lastPTS = lastPTS
     }
 
     public func summary(since previous: Self? = nil) -> String {
-        "encoderInput{\(encoderInput.summary(since: previous?.encoderInput))} bridge{received=\(bridgeReceived) pressureDrop=\(pressureDrops) lastPTS=\(lastPTS ?? -1)} mixer{input{\(mixer?.input.summary(since: previous?.mixer?.input) ?? "unavailable")} output{\(mixer?.output.summary(since: previous?.mixer?.output) ?? "unavailable")}}"
+        "schema=\(schemaVersion) encoder{\(encoder?.summary ?? "unavailable")} output{\(output?.summary ?? "unavailable")} encoderInput{\(encoderInput.summary(since: previous?.encoderInput))} bridge{received=\(bridgeReceived) pressureDrop=\(pressureDrops) lastPTS=\(lastPTS ?? -1)} mixer{input{\(mixer?.input.summary(since: previous?.mixer?.input) ?? "unavailable")} output{\(mixer?.output.summary(since: previous?.mixer?.output) ?? "unavailable")}}"
     }
 }

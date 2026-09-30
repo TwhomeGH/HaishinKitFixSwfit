@@ -28,7 +28,8 @@ final class VideoCodec {
     /// 追蹤此 VT session 的輸出狀態：等 keyframe / 非同步失敗 / 最後已確認的
     /// keyframe。`session` 一被替換就換成新的實例，避免舊 session 的 callback
     /// 回來時污染新 session（見 VideoEncoderOutputState）。
-    private var encoderOutputState = VideoEncoderOutputState()
+    let diagnostics = VideoPipelineEventTracker()
+    private lazy var encoderOutputState = VideoEncoderOutputState(diagnostics: diagnostics)
     private var presentationTimeStamp: CMTime = .zero
     private(set) var isRunning = false
     private(set) var inputFormat: CMFormatDescription? {
@@ -47,7 +48,8 @@ final class VideoCodec {
             // callback 可能在換的瞬間被新 state 放行。
             encoderOutputState.invalidate()
             oldValue?.invalidate()
-            encoderOutputState = VideoEncoderOutputState()
+            encoderOutputState = VideoEncoderOutputState(diagnostics: diagnostics)
+            diagnostics.record(.encoderSessionChanged)
             invalidateSession = false
         }
     }
@@ -164,6 +166,7 @@ final class VideoCodec {
 
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard isRunning else {
+            diagnostics.record(.encoderUnavailable)
             logger.debug("VideoCodec.append dropped: encoder not running")
             return
         }
@@ -189,6 +192,7 @@ final class VideoCodec {
             }
             let continuation = outputContinuation
             guard let session, let continuation else {
+                diagnostics.record(.encoderUnavailable)
                 onLog?("append dropped: session=\(session != nil) continuation=\(continuation != nil)")
                 return
             }
@@ -208,10 +212,12 @@ final class VideoCodec {
                     updateAdaptiveDropRatio()
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
                 } else {
+                    diagnostics.record(.encoderFiltered)
                     logger.debug("VideoCodec frame filtered by useFrame", sampleBuffer.presentationTimeStamp)
                 }
             }
         } catch {
+            diagnostics.record(.encoderRecovery)
             logger.warn("VideoCodec.encode error: \(error)")
             resetSessionState(reason: "encode error \(error)", clearInputFormat: true)
             // Progressive backoff: after VT failure, halve the accepted-frame rate

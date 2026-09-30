@@ -23,6 +23,7 @@ extension VTCompressionSession: VTSessionConvertible {
         let frameProperties = forceKeyFrame ? [
             VTSessionOptionKey.forceKeyFrame.CFString: kCFBooleanTrue as Any
         ] as CFDictionary : nil
+        outputState.submitted()
         let status = VTCompressionSessionEncodeFrame(
             self,
             imageBuffer: imageBuffer,
@@ -33,6 +34,7 @@ extension VTCompressionSession: VTSessionConvertible {
             // VT 非同步 callback（跑在 VT 執行緒，可能晚於 session 替換才回來）。
             // 所有分支都先經過 outputState 把關，才決定是否 yield 給 consumer。
             outputHandler: { status, flags, sampleBuffer in
+                outputState.callback()
                 guard status == noErr else {
                     // encode 失敗：記錄後擋住後續幀，直到 owner 重建 session。
                     if outputState.recordFailure(status) {
@@ -61,6 +63,7 @@ extension VTCompressionSession: VTSessionConvertible {
             }
         )
         if status != noErr {
+            outputState.recordFailure(status)
             throw VTSessionError.failedToConvert(status: status)
         }
         return flags.contains(.frameDropped)

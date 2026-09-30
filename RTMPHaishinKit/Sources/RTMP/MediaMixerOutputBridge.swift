@@ -24,7 +24,7 @@ final class MediaMixerOutputBridge: @unchecked Sendable {
         lastVideoPTS = pts
     }
 
-    func snapshot(encoderInput: VideoQueueStageSnapshot) -> VideoPipelineSnapshot {
+    func snapshot(encoderInput: VideoQueueStageSnapshot, encoder: VideoPipelineEventsSnapshot, output: VideoPipelineEventsSnapshot) -> VideoPipelineSnapshot {
         lock.lock()
         let mixer = sourceMixer
         let received = videoReceived
@@ -34,7 +34,7 @@ final class MediaMixerOutputBridge: @unchecked Sendable {
         return VideoPipelineSnapshot(sampledAt: ProcessInfo.processInfo.systemUptime,
             mixer: mixer?.videoPipelineSnapshot(), encoderInput: encoderInput,
             bridgeReceived: received, pressureDrops: dropped,
-            lastPTS: pts.isFinite && pts >= 0 ? pts : nil)
+            lastPTS: pts.isFinite && pts >= 0 ? pts : nil, encoder: encoder, output: output)
     }
 
     private var audioContinuation: AsyncStream<(AVAudioPCMBuffer, AVAudioTime)>.Continuation?

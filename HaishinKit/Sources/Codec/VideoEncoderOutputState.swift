@@ -14,6 +14,15 @@ import Foundation
 /// 由 NSLock 保護；且**絕不在 VT callback 內取 OutgoingStream 的鎖**，避免死鎖。
 final class VideoEncoderOutputState: @unchecked Sendable {
     private let lock = NSLock()
+    private let diagnostics: VideoPipelineEventTracker
+    init(diagnostics: VideoPipelineEventTracker = VideoPipelineEventTracker()) {
+        self.diagnostics = diagnostics
+    }
+    func submitted() { diagnostics.record(.encoderSubmitted) }
+    func callback() {
+        lock.lock(); defer { lock.unlock() }
+        if active { diagnostics.record(.encoderCallback) }
+    }
     /// false = 此 state 已作廢（session 被替換 / 停止），之後所有 callback 直接忽略。
     private var active = true
     /// true = 正在等一個「已確認」的 keyframe；確認前不放行任何 P 幀。
@@ -38,6 +47,7 @@ final class VideoEncoderOutputState: @unchecked Sendable {
         defer { lock.unlock() }
         guard active else { return false }
         let firstFailure = failure == nil
+        diagnostics.record(.encoderFailure, errorCode: status)
         failure = status
         waitingForKeyFrame = true
         return firstFailure
@@ -56,6 +66,7 @@ final class VideoEncoderOutputState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard active else { return }
+        diagnostics.record(.encoderDropped)
         waitingForKeyFrame = true
     }
 
@@ -78,12 +89,19 @@ final class VideoEncoderOutputState: @unchecked Sendable {
     func deliver(isKeyFrame: Bool, seconds: Double, yield: () -> Bool) {
         lock.lock()
         defer { lock.unlock() }
-        guard active, failure == nil, !waitingForKeyFrame || isKeyFrame else { return }
+        guard active, failure == nil else { return }
+        guard !waitingForKeyFrame || isKeyFrame else {
+            diagnostics.record(.encoderKeyFrameSuppressed)
+            return
+        }
         guard yield() else {
+            diagnostics.record(.encoderYieldRejected)
             waitingForKeyFrame = true
             return
         }
+        diagnostics.record(.encoderDelivered)
         if isKeyFrame {
+            diagnostics.record(.encoderKeyFrame)
             lastKeyFrameSeconds = seconds
             waitingForKeyFrame = false
         }

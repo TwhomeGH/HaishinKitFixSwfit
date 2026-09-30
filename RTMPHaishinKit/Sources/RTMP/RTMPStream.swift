@@ -322,6 +322,7 @@ public actor RTMPStream {
     private var publishTask: Task<Void, Never>?
     /// publish 管線的世代。startPublishTasks / stopPublishTasks 各 +1，讓舊的
     /// task group（即使 cancellation 尚未生效）無法再 append / encode 新資料。
+    nonisolated private let videoOutputDiagnostics = VideoPipelineEventTracker()
     private var publishGeneration: UInt64 = 0
     private var lastVideoDiagnosticSnapshot: VideoPipelineSnapshot?
     private var outputGeneration: UInt64 { outputQueue.generation }
@@ -873,6 +874,7 @@ public actor RTMPStream {
         // generation 檢查擋掉，不會混進新管線。
         lastVideoDiagnosticSnapshot = nil
         publishGeneration &+= 1
+        videoOutputDiagnostics.record(.publishStarted)
         let generation = publishGeneration
         waitingForVideoKeyFrame = true
 
@@ -893,6 +895,7 @@ public actor RTMPStream {
         publishTask = Task { [weak self] in
             guard let self else { return }
             await connection?.log(.info, "startPublishTasks: task started", always: true)
+            await self.logVideoQueueDiagnostics(generation: generation)
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     while !Task.isCancelled {
@@ -930,7 +933,8 @@ public actor RTMPStream {
 
     /// 統一唯讀入口，不等待 RTMP 或 Mixer actor；UI 與日誌可各自保存前次快照。
     public nonisolated func videoPipelineSnapshot() -> VideoPipelineSnapshot {
-        mixerOutputBridge.snapshot(encoderInput: outgoing.videoQueueSnapshot())
+        mixerOutputBridge.snapshot(encoderInput: outgoing.videoQueueSnapshot(),
+            encoder: outgoing.videoEncoderSnapshot, output: videoOutputDiagnostics.snapshot())
     }
 
     private func logVideoQueueDiagnostics(generation: UInt64) async {
@@ -943,6 +947,7 @@ public actor RTMPStream {
 
     private func stopPublishTasks() {
         if publishTask != nil {
+            videoOutputDiagnostics.record(.publishStopped)
             let final = "publish=\(publishGeneration) " + videoPipelineSnapshot().summary(since: lastVideoDiagnosticSnapshot)
             let connection = self.connection
             Task { await connection?.log(.info, "VideoQueue stop", detail: final, always: true) }
@@ -1019,6 +1024,9 @@ public actor RTMPStream {
                                               message: item.message, expectedGeneration: connectionGeneration)
         // doOutput 內可能因失敗而作廢世代；世代不符就不再累加 byteCount。
         guard generation == outputGeneration else { return }
+        if item.chunkStreamId == .video {
+            videoOutputDiagnostics.record(length > 0 ? .connectionVideoAccepted : .connectionVideoRejected)
+        }
         appendByteCount(length)
     }
 
@@ -1154,13 +1162,20 @@ extension RTMPStream: _Stream {
         switch sampleBuffer.formatDescription?.mediaType {
         case .video:
             if sampleBuffer.formatDescription?.isCompressed == true {
-                guard readyState == .publishing, outputQueue.isOpen else { return }
+                videoOutputDiagnostics.record(.encodedReceived)
+                guard readyState == .publishing, outputQueue.isOpen else {
+                    videoOutputDiagnostics.record(.outputUnavailable)
+                    return
+                }
                 let isKeyFrame = !sampleBuffer.isNotSync
                 // 編碼格式變了（重新協商 / 換 session）等同 GOP 重新開始，必須重新等 keyframe。
                 if videoFormat != sampleBuffer.formatDescription { waitingForVideoKeyFrame = true }
                 // 在等 keyframe 時，非 keyframe 一律不送：下游此刻缺 SPS/PPS 與
                 // 參考幀，送 P 幀只會解出壞畫面。
-                guard !waitingForVideoKeyFrame || isKeyFrame else { return }
+                guard !waitingForVideoKeyFrame || isKeyFrame else {
+                    videoOutputDiagnostics.record(.keyFrameSuppressed)
+                    return
+                }
                 let recovering = waitingForVideoKeyFrame
                 // 已在正常輸出（非 recovering）、格式未變、又是 keyframe：
                 // 於每個 sync 前重送一次 sequence header。原因是下游 / server 端
@@ -1198,14 +1213,16 @@ extension RTMPStream: _Stream {
                 let compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
                 guard let message = RTMPVideoMessage(streamId: id, timestamp: timedelta, compositionTime: compositionTime, sampleBuffer: sampleBuffer) else {
                         // 訊息組不出來（通常是格式異常）：視為輸出中斷，走統一收尾。
+                        videoOutputDiagnostics.record(.messageCreationFailed)
                         invalidateOutput(reason: "video message creation failed")
                         return
                     }
-                    videoSentBytes += message.payload.count
-                    hasSentVideoFrame = true
                     // 只有實際入列（doOutput == true）才視為送出成功。這正是
                     // 「請求不等於成功」在 stream 層的體現：入列失敗就維持等 keyframe。
                     if doOutput(.one, chunkStreamId: .video, message: message) {
+                        videoSentBytes += message.payload.count
+                        hasSentVideoFrame = true
+                        videoOutputDiagnostics.record(.videoQueued)
                         waitingForVideoKeyFrame = false
                         if recovering {
                             // 從「等 keyframe」恢復的第一顆已排入：記錄解碼邊界，便於
@@ -1213,6 +1230,8 @@ extension RTMPStream: _Stream {
                             let generation = publishGeneration
                             Task { await connection?.log(.info, "Video decode boundary queued", detail: "generation=\(generation) pts=\(decodeTimeStamp.seconds)", always: true) }
                         }
+                    } else {
+                        videoOutputDiagnostics.record(.videoQueueRejected)
                     }
                 } else {
                 videoInputFrames += 1

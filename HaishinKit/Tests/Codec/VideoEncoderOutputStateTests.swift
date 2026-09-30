@@ -89,4 +89,39 @@ import Testing
         state.deliver(isKeyFrame: true, seconds: 200) { admitted = true; return true }
         #expect(!admitted)
     }
+    @Test func diagnosticsIgnoreStaleCallbacks() throws {
+        let tracker = VideoPipelineEventTracker()
+        let old = VideoEncoderOutputState(diagnostics: tracker)
+        old.submitted()
+        old.callback()
+        old.deliver(isKeyFrame: false, seconds: 1) { true }
+        old.deliver(isKeyFrame: true, seconds: 2) { true }
+        old.invalidate()
+        old.callback()
+        old.recordFailure(-1)
+        old.dropped()
+        old.deliver(isKeyFrame: true, seconds: 3) { true }
+        let snapshot = tracker.snapshot()
+        #expect(snapshot.events["encoderCallback"]?.count == 1)
+        #expect(snapshot.events["encoderDelivered"]?.count == 1)
+        #expect(snapshot.events["encoderKeyFrameSuppressed"]?.count == 1)
+        #expect(snapshot.events["encoderFailure"] == nil)
+        #expect(snapshot.events["encoderDropped"] == nil)
+        let decoded = try JSONDecoder().decode(VideoPipelineEventsSnapshot.self,
+            from: JSONEncoder().encode(snapshot))
+        #expect(decoded.id == snapshot.id)
+        #expect(decoded.events["encoderKeyFrame"]?.count == 1)
+    }
+
+    @Test func diagnosticFailureAndRejectedYieldAreDistinct() {
+        let tracker = VideoPipelineEventTracker()
+        let state = VideoEncoderOutputState(diagnostics: tracker)
+        state.deliver(isKeyFrame: true, seconds: 1) { false }
+        state.recordFailure(-123)
+        let snapshot = tracker.snapshot()
+        #expect(snapshot.events["encoderYieldRejected"]?.count == 1)
+        #expect(snapshot.events["encoderDelivered"] == nil)
+        #expect(snapshot.lastErrorCode == -123)
+        #expect(snapshot.idle(for: .encoderDelivered) == nil)
+    }
 }
