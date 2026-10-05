@@ -4,6 +4,52 @@
 
 ---
 
+## 61. 修正 RTMP 重連：S2 之後同段資料被丟棄導致 connect 永不 resolve
+
+**檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPHandshake.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
+`RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、
+`RTMPHaishinKit/Tests/RTMP/RTMPHandshakeTests.swift`（新）、
+`.cortexkit/verify-handshake.swift`（新）、
+`HaishinKit/Sources/Util/Constants.swift`
+
+### 61a. 診斷
+
+重連 log：TCP 與 RTMP 握手都完成（`handshakeDone`），之後閒置約 4 秒伺服器才
+關閉，本機合成 `requestFailed(response: NetConnection.Connect.Failed error: )`
+（訊息空白，無伺服器狀態可讀）。
+
+根因：`RTMPHandshake` 有兩種不一致的消費語意——`c2packet()` 用
+`removeSubrange` 移除 S0+S1，但 S2 只用「buffered 數量」判斷、**從不移除**；
+而 `RTMPConnection.listen` 的 `.ackSent` 轉到 `.handshakeDone` 後用的是
+**另一個** buffer。於是任何與 S2 同一段 TCP read 抵達的位元組（伺服器緊接送出
+的 SetChunkSize / WindowAckSize / SetPeerBandwidth，或與 S2 合併的 connect
+`_result`）都被靜默丟棄，connect continuation 永不 resume；伺服器等不到
+createStream/publish，數秒後關閉連線，recv loop EOF → `close()` 對 pending
+operation 回填**合成的** Connect.Failed，病因被掩蓋。
+
+### 61b. 修正
+
+- `RTMPHandshake` 收斂成單一權威消費點：`takeTrailing()` 一次回傳並移除「S2
+  之後」的 RTMP 位元組；`c2packet()` 不再有移除副作用；新增 `handshakeSize`。
+  移除 `import HaishinKit`（僅依賴 Foundation，可離線驗證）。
+- `RTMPConnection.listen` 由「遞迴 `listen(.init())`」改為迴圈狀態機，並抽出
+  `handleChunks(_:)`；握手完成時把 `takeTrailing()` 的位元組交給 chunk parser，
+  同段資料不再遺失。
+- `RTMPSocket` 新增 `didEndStream`（乾淨 EOF，`content == nil`）並留下日誌；
+  `close()` 在未連線階段以真正的底層原因回填 pending operation
+  （`.socketErrorOccurred(NWError / .endOfStream)`），不再合成空白 Connect.Failed。
+- `kHaishinKitRevision` 更新為 `d1af6c54`（原 `3481fce` 與 HEAD 不符，log 會誤導）。
+
+### 61c. 驗證
+
+- `.cortexkit/verify-handshake.swift`（swiftc，非 Apple 平台）：全數通過，含
+  「S0S1 + S2 + trailing 同段」與「跨 read」「逐 byte」等回歸。
+- `RTMPHaishinKitTests/RTMPHandshakeTests.swift`：同一組案例的 swift-testing 版本。
+- Apple SDK 編譯與實機重連仍待於 macOS 驗證（Windows 環境只能 `swiftc -parse`）。
+
+---
+
 ## 60. 更新過時的 OutgoingStream buffer count 測試 + SRT 邊界夾限 + CI 日誌 ANSI
 
 **檔案**：`HaishinKit/Tests/Stream/OutgoingStreamTests.swift`、

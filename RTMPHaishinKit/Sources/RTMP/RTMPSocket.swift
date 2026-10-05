@@ -19,6 +19,10 @@ final actor RTMPSocket {
     /// The most recent recv error that caused the receive loop to stop.
     /// Exposed so RTMPConnection can propagate the real error to streams.
     private(set) var lastRecvError: NWError?
+    /// True when the receive loop ended with a clean TCP EOF (`content == nil`,
+    /// no `NWError`). Lets RTMPConnection distinguish "peer closed" from a
+    /// transport fault without synthesizing a blank `Connect.Failed`.
+    private(set) var didEndStream = false
     private var timeout: UInt64 = 15
     private var connected = false
     private var windowSizeC = RTMPSocket.defaultWindowSizeC
@@ -157,6 +161,8 @@ final actor RTMPSocket {
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
+        lastRecvError = nil
+        didEndStream = false
         isReceiveStopped = true
         receiveContinuation?.finish()
         receiveContinuation = nil
@@ -258,8 +264,11 @@ final actor RTMPSocket {
             onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(content.count) totalIn=\(totalBytesIn)"))
             receiveContinuation?.yield(content)
         } else {
-            // content == nil && error == nil: clean end of stream.
+            // content == nil && error == nil: clean end of stream (peer closed).
             isReceiveStopped = true
+            didEndStream = true
+            logger.info("recv end of stream")
+            onLog?(.init(level: .info, message: "recv end of stream", detail: "totalIn=\(totalBytesIn)", always: true))
             receiveContinuation?.finish()
             return
         }

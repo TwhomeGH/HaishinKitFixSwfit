@@ -3,8 +3,10 @@ import OSLog
 
 public let kHaishinKitIdentifier = "com.haishinkit.HaishinKit"
 
-/// Current HaishinKit revision. Updated by CI or manually.
-public let kHaishinKitRevision = "3481fce"
+/// Current HaishinKit revision. Updated manually (there is no CI bump): keep it
+/// in sync with the commit the framework is built from, otherwise runtime logs
+/// report a revision that misleads field diagnosis.
+public let kHaishinKitRevision = "d1af6c54"
 
 public enum LogLevel: Comparable {
     case trace, debug, info, warn, error

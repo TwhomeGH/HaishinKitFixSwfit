@@ -755,14 +755,29 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         await socket?.close()
         await networkMonitor?.stopRunning()
 
-        let status = state == .connected ?
+        // 先記下狀態與底層錯誤：state 會在下面被改掉，recv error 則用來分辨
+        // 「伺服器拒絕 / 正常關閉」與「連線在握手/connect 途中被底層中斷」。
+        let wasConnected = state == .connected
+        let recvError = await socket?.lastRecvError
+        let didEndStream = await socket?.didEndStream ?? false
+        let status = wasConnected ?
             Code.connectClosed.status("") :
             Code.connectFailed.status("")
 
         state = .disconnected
 
         for (_, operation) in operations {
-            operation.resume(throwing: Error.requestFailed(response: .init(status: status)))
+            if !wasConnected, let recvError {
+                // 帶出真正的底層原因（ECONNRESET…），不要合成空白的
+                // Connect.Failed，否則現場無法診斷（曾讓 S2 後資料遺失難查）。
+                operation.resume(throwing: Error.socketErrorOccurred(recvError))
+            } else if !wasConnected, didEndStream {
+                // 乾淨 EOF：伺服器在 connect/publish 完成前關閉連線。用明確的
+                // endOfStream 取代空白的 Connect.Failed。
+                operation.resume(throwing: Error.socketErrorOccurred(RTMPSocket.Error.endOfStream))
+            } else {
+                operation.resume(throwing: Error.requestFailed(response: .init(status: status)))
+            }
         }
         operations.removeAll()
         statusContinuation?.yield(status)
@@ -847,66 +862,85 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
 
+    /// 驅動握手狀態機，並把 RTMP 資料餵進 chunk parser。
+    ///
+    /// 以迴圈（而非遞迴 `listen(.init())`）在同一次呼叫內完成多個狀態轉換，
+    /// 並在握手完成時把 S2 之後的位元組交給 `handleChunks`，避免同段資料遺失。
     private func listen(_ data: Data) async throws {
-        switch state {
-        case .versionSent:
-            handshake.put(data)
-            guard handshake.hasS0S1Packet else {
+        var pending = data
+        while true {
+            switch state {
+            case .versionSent:
+                handshake.put(pending)
+                pending = .init()
+                guard handshake.hasS0S1Packet else {
+                    return
+                }
+                guard handshake.s0Version >= 3 else {
+                    try await close()
+                    log(.error, "S0 version mismatch", detail: "got \(handshake.s0Version)", always: true)
+                    throw Error.requestFailed(response: .init(status: .init(code: Code.connectFailed.rawValue, level: "error", description: "Unsupported RTMP protocol version: \(handshake.s0Version)")))
+                }
+                log(.debug, "S0S1 received, sending C2", always: true)
+                await socket?.send(handshake.c2packet())
+                state = .ackSent
+            case .ackSent:
+                handshake.put(pending)
+                pending = .init()
+                guard handshake.hasS2Packet else {
+                    return
+                }
+                state = .handshakeDone
+                guard let message = makeConnectionMessage() else {
+                    try await close()
+                    return
+                }
+                await networkMonitor?.startRunning()
+                doOutput(.zero, chunkStreamId: .command, message: message)
+                // S2 之後的位元組（伺服器控制訊息 / connect 回應）常與 S2 同段
+                // 抵達；必須交給 chunk parser，否則會靜默丟棄、connect 永不 resolve。
+                pending = handshake.takeTrailing()
+                guard !pending.isEmpty else {
+                    return
+                }
+            case .handshakeDone, .connected:
+                try await handleChunks(pending)
+                return
+            default:
                 return
             }
-            guard handshake.s0Version >= 3 else {
-                try await close()
-                log(.error, "S0 version mismatch", detail: "got \(handshake.s0Version)", always: true)
-                throw Error.requestFailed(response: .init(status: .init(code: Code.connectFailed.rawValue, level: "error", description: "Unsupported RTMP protocol version: \(handshake.s0Version)")))
-            }
-            log(.debug, "S0S1 received, sending C2", always: true)
-            await socket?.send(handshake.c2packet())
-            state = .ackSent
-            try await listen(.init())
-        case .ackSent:
-            log(.debug, "Waiting for S2", always: true)
-            handshake.put(data)
-            guard handshake.hasS2Packet else {
-                return
-            }
-            state = .handshakeDone
-            guard let message = makeConnectionMessage() else {
-                try await close()
-                break
-            }
-            await networkMonitor?.startRunning()
-            doOutput(.zero, chunkStreamId: .command, message: message)
-        case .handshakeDone, .connected:
-            inputBuffer.put(data)
-            log(.trace, "Input data", detail: "size=\(data.count) buffer=\(inputBuffer.remaining)")
-            var rollbackPosition = inputBuffer.position
-            do {
-                while inputBuffer.hasRemaining {
-                    rollbackPosition = inputBuffer.position
-                    let (chunkType, chunkStreamId) = try inputBuffer.getBasicHeader()
-                    log(.trace, "Chunk header", detail: "type=\(chunkType.rawValue) streamId=\(chunkStreamId)")
-                    if chunks[chunkStreamId] == nil {
-                        chunks[chunkStreamId] = RTMPChunkMessageHeader()
-                    }
-                    if let messageHeader = chunks[chunkStreamId] {
-                        try inputBuffer.getMessageHeader(chunkType, messageHeader: messageHeader)
-                        if let message = messageHeader.makeMessage() {
-                            log(.trace, "Message dispatched", detail: "type=\(message.type.rawValue) streamId=\(message.streamId)")
-                            await dispatch(message, type: chunkType)
-                            messageHeader.reset()
-                        }
+        }
+    }
+
+    /// 把收到的位元組餵進 RTMP chunk parser，並派送完整訊息。
+    private func handleChunks(_ data: Data) async throws {
+        inputBuffer.put(data)
+        log(.trace, "Input data", detail: "size=\(data.count) buffer=\(inputBuffer.remaining)")
+        var rollbackPosition = inputBuffer.position
+        do {
+            while inputBuffer.hasRemaining {
+                rollbackPosition = inputBuffer.position
+                let (chunkType, chunkStreamId) = try inputBuffer.getBasicHeader()
+                log(.trace, "Chunk header", detail: "type=\(chunkType.rawValue) streamId=\(chunkStreamId)")
+                if chunks[chunkStreamId] == nil {
+                    chunks[chunkStreamId] = RTMPChunkMessageHeader()
+                }
+                if let messageHeader = chunks[chunkStreamId] {
+                    try inputBuffer.getMessageHeader(chunkType, messageHeader: messageHeader)
+                    if let message = messageHeader.makeMessage() {
+                        log(.trace, "Message dispatched", detail: "type=\(message.type.rawValue) streamId=\(message.streamId)")
+                        await dispatch(message, type: chunkType)
+                        messageHeader.reset()
                     }
                 }
-            } catch RTMPChunkError.unknowChunkType(let value) {
-                logger.error("Received unknow chunk type =", value)
-                log(.error, "Unknown chunk type", detail: "\(value)")
-                try await close()
-            } catch RTMPChunkError.bufferUnderflow {
-                log(.trace, "Buffer underflow, waiting for more data", detail: "position=\(rollbackPosition) remaining=\(inputBuffer.remaining)")
-                inputBuffer.position = rollbackPosition
             }
-        default:
-            break
+        } catch RTMPChunkError.unknowChunkType(let value) {
+            logger.error("Received unknow chunk type =", value)
+            log(.error, "Unknown chunk type", detail: "\(value)")
+            try await close()
+        } catch RTMPChunkError.bufferUnderflow {
+            log(.trace, "Buffer underflow, waiting for more data", detail: "position=\(rollbackPosition) remaining=\(inputBuffer.remaining)")
+            inputBuffer.position = rollbackPosition
         }
     }
 

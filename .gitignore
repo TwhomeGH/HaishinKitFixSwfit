@@ -33,3 +33,6 @@ SRTHaishinKit/Vendor/SRT/srt/
 SRTHaishinKit/Vendor/SRT/Includes/
 .playwright-mcp/*
 .cortexkit/*
+# Keep the committed standalone verification scripts trackable (they are the
+# non-Apple-platform twins of the XCTest suites).
+!.cortexkit/verify-*.swift
