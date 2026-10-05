@@ -11,7 +11,8 @@
 set -euo pipefail
 
 awk '
+  /error:|failed after|✘|recorded an issue|Expectation failed|Failing tests:/ { printf "\033[31m%s\033[0m\n", $0; next }
+  /warning:/ { printf "\033[33m%s\033[0m\n", $0; next }
   /passed after|✔/ { printf "\033[32m%s\033[0m\n", $0; next }
-  /failed after|✘|recorded an issue|Expectation failed|Failing tests:/ { printf "\033[31m%s\033[0m\n", $0; next }
   { print }
 '

@@ -64,6 +64,13 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
           exit "${status}"
 
+      - name: Summarize errors and warnings
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/ci_test_summary.py .build/test-results/macos-build.log \
+            --markdown .build/test-results/ci-summary.md --github-summary || true
+
       - name: Upload macOS build log
         if: always()
         uses: actions/upload-artifact@v6
@@ -159,6 +166,13 @@ jobs:
               .build/test-results/focused-failures.md \
               "RTMPHaishinKit iOS Tests"
           fi
+
+      - name: Summarize errors and warnings
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/ci_test_summary.py .build/test-results/ios-tests.log \
+            --markdown .build/test-results/ci-summary.md --github-summary || true
 
       - name: Summarize failed suites
         if: always()
@@ -303,6 +317,13 @@ jobs:
               "HaishinKit iOS Tests"
           fi
 
+      - name: Summarize errors and warnings
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/ci_test_summary.py .build/haishinkit-test-results/ios-tests.log \
+            --markdown .build/haishinkit-test-results/ci-summary.md --github-summary || true
+
       - name: Summarize HaishinKit failed suites
         if: always()
         shell: bash
@@ -444,6 +465,13 @@ jobs:
               "HaishinKit macOS Tests"
           fi
 
+      - name: Summarize errors and warnings
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/ci_test_summary.py "${result_dir}/macos-tests.log" \
+            --markdown "${result_dir}/ci-summary.md" --github-summary || true
+
       - name: Summarize HaishinKit macOS failed suites
         if: always()
         shell: bash
@@ -579,6 +607,13 @@ jobs:
             } >> "${result_dir}/failures.md"
           fi
           echo "${status}" > "${result_dir}/exit-code"
+
+      - name: Summarize errors and warnings
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/ci_test_summary.py "${result_dir}/tsan-tests.log" \
+            --markdown "${result_dir}/ci-summary.md" --github-summary || true
 
       - name: Summarize Thread Sanitizer results
         if: always()
