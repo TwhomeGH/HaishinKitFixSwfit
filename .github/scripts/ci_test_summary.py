@@ -62,6 +62,16 @@ LOC_RE = re.compile(
 ANY_ERR_RE = re.compile(r"\berror:\s")
 ANY_WARN_RE = re.compile(r"\bwarning:\s")
 
+# 已知無害、不需處理的建置訊息（例如每個 target 都會出現的 AppIntents 提醒），
+# 從 warning 摘要中濾掉，避免分類被噪音稀釋。
+_WARN_IGNORE = (
+    "Metadata extraction skipped, no AppIntents.framework dependency found",
+)
+
+
+def _ignored_warning(msg: str) -> bool:
+    return any(pattern in msg for pattern in _WARN_IGNORE)
+
 TEST_START = re.compile(r"◇\s+Test\s+(.+?)\s+started")
 TEST_PASS = re.compile(r"[✔✓]\s+Test\s+(.+?)\s+passed")
 TEST_FAIL = re.compile(r"[✘✗]\s+Test\s+(.+?)\s+failed")
@@ -121,6 +131,8 @@ def parse(log_text: str):
                 errors.append(Finding(m.group("path"), m.group("line"), m.group("msg")))
             else:
                 msg = m.group("msg").strip()
+                if _ignored_warning(msg):
+                    continue
                 entry = warnings.setdefault(msg, {"count": 0, "locs": []})
                 entry["count"] += 1
                 if len(entry["locs"]) < 5:
@@ -147,6 +159,8 @@ def parse(log_text: str):
             other_errors.append(line.strip())
         elif ANY_WARN_RE.search(line) and not line.lstrip().startswith("//"):
             msg = line.split("warning:", 1)[1].strip()
+            if _ignored_warning(msg):
+                continue
             entry = warnings.setdefault(msg, {"count": 0, "locs": []})
             entry["count"] += 1
 
