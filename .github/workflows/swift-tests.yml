@@ -21,7 +21,7 @@ concurrency:
 jobs:
   macos-build:
     name: RTMPHaishinKit macOS compile
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 15
 
     steps:
@@ -74,7 +74,7 @@ jobs:
 
   rtmp-tests:
     name: RTMPHaishinKit iOS tests
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
 
     steps:
@@ -217,7 +217,7 @@ jobs:
 
   haishinkit-tests:
     name: HaishinKit iOS tests
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
 
     steps:
@@ -360,7 +360,7 @@ jobs:
 
   haishinkit-macos-tests:
     name: HaishinKit macOS tests
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
 
     steps:
@@ -502,7 +502,7 @@ jobs:
 
   haishinkit-tsan:
     name: HaishinKit tests (Thread Sanitizer, ${{ matrix.platform }})
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     strategy:
       fail-fast: false
