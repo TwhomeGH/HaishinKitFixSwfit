@@ -10,7 +10,7 @@
 2. [publish() 初始化順序導致 Race Condition](#2-publish-初始化順序導致-race-condition)
 3. [斷線重連後無法自動 Republish](#3-斷線重連後無法自動-republish)
 4. [AudioCodec 與 VideoCodec 輸出管理不一致](#4-audiocodec-與-videocodec-輸出管理不一致)
-5. [總結](#5-總結)
+5. [總結](#9-總結)
 
 ---
 
@@ -30,7 +30,9 @@ var outputStream: AsyncStream<CMSampleBuffer> {
 
 ### 問題
 
-`outputStream` 是 **Computed Property**，每次存取都建立一個全新的 `AsyncStream`，並用新的 `continuation` 覆蓋舊的 `self.continuation`：
+`outputStream` 是 **Computed Property**，每次存取都建立一個全新的 `AsyncStream`
+
+並用新的 `continuation` 覆蓋舊的 `self.continuation`：
 
 - 舊的 `continuation` **不會被 finish**，造成該 stream 上的 consumer 永遠懸掛等待
 - 新的 stream 與舊的 consumer 無關，資料永遠到達不了消費者
@@ -45,7 +47,7 @@ var outputStream: AsyncStream<CMSampleBuffer> {
 
 ### 關鍵資料流
 
-```
+```swift
 VideoCodec.append(frame)
   → guard let continuation else { return }  ← continuation 可能為 nil！
   → session.convert(..., continuation: continuation)
@@ -67,7 +69,9 @@ var outputStream: AsyncStream<CMSampleBuffer>
 - `append()` 透過 `_outputStream.continuation` 取得當前的 continuation 傳給 `session.convert()`
 - `stopRunning()` 用 `_outputStream.finish()` 一行清理
 
-`AsyncStreamedFlow` 新增公開 `continuation` getter 以支援 VideoCodec 的 `session.convert()` 使用模式。
+`AsyncStreamedFlow` 新增公開 `continuation` getter
+
+以支援 VideoCodec 的 `session.convert()` 使用模式。
 
 ---
 
@@ -77,7 +81,7 @@ var outputStream: AsyncStream<CMSampleBuffer>
 
 ### 原始順序
 
-```
+```swift
 readyState = .publishing
 send("@setDataFrame", ...)
 outgoing.startRunning()              // Step 1: Encoder 啟動
@@ -94,7 +98,7 @@ tasks.append(Task {
 
 Step 1 到 Step 3 之間存在時間窗口（即使只有幾微秒）：
 
-```
+```log
 Encoder 啟動
     ↓
 Mixer 餵入 frame → Encoder 產出 → continuation == nil → 丟棄！
@@ -107,7 +111,10 @@ Consumer task 終於開始迭代 → continuation 設定完成
 ### 影響
 
 - **第一個關鍵幀（IDR）可能遺失**：H.264/HEVC 串流若第一個 IDR frame 丟失，客戶端要等到下一個 GOP 才能開始解碼
-- **Audio 第一個 AAC header 可能遺失**：雖然 `audioFormat.didSet` 會在 frame 到達時自動送出 header，但如果 frame 本身在 continuation nil 時就被丟棄，header 也不會觸發
+- **Audio 第一個 AAC header 可能遺失**：雖然 `audioFormat.didSet` 會在 frame 到達時自動送出 header
+
+  但如果 frame 本身在 continuation nil 時就被丟棄，header 也不會觸發
+
 - **Debug 困難**：行為不穩定，依賴於任務排程器的 timing
 
 ### 修復方式
@@ -139,7 +146,10 @@ for stream in streams {
 
 但 **沒有重新呼叫 `publish()`**。Stream 停留在 `.idle` 狀態，造成：
 
-1. `audioFormat`/`videoFormat` 的 `didSet` 檢查 `readyState == .publishing` → **format packet 不送**
+1. `audioFormat`/`videoFormat` 的 `didSet`
+
+   檢查 `readyState == .publishing` → **format packet 不送**
+
 2. 雖然 `doOutput` 本身不檢查 `readyState`，但 stream ID 已重置為新值，資料可能送到錯誤的串流
 3. Encoder 在 `stream.close()` 時已被 stop，若無重新 publish 就不會重啟
 
@@ -177,7 +187,7 @@ for stream in streams {
 兩個 Codec 使用完全不同的機制管理輸出 stream：
 
 | 面向 | AudioCodec | VideoCodec |
-| ------ |-----------|------------|
+| ------ | ----------- | ------------ |
 | 屬性包裝 | `@AsyncStreamedFlow` property wrapper | 手動 computed property |
 | Continuation 管理 | `didSet` 自動 finish 舊的 | 直接覆蓋，遺棄舊的 |
 | Yield 方式 | `_outputStream.yield(value)` | 傳遞 `continuation` 給 session.convert |
@@ -185,7 +195,10 @@ for stream in streams {
 
 ### 影響
 
-- VideoCodec 缺少 `@AsyncStreamedFlow` 提供的 `didSet { oldValue?.finish() }`，導致舊 consumer 被遺棄時無法正常終止
+- VideoCodec 缺少 `@AsyncStreamedFlow` 提供的 `didSet { oldValue?.finish() }`
+
+  導致舊 consumer 被遺棄時無法正常終止
+
 - 不一致的維護模式增加未來改動出錯的風險
 
 ### 修復
@@ -197,10 +210,16 @@ for stream in streams {
 var outputStream: AsyncStream<CMSampleBuffer>
 ```
 
-`append()` 透過 `_outputStream.continuation` 取得 continuation 傳給 `session.convert()`，`stopRunning()` 用 `_outputStream.finish()` 清理。
+`append()` 透過 `_outputStream.continuation` 取得 continuation
+
+傳給 `session.convert()`，`stopRunning()` 用 `_outputStream.finish()` 清理。
 
 相關改動：
-- `AsyncStreamedFlow` 新增 `continuation` 公開 getter（讓外部可以取得當前的 continuation 傳給 VideoToolbox）
+
+- `AsyncStreamedFlow` 新增 `continuation` 公開 getter
+  
+    （讓外部可以取得當前的 continuation 傳給 VideoToolbox）
+
 - `VideoCodec` 移除手動 `_outputStream` / `_outputContinuation` lazy cache
 
 ---
@@ -211,20 +230,44 @@ var outputStream: AsyncStream<CMSampleBuffer>
 
 ### 問題
 
-重連時 `dispatch(.reset)` 只呼叫 `stopPublishTasks()` 取消發佈 task，但 **沒有呼叫 `outgoing.stopRunning()`**。後續 `resumePublishing()` → `publish()` → `outgoing.startRunning()` 因 `guard !isRunning else { return }` 變成 no-op，編碼器未被重啟。
+重連時 `dispatch(.reset)` 只呼叫 `stopPublishTasks()` 取消發佈 task，但 **沒有呼叫 `outgoing.stopRunning()`**。
 
-由於 VideoCodec 的 `_outputStream` 是 cached lazy property，舊（已取消）和新發佈 task **共用同一條 AsyncStream**。兩個 `for-await` 同時迭代同一條 stream 造成未定義行為，**影片幀永久丟失**。
+後續 `resumePublishing()` → `publish()`
 
-音訊不受影響因為 AudioCodec 使用 `@AsyncStreamedFlow`：`startPublishTasks()` 存取 `audioOutputStream` 時 **自動建立新 stream 並 finish 舊的**。
+→ `outgoing.startRunning()` 因 `guard !isRunning else { return }` 變成 no-op，編碼器未被重啟。
 
-### 資料流對比
+由於 VideoCodec 的 `_outputStream` 是 cached lazy property
 
-| | Audio（正常） | Video（損壞） |
-|---|---|---|
+舊（已取消）和新發佈 task **共用同一條 AsyncStream**。
+
+兩個 `for-await` 同時迭代同一條 stream 造成未定義行為，**影片幀永久丟失**。
+
+音訊不受影響因為 AudioCodec 使用 `@AsyncStreamedFlow`：`startPublishTasks()` 存取
+
+`audioOutputStream` 時 **自動建立新 stream 並 finish 舊的**。
+
+### 資料流對比 - 指令與狀態
+
+| 指令 | Audio（正常） | Video（損壞） |
+| ------------------- | --------------------- | --------------------- |
 | `dispatch(.reset)` | `stopPublishTasks()` | `stopPublishTasks()` |
 | codec 狀態 | isRunning=true（未停止） | isRunning=true（未停止） |
-| `startPublishTasks()` | `audioOutputStream` → **新 stream** (via `@AsyncStreamedFlow`) | `videoOutputStream` → **舊 stream** (cached lazy) |
+
+### Stream 建立與結果
+
+| 動作 | Audio（正常） | Video（損壞） |
+| -------------------- | --------- | --------------- |
+| `startPublishTasks()` | `audioOutputStream` → 新 stream (via `@AsyncStreamedFlow`) | `videoOutputStream` → 舊 stream (cached lazy) |
 | 結果 | ✅ fresh stream | ❌ 新舊 task 共用同一條 stream |
+
+### 用途說明
+
+| 欄位名稱 | 用途說明 |
+| ------------------- | ---------- |
+| dispatch(.reset) | 停止目前的 publish 任務 |
+| codec 狀態 | 編碼器是否仍在運行 |
+| startPublishTasks | 建立新的輸出 stream |
+| 結果 | 判斷是否成功建立新 stream |
 
 ### 影響
 
@@ -247,17 +290,45 @@ case .reset:
 ```
 
 這確保了重連後：
+
 1. `stopPublishTasks()` → 取消舊 task
-2. `outgoing.stopRunning()` → 銷毀 VTCompressionSession、finish output stream、`isRunning = false`、`_videoInputStream = nil`
-3. `resumePublishing()` → `publish()` → `outgoing.startRunning()` → **真正重啟**編碼器，全新 session 和 stream
+2. 停止編碼器
+
+   - 呼叫：`outgoing.stopRunning()`
+   - 動作：銷毀 VTCompressionSession
+   - 後續：
+      - finish output stream
+      - `isRunning = false`
+      - `_videoInputStream = nil`
+
+3. 重啟編碼器
+
+   - 呼叫：`resumePublishing()` → `publish()` → `outgoing.startRunning()`
+   - 動作：**真正重啟**編碼器
+   - 建立全新 session 和 stream
+
 4. `startPublishTasks()` → 所有 stream 都是全新的，不與舊 task 共用
 
-**修復 B** — `VideoCodec` 改用 `@AsyncStreamedFlow`（詳見 [§4](#4-audiocodec-與-videocodec-輸出管理不一致)），使 `outputStream` 每次存取都建立新 stream 並自動 finish 舊的，與 AudioCodec 行為一致。
+**修復 B** — `VideoCodec` 改用 `@AsyncStreamedFlow`（詳見 [§4](#4-audiocodec-與-videocodec-輸出管理不一致)）
+
+使 `outputStream` 每次存取都建立新 stream 並自動 finish 舊的，與 AudioCodec 行為一致。
 
 **修復 C** — 診斷日誌 hot path 保護（`onLog` 頻率控制）：
 
-1. `RTMPStream.append()` 移除 per-frame `Task { await connection?.log(.debug, ...) }` 呼叫，改為累加計數器（`audioSentFrames`, `audioSentBytes`, `videoSentBytes`），避免 hot path Task spawn 風暴（音訊 ~50 Task/sec）
-2. `dispatch(.status)` 週期彙總一條 `"publish throughput"` 事件（`audioFrames`, `audioBytes`, `videoFrames`, `videoBytes`），而非每幀觸發
+1. `RTMPStream.append()` 移除 per-frame
+
+   ```swift
+   Task { await connection?.log(.debug, ...) }
+   ```
+
+   呼叫，改為累加計數器（`audioSentFrames`, `audioSentBytes`, `videoSentBytes`）
+
+   避免 hot path Task spawn 風暴（音訊 ~50 Task/sec）
+
+2. `dispatch(.status)` 週期彙總一條 `"publish throughput"`
+
+   事件（`audioFrames`, `audioBytes`, `videoFrames`, `videoBytes`），而非每幀觸發
+
 3. `RTMPConnection.log()` 加入 `minimumLogLevel` 過濾：等級低於閾值直接 return，不呼叫 `onLog?`
 4. Socket `onLog` 轉送同步過濾，避免 socket 層 trace 事件（每次 send/recv）也 spawn Task
 
@@ -282,16 +353,19 @@ var hasS2Packet: Bool {
 }
 ```
 
-`c2packet()` 被呼叫後會從 `inputBuffer` 移除 S0（1 byte）+ S1（1536 bytes）。移除後 `inputBuffer` 只剩下 S2 資料（最多 1536 bytes）。
+`c2packet()` 被呼叫後會從 `inputBuffer` 移除 S0（1 byte）+ S1（1536 bytes）。
+
+移除後 `inputBuffer` 只剩下 S2 資料（最多 1536 bytes）。
 
 代入公式：`1536 <= inputBuffer.count - 1537`
+
 - 要成立需要 `inputBuffer.count >= 3073`
 - 但此時 `inputBuffer.count` 最多只有 1536（僅 S2）
 - **結果永遠為 false**
 
 ### 影響
 
-```
+```swift
 Client recv() 收到 S0+S1+S2 (同一個 TCP packet)
   → listen(.versionSent): handshake.put(data) → hasS0S1Packet = true
   → parseS0S1() 讀取 S0+S1
@@ -334,9 +408,15 @@ var hasS2Packet: Bool {
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift:292-323`
 
-### 問題
+### 問題 - RTMP 伺服器與 E‑RTMP 擴充欄位問題
 
-SRS 等部分 RTMP 伺服器不支援 E-RTMP（Enhanced RTMP）的擴充欄位，收到 `connect` command 中的 `fourCcList`、`capsEx`、`videoFourCcInfoMap`、`audioFourCcInfoMap` 等欄位時會直接拒絕連線。
+部分 RTMP 伺服器（例如 SRS）不支援 E‑RTMP（Enhanced RTMP） 的擴充欄位。
+當伺服器收到 `connect` command 中以下欄位時，可能會直接拒絕連線：
+
+- `fourCcList`
+= `capsEx`
+= `videoFourCcInfoMap`
+- `audioFourCcInfoMap`
 
 SRS log 表現為 connect 成功後立即 `on_close`，無明確錯誤訊息。
 
@@ -363,10 +443,29 @@ RTMPConnection(
 
 ### 效果
 
-| 設定 | `fourCcList` | `videoFourCcInfoMap` | `audioFourCcInfoMap` | `capsEx` |
-| ------ |-------------|---------------------|---------------------| --------- |
-| `true`（預設） | `["hvc1","opus"]` | `canDecode\|canEncode` | `canEncode` | `0x01` |
-| `false` | `nil` | `nil` | `nil` | `0` |
+### 基本設定與編碼清單
+
+| 設定 | fourCcList |
+| ----------- | ------------------- |
+| `true`（預設） | `["hvc1","opus"]` |
+| `false` | `nil` |
+
+### 能力標記與擴充欄位
+
+| videoFourCcInfoMap | audioFourCcInfoMap | capsEx |
+| ------------------ | ----------- | -------- |
+| `canDecode`\|`canEncode` | `canEncode` | `0x01` |
+| `nil` | `nil` | `0` |
+
+### 用途說明（快速參考）
+
+| 欄位名稱            | 用途說明                                   |
+|---------------------|--------------------------------------------|
+| fourCcList          | 宣告支援的編解碼格式（例：HVC1、Opus）     |
+| videoFourCcInfoMap  | 視訊編解碼能力標記（可解碼/可編碼）        |
+| audioFourCcInfoMap  | 音訊編解碼能力標記（可編碼）               |
+| capsEx              | 擴充能力標記，用於額外功能宣告             |
+| 設定（true/false）  | 控制是否啟用 E‑RTMP 擴充欄位               |
 
 ### 何時需要關閉
 
@@ -376,7 +475,9 @@ RTMPConnection(
 
 ### 設計考量
 
-`useEnhancedRTMP` 只影響**初始預設值**。若需要個別微調，仍可直接傳入 `fourCcList`/`capsEx` 等參數，它們的優先級高於 `useEnhancedRTMP`：
+`useEnhancedRTMP` 只影響**初始預設值**。若需要個別微調
+
+仍可直接傳入 `fourCcList`/`capsEx` 等參數，它們的優先級高於 `useEnhancedRTMP`：
 
 ```swift
 // 關閉 E-RTMP 但只開 HEVC 編碼器協商
@@ -390,19 +491,23 @@ RTMPConnection(
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift:725`
 
-即使 `useEnhancedRTMP: false` 將 `capsEx` 設為 `0`，但原本的程式碼**仍會**將 `capsEx: 0` 寫入 connect command 的 AMF Object：
+即使 `useEnhancedRTMP: false` 將 `capsEx` 設為 `0`
+
+但原本的程式碼**仍會**將 `capsEx: 0` 寫入 connect command 的 AMF Object：
 
 ```swift
 commandObject["capsEx"] = capsEx  // capsEx = 0 時仍送出
 ```
 
 部分 SRS 版本遇到不認識的 `capsEx` 欄位時，即使值為 `0`，仍可能導致：
+
 1. AMF 解析異常 → SRS 無法辨識這個連線請求為有效的 connect command
 2. SRS 進入 `identify_client` 等待更多資料 → 30 秒後 timeout
 3. Client 端也因收不到 `_result`/`_error` 在 3 秒後 timeout
 
 SRS log 表現為：
-```
+
+```log
 recv identify message : read basic header : timeout 30000 ms
 ```
 
@@ -417,12 +522,31 @@ if 0 < capsEx {
 
 #### 驗證方式
 
+### 測試條件與結果
+
 | 測試條件 | SRS log 結果 | 連線 |
-| --------- |-------------| ------ |
+| ---------- | -------------- | ------ |
 | E-RTMP 開啟 + `capsEx: 1`（修正前） | `connect app, tcUrl=...` + 立即 `on_close` | ❌ |
-| E-RTMP 關閉 + `capsEx: 0` **仍送出**（修正前） | `timeout 30000 ms`，無 `connect app` log | ❌ |
+| E-RTMP 關閉 + `capsEx: 0` **仍送出**（修正前） | `timeout 30s`，無 `connect app` log | ❌ |
 | E-RTMP 關閉 + `capsEx` 不送出（修正後） | 待測試 | ❓ |
 | E-RTMP 完全關閉 `useEnhancedRTMP: false`（修正後） | 待測試 | ❓ |
+
+### 連線狀態
+
+| 測試條件 | 連線 |
+| ---------- | ------ |
+| E-RTMP 開啟 + `capsEx: 1`（修正前） | ❌ |
+| E-RTMP 關閉 + `capsEx: 0` **仍送出**（修正前） | ❌ |
+| E-RTMP 關閉 + `capsEx` 不送出（修正後） | ❓ |
+| E-RTMP 完全關閉 `useEnhancedRTMP: false`（修正後） | ❓ |
+
+### E-RTMP 用途說明（快速參考）
+
+| 欄位名稱 | 用途說明 |
+| ---------- | ---------- |
+| 測試條件 | 描述 E‑RTMP 開啟/關閉與 capsEx 狀態 |
+| SRS log 結果 | 伺服器端日誌顯示的反應 |
+| 連線 | 是否成功建立 RTMP 連線（❌=失敗，❓=待測試） |
 
 ---
 
@@ -437,11 +561,10 @@ if 0 < capsEx {
 
 ### API
 
-
 > [!TIP]
 > setOnLog裡內部呼叫 如果使用到是全局共用件之類的
-> 
-> 不是限於class裡的東西 不需要捕獲self 
+>
+> 不是限於class裡的東西 不需要捕獲self
 
 ```swift
 // event.level: .trace / .debug / .info / .warn / .error
@@ -517,6 +640,7 @@ let rev = kHaishinKitRevision  // "3481fce"
 ```
 
 CI 流程（`.github/workflows/build.yml`）會自動：
+
 1. `xcodebuild -resolvePackageDependencies` 解析最新相依套件
 2. 從 `Package.resolved` 提取 `revision` hash
 3. 寫入 `Constants.swift` 的 `kHaishinKitRevision`
@@ -530,11 +654,15 @@ CI 流程（`.github/workflows/build.yml`）會自動：
 
 ### 問題
 
-`getMessageHeader()` 中使用 `UInt32(data: data[a..<b]).bigEndian` 來讀取 3-byte 的 big-endian 整數（時間戳與訊息長度），但這個公式在 **little-endian 架構（所有 Apple 裝置）上完全錯誤**。
+`getMessageHeader()` 中使用 `UInt32(data: data[a..<b]).bigEndian`
+
+來讀取 3-byte 的 big-endian 整數（時間戳與訊息長度）
+
+但這個公式在 **little-endian 架構（所有 Apple 裝置）上完全錯誤**。
 
 ### 數學分析
 
-```
+```log
 Wire 3 bytes (big-endian):  [0x00, 0x01, 0x90]  → 實際值 = 0x190 = 400
 
 UInt32(data:) 在 LE 機器上：
@@ -552,13 +680,13 @@ UInt32(data:) 在 LE 機器上：
 ### 影響
 
 | 欄位 | Wire 上為 3 bytes BE | 被誤讀為 | 實際應為 | 倍率 |
-| ------ |---------------------| --------- |---------| ------ |
+| ------ | --------------------- | --------- | --------- | ------ |
 | `messageLength` | `[0x00,0x00,0x50]` (= 80) | 20480 | 80 | 256x |
 | `timestamp` | `[0x00,0x00,0x01]` (= 1ms) | 256 | 1 | 256x |
 
 ### 連鎖反應
 
-```
+```swift
 SRS 回應 889 bytes（含 _result + 控制訊息）
   → Type0 chunk header 讀取 messageLength = 實際值 × 256
     → 例如 80 bytes → 讀成 20480 bytes
@@ -575,7 +703,7 @@ SRS 回應 889 bytes（含 _result + 控制訊息）
 ### SRS 端與 Client 端 log 交叉比對
 
 | SRS log | Client log | 意義 |
-| --------- |-----------| ------ |
+| --------- | ----------- | ------ |
 | `simple handshake success` | `Socket recv size=3073` | 握手完成 |
 | `connect app, tcUrl=...` | `State: ackSent => handshakeDone` | Connect command 送出 |
 | `send_bytes=3962` (含回應) | `Socket recv size=16 + 873` | SRS 回應已收到 |
@@ -584,24 +712,36 @@ SRS 回應 889 bytes（含 _result + 控制訊息）
 
 ### 為什麼 `streamId=64` 和 `46` 會出現？
 
-因為 messageLength 被放大 256 倍後，payload 永遠無法讀完。buffer 內的資料被當成 chunk header 來解析，AMF payload 的二進位資料被誤認為 chunk type/streamId，產生了 stream 64、46 等不存在的串流 ID。
+因為 messageLength 被放大 256 倍後，payload 永遠無法讀完。
+
+buffer 內的資料被當成 chunk header 來解析
+
+AMF payload 的二進位資料被誤認為 chunk type/streamId，產生了 stream 64、46 等不存在的串流 ID。
 
 ### 修復
 
 ```swift
 // ❌ 錯誤（3-byte BE on LE machine）
 let rawTimestamp = UInt32(data: data[p..<p+3]).bigEndian
-messageHeader.messageLength = Int(Int32(data: data[p+3..<p+6]).bigEndian)
+messageHeader.messageLength =
+    Int(Int32(data: data[p+3..<p+6]).bigEndian)
 
 // ✅ 正確
-let rawTimestamp = UInt32(data[p]) << 16 | UInt32(data[p+1]) << 8 | UInt32(data[p+2])
-messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8 | Int32(data[p+5]))
+let rawTimestamp =
+    UInt32(data[p]) << 16 |
+    UInt32(data[p+1]) << 8  |
+    UInt32(data[p+2])
+
+messageHeader.messageLength =
+    Int(Int32(data[p+3]) << 16 |
+        Int32(data[p+4]) << 8  |
+        Int32(data[p+5]))
 ```
 
 ### 受影響的讀取點
 
 | 行號 | 欄位 | 位元組數 | Wire Endian | 修正前 |
-| ------ | ------ | --------- |------------| -------- |
+| ------ | ------ | --------- | ------------ | -------- |
 | 212, 220, 227 | timestamp | 3 | Big | ❌ `data[...].bigEndian` |
 | 215, 223 | messageLength | 3 | Big | ❌ `data[...].bigEndian` |
 | 239 | extended timestamp | 4 | Big | ✅ 4-byte 是對的 |
@@ -614,7 +754,7 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 ### 問題嚴重性
 
 | # | 問題 | 嚴重性 | 影響範圍 | 類別 |
-|---| ------ | -------- | ---------- | ------ |
+| --- | ------ | -------- | ---------- | ------ |
 | 0 | S2 封包檢測公式錯誤 | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
 | 🔥 1 | **Chunk 3-byte BE 讀取錯誤** | 🔴 致命 | **所有 RTMP 連線** | 協定層 |
 | 2 | VideoCodec.outputStream computed property | 🔴 高 | 所有 H.264/HEVC 串流 | 資料路徑 |
@@ -627,7 +767,7 @@ messageHeader.messageLength = Int(Int32(data[p+3]) << 16 | Int32(data[p+4]) << 8
 ### 修復狀態
 
 | # | 修復 | 檔案 |
-|---| ------ | ------ |
+| --- | ------ | ------ |
 | 0 | ✅ `inputBuffer.count - 1 - sigSize` → `inputBuffer.count` | `RTMPHandshake.swift` |
 | 🔥 1 | ✅ `UInt32(data:...).bigEndian` → 手動 shift | `RTMPChunk.swift` |
 | 2 | ✅ `@AsyncStreamedFlow` property wrapper | `VideoCodec.swift`, `AsyncStreamedFlow.swift` |
