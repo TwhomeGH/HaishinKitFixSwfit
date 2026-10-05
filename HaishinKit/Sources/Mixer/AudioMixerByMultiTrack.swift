@@ -101,6 +101,9 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     private var outputNode: OutputNode?
     // 累計混合輸出區塊數（AHealth 診斷用）。
     private var mixerOutputFrames = 0
+    // 最近一次 setup／render 失敗原因（診斷用）。錯誤原本會被 AudioCaptureUnit 吞掉，
+    // 這裡保留以便透過 AudioPipelineDiagnostics 顯示在 host 端日誌。
+    private var lastError: String?
     // 最近一次混合輸出的 per-channel RMS（AHealth 診斷用）。
     private var outputChannelRMS: [Float] = []
     // 診斷快照快取：由 queue 上的 append/mix 更新；讀取端只上鎖不排隊，
@@ -173,6 +176,8 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         let snapshot = AudioPipelineDiagnostics(
             tracks: tracks.values.sorted { $0.id < $1.id }.map { $0.diagnosticsSnapshot },
             mixerOutputFrames: mixerOutputFrames,
+            mixerReady: mixerNode != nil && outputNode != nil,
+            lastError: lastError,
             outputChannels: Int(outputFormat?.channelCount ?? 0),
             outputChannelRMS: outputChannelRMS
         )
@@ -193,6 +198,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         do {
             try setupAudioNodes()
         } catch {
+            lastError = "setup: \(error)"
             logger.error(error)
             delegate?.audioMixer(self, errorOccurred: .failedToMix(error: error))
         }
@@ -306,6 +312,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
                 sampleTime += Int64(numberOfFrames)
             }
         } catch {
+            lastError = "render: \(error)"
             delegate?.audioMixer(self, errorOccurred: .failedToMix(error: error))
         }
     }

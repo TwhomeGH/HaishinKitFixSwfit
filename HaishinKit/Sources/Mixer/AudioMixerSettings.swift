@@ -123,11 +123,15 @@ public struct AudioMixerSettings: Codable, Sendable {
         }
         let sampleRate = min(sampleRate == 0 ? format.sampleRate : sampleRate, Self.maximumSampleRate)
         let channelCount = channels == 0 ? min(format.channelCount, maximumNumberOfChannels) : channels
+        // 輸出格式一律採 interleaved。來源若是 non-interleaved（例如 ScreenCaptureKit 的
+        // float32 planar 音訊），沿用 `format.isInterleaved` 會推導出 non-interleaved 的
+        // 輸出格式，使 MultiChannelMixer／GenericOutput 在 initialize／render 階段失敗
+        // → mixer 完全不輸出（推流無聲）。混音結果不受 interleaving 影響。
         if let channelLayout = AVAudioUtil.makeChannelLayout(channelCount) {
             return .init(
                 commonFormat: Self.commonFormat,
                 sampleRate: sampleRate,
-                interleaved: format.isInterleaved,
+                interleaved: true,
                 channelLayout: channelLayout
             )
         }
@@ -135,7 +139,7 @@ public struct AudioMixerSettings: Codable, Sendable {
             commonFormat: Self.commonFormat,
             sampleRate: sampleRate,
             channels: min(channelCount, 2),
-            interleaved: format.isInterleaved
+            interleaved: true
         )
     }
 }

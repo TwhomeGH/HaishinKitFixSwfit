@@ -66,6 +66,13 @@ public struct AudioPipelineDiagnostics: Sendable {
     public let tracks: [Track]
     /// Number of mixed output blocks produced by the mixer.
     public let mixerOutputFrames: Int
+    /// Whether the mixer's audio nodes (mixerNode + outputNode) were created
+    /// successfully. `false` means `setupAudioNodes` failed and the mixer can
+    /// never render — the silent-audio signature to watch for on device.
+    public let mixerReady: Bool
+    /// Last setup/render error description, or `nil`. Surfaces errors that are
+    /// otherwise swallowed (AudioCaptureUnit.audioMixer(errorOccurred:) is a no-op).
+    public let lastError: String?
     /// Number of channels of the mixer output format (1 = mono, 2 = stereo).
     public let outputChannels: Int
     /// Per-output-channel RMS of the most recent mixed block (index = channel).
@@ -77,11 +84,15 @@ public struct AudioPipelineDiagnostics: Sendable {
     public init(
         tracks: [Track],
         mixerOutputFrames: Int,
+        mixerReady: Bool = false,
+        lastError: String? = nil,
         outputChannels: Int = 0,
         outputChannelRMS: [Float] = []
     ) {
         self.tracks = tracks
         self.mixerOutputFrames = mixerOutputFrames
+        self.mixerReady = mixerReady
+        self.lastError = lastError
         self.outputChannels = outputChannels
         self.outputChannelRMS = outputChannelRMS
     }
