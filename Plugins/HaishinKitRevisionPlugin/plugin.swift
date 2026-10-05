@@ -10,11 +10,16 @@ struct HaishinKitRevisionPlugin: BuildToolPlugin {
         let outputDirectory = context.pluginWorkDirectoryURL
         let outputFile = outputDirectory.appendingPathComponent("HaishinKitRevision.swift")
         return [
-            .prebuildCommand(
+            // 必須用 buildCommand（不能用 prebuildCommand）：SwiftPM 不允許
+            // prebuild command 執行「由原始碼建置的可執行檔」（會報
+            // "a prebuild command cannot use executables built from source"）。
+            // buildCommand 會在 RevisionTool 建置完成後才執行。
+            .buildCommand(
                 displayName: "Generate kHaishinKitRevision (\(target.name))",
                 executable: tool.url,
                 arguments: [context.package.directoryURL.path, outputFile.path],
-                outputFilesDirectory: outputDirectory
+                inputFiles: [],
+                outputFiles: [outputFile]
             )
         ]
     }
