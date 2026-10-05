@@ -208,10 +208,16 @@ final actor MoQTSocket {
             connected = true
             let (stream, continuation) = AsyncStream<Data>.makeStream()
             Task {
-                for await data in stream where connected {
-                    try await send(data)
-                    totalBytesOut += data.count
-                    queueBytesOut -= data.count
+                do {
+                    for await data in stream where connected {
+                        try await send(data)
+                        totalBytesOut += data.count
+                        queueBytesOut -= data.count
+                    }
+                } catch {
+                    // 明確處理錯誤，避免 Xcode 27 的 #NoUseUnstructuredThrowingTask
+                    // （未使用的 throwing Task 會靜默吞掉錯誤）。
+                    logger.error(error)
                 }
             }
             self.outputs = continuation

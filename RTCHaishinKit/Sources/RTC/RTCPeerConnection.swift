@@ -212,14 +212,18 @@ a=fmtp:98 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
         case let track as AudioStreamTrack:
             let config = RTCTrackConfiguration(mid: "0", streamId: msid, audioCodecSettings: track.settings)
             let id = try config.addTrack(connection, direction: .sendrecv)
+            // 在建構時就 throw（讓呼叫端看到），Task 內只做非 throwing 的 async 呼叫，
+            // 避免 Xcode 27 的 #NoUseUnstructuredThrowingTask（錯誤被靜默吞掉）。
+            let sendableTrack = try RTCSendableStreamTrack(id, id: track.id)
             Task {
-                await stream.addTrack(try RTCSendableStreamTrack(id, id: track.id))
+                await stream.addTrack(sendableTrack)
             }
         case let track as VideoStreamTrack:
             let config = RTCTrackConfiguration(mid: "1", streamId: msid, videoCodecSettings: track.settings)
             let id = try config.addTrack(connection, direction: .sendrecv)
+            let sendableTrack = try RTCSendableStreamTrack(id, id: track.id)
             Task {
-                await stream.addTrack(try RTCSendableStreamTrack(id, id: track.id))
+                await stream.addTrack(sendableTrack)
             }
         default:
             break
