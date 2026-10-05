@@ -4,6 +4,35 @@
 
 ---
 
+## 63. 新增 CHANGES.md 管理工具 change_log.py（網頁 GUI + CLI）
+
+**時間**：2026/10/05 21:37:01
+
+**檔案**：
+
+- `Tools/change_log.py`
+- `Tools/change_log.cmd`
+- `Tools/README.md`
+
+### 63a. 動機
+
+CHANGES.md 已 60+ 條、手改易出格式錯；需要可搜尋/新增/編輯/刪除的本機工具，且能在 Windows 上維護。
+
+### 63b. 實作
+
+- 零依賴 Python；解析 `## 編號.` 條目（圍籬 / HTML 註解感知）。
+- 自動取下一編號；可選 `**時間**`（預設當前系統時間）。
+- 自由小節自動接 `a / b / c`；多檔輸出「一行一檔」避免 MD013。
+- GUI：搜尋、檢視（含 GitHub alerts）、新增、編輯原始碼、刪除。
+- CLI：`serve` / `add` / `list` / `show`。
+- 存檔以獨立 `/api/lint` 非阻塞跑 markdownlint（修 MD032、報 MD018）。
+
+### 63c. 驗證
+
+Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms（原本同步 markdownlint 約 1.65s）。
+
+---
+
 ## 62. 測試審計：抽 MixClockAdvance 純決策、補 RTMPTimestamp 缺漏、刪除過時的 verify-ts
 
 **檔案**：`HaishinKit/Sources/Mixer/MixClockAdvance.swift`（新）、
