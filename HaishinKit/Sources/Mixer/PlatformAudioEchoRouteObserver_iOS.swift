@@ -2,7 +2,13 @@
 import AVFoundation
 import Foundation
 
-final class PlatformAudioEchoRouteObserver: AudioEchoRouteObserving {
+final class PlatformAudioEchoRouteObserver: AudioEchoRouteObserving, @unchecked Sendable {
+    /// NotificationCenter 的 observer closure 是 `@Sendable`，但 `handler` 不是
+    /// Sendable 型別；用它包一層，避免 Swift 6 的 #SendableClosureCaptures 警告。
+    private struct Box<Value>: @unchecked Sendable {
+        let value: Value
+    }
+
     private var observer: (any NSObjectProtocol)?
 
     var hasEchoPath: Bool {
@@ -25,6 +31,7 @@ final class PlatformAudioEchoRouteObserver: AudioEchoRouteObserving {
         guard observer == nil else {
             return
         }
+        let boxedHandler = Box(value: handler)
         observer = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: nil,
@@ -33,7 +40,7 @@ final class PlatformAudioEchoRouteObserver: AudioEchoRouteObserving {
             guard let self else {
                 return
             }
-            handler(self.hasEchoPath)
+            boxedHandler.value(self.hasEchoPath)
         }
     }
 
