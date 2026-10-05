@@ -72,6 +72,13 @@ _WARN_IGNORE = (
 def _ignored_warning(msg: str) -> bool:
     return any(pattern in msg for pattern in _WARN_IGNORE)
 
+
+# Simulator / os_log runtime lines start with an ISO-8601 timestamp, e.g.
+#   2026-10-05 15:15:01.715666+0000 xctest[15557:48340] [access] Created Error: ...
+# They often contain "error:"/"warning:" but are NOT build diagnostics, so skip
+# them before the error/warning classification.
+RUNTIME_LOG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
+
 TEST_START = re.compile(r"◇\s+Test\s+(.+?)\s+started")
 TEST_PASS = re.compile(r"[✔✓]\s+Test\s+(.+?)\s+passed")
 TEST_FAIL = re.compile(r"[✘✗]\s+Test\s+(.+?)\s+failed")
@@ -124,6 +131,9 @@ def parse(log_text: str):
             else:
                 testing_failed_block.append(line)
                 continue
+
+        if RUNTIME_LOG_RE.match(line):
+            continue
 
         m = LOC_RE.match(line)
         if m:
