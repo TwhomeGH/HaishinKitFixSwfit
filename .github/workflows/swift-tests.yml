@@ -469,8 +469,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          python3 .github/scripts/ci_test_summary.py "${result_dir}/macos-tests.log" \
-            --markdown "${result_dir}/ci-summary.md" --github-summary || true
+          python3 .github/scripts/ci_test_summary.py ".build/haishinkit-macos-test-results/macos-tests.log" \
+            --markdown ".build/haishinkit-macos-test-results/ci-summary.md" --github-summary || true
 
       - name: Summarize HaishinKit macOS failed suites
         if: always()
@@ -612,8 +612,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          python3 .github/scripts/ci_test_summary.py "${result_dir}/tsan-tests.log" \
-            --markdown "${result_dir}/ci-summary.md" --github-summary || true
+          python3 .github/scripts/ci_test_summary.py ".build/haishinkit-tsan-${{ matrix.platform }}/tsan-tests.log" \
+            --markdown ".build/haishinkit-tsan-${{ matrix.platform }}/ci-summary.md" --github-summary || true
 
       - name: Summarize Thread Sanitizer results
         if: always()
