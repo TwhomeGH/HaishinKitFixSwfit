@@ -79,4 +79,24 @@ import Testing
             presentationTime += 0.017
         }
     }
+
+    @Test func avCompensationIsNotSelfCancelled() throws {
+        // Mirrors `.cortexkit/verify-cts.swift`: with no reordering the wire DTS
+        // already carries +compensation, so the wire PTS reconstructed from
+        // `DTS + CTS` must stay shifted by compensation. The old buggy branch
+        // returned `CTS == -compensation`, which cancelled the shift
+        // (`wirePTS == sourcePTS`) — this guards against that regression.
+        let compensation: TimeInterval = 0.135
+        for sourcePTS in stride(from: 0.0, through: 1.0, by: 0.05) {
+            let wireDTS = sourcePTS + compensation
+            let cts = RTMPVideoCompositionTime.offset(
+                hasValidDecodeTimeStamp: false,
+                presentationTime: sourcePTS,
+                decodeTime: wireDTS,
+                ctsOffset: ctsOffset)
+            let wirePTS = wireDTS + Double(cts) / 1000
+            #expect(abs(wirePTS - (sourcePTS + compensation)) < 1e-9,
+                    "sourcePTS=\(sourcePTS) wirePTS=\(wirePTS)")
+        }
+    }
 }
