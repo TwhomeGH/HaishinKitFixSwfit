@@ -38,3 +38,4 @@ SRTHaishinKit/Vendor/SRT/Includes/
 !.cortexkit/verify-*.swift
 __pycache__/
 *.pyc
+*.bak
