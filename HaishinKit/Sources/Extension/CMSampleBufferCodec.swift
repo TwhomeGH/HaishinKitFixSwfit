@@ -144,11 +144,22 @@ public enum CMSampleBufferCodec {
     }
 
     private static func markNotSync(_ sampleBuffer: CMSampleBuffer) {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true) as? NSMutableArray,
-              let first = attachments.firstObject as? NSMutableDictionary else {
+        // `CMSampleBufferGetSampleAttachmentsArray` returns a `CFArray`; the old
+        // `as? NSMutableArray` cast no longer bridges (Xcode 27 warns it "always
+        // fails", which also silently skipped the write). Use CoreFoundation to
+        // mutate the first attachments dictionary — always present when
+        // createIfNecessary is true.
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
+              CFArrayGetCount(attachments) > 0,
+              let raw = CFArrayGetValueAtIndex(attachments, 0) else {
             return
         }
-        first[kCMSampleAttachmentKey_NotSync] = kCFBooleanTrue
+        let first = unsafeBitCast(raw, to: CFMutableDictionary.self)
+        CFDictionarySetValue(
+            first,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+        )
     }
 
     // MARK: Format description

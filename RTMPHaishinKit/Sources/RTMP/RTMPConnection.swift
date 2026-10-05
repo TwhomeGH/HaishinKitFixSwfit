@@ -534,7 +534,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         startOutputConsumer(socket)
         do {
             let result: RTMPResponse = try await withCheckedThrowingContinuation { continutation in
-                Task {
+                // '[self]' 明示捕獲，避免 Xcode 27 的 #ImplicitStrongCapture 警告
+                // （外層隱式強捕獲 self、內層 timeout Task 弱捕獲，兩者不一致）。
+                Task { [self] in
                     do {
                         log(.info, "TCP connecting", detail: "\(host):\(uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))", always: true)
                         try await socket.connect(host, port: uri.port ?? (secure ? Self.defaultSecurePort : Self.defaultPort))
