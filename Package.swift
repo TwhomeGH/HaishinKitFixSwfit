@@ -43,11 +43,21 @@ let package = Package(
             url: "https://github.com/HaishinKit/libdatachannel-xcframework/releases/download/v0.24.0/libdatachannel.xcframework.zip",
             checksum: "52163eed2c9d652d913b20d1fd5a1925c5982b1dcdf335fd916c72ffa385bb26"
         ),
+        .executableTarget(
+            name: "RevisionTool",
+            path: "Plugins/RevisionTool"
+        ),
+        .plugin(
+            name: "HaishinKitRevisionPlugin",
+            capability: .buildTool(),
+            dependencies: ["RevisionTool"]
+        ),
         .target(
             name: "HaishinKit",
             dependencies: [],
             path: "HaishinKit/Sources",
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            plugins: [.plugin(name: "HaishinKitRevisionPlugin")]
         ),
         .target(
             name: "RTMPHaishinKit",
