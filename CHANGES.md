@@ -245,9 +245,9 @@ command 的 `_result` **完全沒有逾時**——server 若接受 TCP 卻卡住
 送 RTMP User Control PingRequest（保留 NAT 路徑）。收到 PongResponse →
 `pongSupported = true`（正向存活訊號）；送出 ping 後 `keepAlivePongTimeout`（預設 5s）
 內無 pong → force close socket 走重連。連續 `maxUnansweredPings`（預設 3）次無 pong →
-判定 server 不回應 ping，**停用 pong 死線判定但持續送 ping**（不誤殺）。與 CHANGES
-#55c 的 queue-based watchdog 互補：idle 時佇列為空、watchdog 不計，改由 pong 判定；
-active stall 仍由 watchdog 判定。
+判定 server 不回應 ping，**停用 pong 死線判定但持續送 ping**（不誤殺）。與
+CHANGES #55c 的 queue-based watchdog 互補：idle 時佇列為空、watchdog 不計，
+改由 pong 判定；active stall 仍由 watchdog 判定。
 
 ### 56c. onLog `always` 通道（production `.warn` 仍拿得到斷線劇本）
 
@@ -287,6 +287,7 @@ guard、send drop、publish 啟停）。per-chunk/per-frame 的 trace/debug 仍�
 **問題**：`adjustBitrate` 在自己的計數器讀寫之間夾著 `await`（`stream.videoSettings`
 /`audioSettings`/`setVideoSettings`）。`stream` 是另一個 actor，這些 await 是
 suspension point，actor 因此可重入——下一個事件能在上一個事件寫回計數器前進來：
+
 - `.publishInsufficientBWOccured` 的 `guard insufficientBWCounts == 0` 在
   `await stream.videoSettings` **之前**，而計數器要到寫入後才更新 → 兩個事件可同時
   通過 guard，同一格事件砍兩次 25%（合計 ~44%）。
@@ -334,6 +335,7 @@ force close socket → 重連，健康鏈路被斷開。
 判定壅塞，高碼率卻在不到 0.5 秒就被判，策略行為不一致。
 
 **修正**：
+
 - 門檻由 `maxQueueBytesThreshold`（bytes）改為 `maxQueueBacklogSeconds`（秒，預設
   **0.75**）。
 - 每次採樣以 `queueBytesOut / max(currentBytesOutPerSecond, 1)` 計算 backlog 秒數，
@@ -357,6 +359,7 @@ force close socket → 重連，健康鏈路被斷開。
 `bitRate change from 1100000 to 2200000` 後就不再上升的原因。
 
 **修正**：
+
 - 拆開兩個語意：`restartBitRate`（僅供 `.reset`）與 `provenCeiling`（回升天花板）。
 - `.status` 每次成功撐過一個健康窗口就把 `provenCeiling` 提升到當前值，天花板 =
   `provenCeiling + max/5`。目標因此能逐格自我證明爬回 max，同時仍維持「一次一步」、
@@ -391,6 +394,7 @@ force close socket → 重連，健康鏈路被斷開。
 這些是唯一能看到「幀數正常、但 1024-sample 封包內樣本被丟」的訊號。
 
 **修正**：
+
 - `AudioRingBuffer.align()` 加死區 `alignDeadband`（256 samples）：門檻內視為量測
   抖動不修正，避免來源抖動造成每幀微丟/微補（細碎斷音）。
 - `AudioRingBuffer.append()` 的 PTS gap 改用 `appendZeros()` 把 0 樣本寫進尾端
@@ -433,6 +437,7 @@ force close socket → 重連，健康鏈路被斷開。
 gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯估或累積偏移。
 
 **修正**：
+
 - `preferredDelta` 仍作為主要 cadence，保留 AAC / Opus 穩定封包 duration。
 - 每包比較 raw source PTS 與目前 wire playhead 的 drift；小於 80ms 視為 jitter
   忽略，超過門檻時每包最多以 5ms 受控校正，避免 audio wire timeline 與來源
@@ -514,6 +519,7 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
 `Docs/CHANGELOG_RTMP_SOCKET.md`
 
 **診斷**：拉取 `http://localhost:882/live/livestream.flv` 約 8 秒片段後解析 FLV tag：
+
 - audio payload 為 legacy AAC（sequence header `af001210`、raw packet `af01`），
   不是 E-RTMP audio exheader。
 - audio tag timestamp 單調，沒有倒退、沒有 0 delta、沒有 >200ms 大跳。
@@ -528,6 +534,7 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
 RTMP/FLV wire timestamp。
 
 **修正**：
+
 - AAC / HE-AAC / HE-AAC v2 / Opus 先使用 ASBD `mFramesPerPacket`，缺失時退回
   codec 標稱值（AAC 1024、Opus 960）。
 - 只有未知 codec 才優先使用 packet description 的 `mVariableFramesInPacket`。
@@ -543,6 +550,7 @@ payload 被 `20/36/37ms` wire cadence 排程成斷續音訊或累積 A/V 偏差�
 `Docs/MEDIA_MIXER.md`、`Docs/RTMP_RECOVERY_LIFECYCLE.md`
 
 **診斷**：
+
 - `MediaMixer` 監聽 `AVAudioSession.routeChangeNotification` 時，對有效 route
   reason 直接執行 `audioIO.reset()`。這只恢復 capture/mixer 輸入側，沒有保證
   RTMP outgoing audio codec output stream 與 publish consumer 被重接。
@@ -552,6 +560,7 @@ payload 被 `20/36/37ms` wire cadence 排程成斷續音訊或累積 A/V 偏差�
   current/previous route 與 `.shouldResume` 狀態。
 
 **修正**：
+
 - `MediaMixer` 新增 `isAudioSessionInterrupted` 與
   `needsAudioResetAfterInterruption`，interruption 期間收到
   `.oldDeviceUnavailable`、`.newDeviceAvailable`、`.routeConfigurationChange`
@@ -589,6 +598,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
 `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **診斷**：
+
 - 上層在 `broadcastResumed()` 後用「讀取目前 `videoSettings` 再原樣
   `setVideoSettings(settings)`」嘗試重建 encoder，但底層只有在 settings diff
   需要 invalidate session 時才會重建；相同 settings 不會重建 VT session。
@@ -596,6 +606,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
   沒有同步重接 publish consumer，可能形成「encoder 已重啟但沒人收輸出」。
 
 **修正**：
+
 - `StreamConvertible` 新增 `restartVideoEncoding(reason:)` 與
   `restartAudioEncoding(reason:)`，讓上層以明確語意做 pause/resume recovery，
   不再依賴 settings setter 的副作用。
@@ -625,6 +636,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
 `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **診斷**：
+
 - `RTMPSocket` 的 trace/debug log 先建立 `Task` 進 `RTMPConnection` actor 後才
   檢查 `minimumLogLevel`；即使預設 `.info` 會丟掉 trace/debug，hot path 仍已
   付出 Task allocation / actor hop 成本。
@@ -634,6 +646,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
   socket/backpressure 失效或 actor 暫時追不上時，encoded RTMP message 仍可能堆積。
 
 **修正**：
+
 - socket log forwarding 在建立 Task 前先用 captured `minimumLogLevel` 過濾，
   被丟棄的 trace/debug 不再產生 Task。
 - `HaishinKitLogger` 新增 token-based `installLogHandler` /
@@ -657,6 +670,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **診斷**：拉取 live HTTP-FLV（`/live/livestream.flv`）解析 tag 後確認：
+
 - video tag timestamp delta 正常，主要為 `16/17/20ms`，實際約 50~60fps
 - FLV 內沒有 `onMetaData` / `framerate` script tag
 
@@ -671,6 +685,7 @@ server 丟棄；同時 metadata 建構太早，video format 尚未成熟時可�
 width/height/framerate。
 
 **修正**：
+
 - `onMetaData` 改為等 `publishStart` 回應後才送，避免 publish 前資料被 server 吃掉
 - 第一筆 metadata timestamp 固定為 `0`
 - 若 publish 成功時 video metadata 尚不完整，第一個 encoded video frame 到達時，
@@ -694,6 +709,7 @@ width/height/framerate。
 `.invalidState`，用戶看到「publish: failed with invalidState」但看不到真正原因。
 
 **修正**：
+
 - `RTMPStream.Error` 新增 `.connectionLost(Swift.Error?)`，攜帶底層錯誤
 - `RTMPSocket` 新增 `lastRecvError` 屬性，記錄最后一次 recv error
 - `RTMPStream.deleteStream(underlyingError:)` 接受底層錯誤，拋出 `.connectionLost(error)`
@@ -701,7 +717,7 @@ width/height/framerate。
 - `RTMPConnection.close()` 將 `socket.lastRecvError` 傳給 `deleteStream()`
 - `performConnect` 的 catch block 新增 log 記錄 recv loop 結束的真正錯誤
 
-**效果**：用戶現在看到 `publish: failed with connectionLost(Posix error 96: ...)` 
+**效果**：用戶現在看到 `publish: failed with connectionLost(Posix error 96: ...)`
 而非 `invalidState`，可直接定位底層網路問題。
 
 ---
@@ -712,6 +728,7 @@ width/height/framerate。
 
 **診斷**：當 socket recv 結束自動觸發 `close()` → reconnect 時，`deleteStream()` 被
 呼叫但**不清理 `self.continuation`**。導致：
+
 1. 第一次 publish 的 `withCheckedThrowingContinuation` 永遠掛著（task 洩漏）
 2. 重連後第二次 publish 呼叫時，`self.continuation?.resume(throwing: Error.invalidState)`
    試圖清理舊 continuation → 產生 `invalidState` 錯誤
@@ -720,7 +737,8 @@ width/height/framerate。
 **徵兆**：RTMP log 顯示 `publish: failed with invalidState` + 重連循環
 
 **修正**：`deleteStream()` 在 `stopPublishTasks()` 後增加 `continuation?.resume(throwing:)`
-+ `continuation = nil`，確保 pending 的 `withCheckedThrowingContinuation` 正常結束。
+
+- `continuation = nil`，確保 pending 的 `withCheckedThrowingContinuation` 正常結束。
 
 **效果**：重連流程中 `resumePublishing()` → `publish()` 可正常建立新的 continuation，
 不再因舊 continuation 殘留而 `invalidState`。
@@ -755,6 +773,7 @@ source-time cadence → 斷續音。
 沒聲音」。
 
 **修正**：
+
 - 啟動後前 3 個 `.status`（~3s）量測 `avOffset`，取中位數，設
   `avOffsetCompensation = -median`
 - video append 時對幀 PTS 加補償（`CMTimeAdd`），讓 video wire 一次向前跳動
@@ -784,8 +803,8 @@ video+audio 兩個 codec），若重入可能重複建 publish tasks、或丟幀
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **動機**：`NetworkMonitor` 每 1s 發 `.status`，RTMPStream 每 1s 印一筆
-`publish throughput`（含 avOffset/速率）。在熱受限裝置上，每秒 log（尤其經
-#39 轉送到伺服器）增加發熱/CPU 與伺服器流量。
+`publish throughput`（含 avOffset/速率）。在熱受限裝置上，每秒 log（尤其經 #39
+轉送到伺服器）增加發熱/CPU 與伺服器流量。
 
 **修正**：`.status` 處理內節流——每 10 個 status（≈10s）才印一筆。計數器在
 每次 status 結尾重置，印的是最後 1 秒快照，仍足以監測 avOffset 是否漂移。
@@ -802,6 +821,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 自設 handler 會互相覆蓋。
 
 **修正**：
+
 - `logger` 改為 `public`（`nonisolated(unsafe) public var`）
 - `HaishinKitLogger` 新增**多 handler 並存**：`addLogHandler` / `removeLogHandler`
   （thread-safe 列表），與主 `onLog` 插槽並存、互不覆蓋
@@ -811,6 +831,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 - 新增 `LogLevel → RTMPLogLevel` 對應
 
 **使用方式**：
+
 - **主要**：`connection.setOnLog`（單一插槽，未改變）——connect 後 framework
   內部所有 `logger.*` 輸出都會被轉送進來：
 
@@ -819,6 +840,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
       // 送你的伺服器（sendlog）
   }
   ```
+
 - **額外（有需要才用）**：`logger.addLogHandler`——不依賴 connection 時序，
   直接收 HaishinKit logger 日誌（例如 mixer 比 connection 早啟動時要收啟動期
   的 track 格式日誌），與 connection 轉送並存：
@@ -842,6 +864,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 回音可消，AEC 純粹浪費 CPU 且徒增 artifacts 風險。
 
 **修正**：
+
 - `AudioMixerByMultiTrack` 監聽 `AVAudioSession.routeChangeNotification`
 - `routeHasEchoPath()`：耳機（`.headphones`/`.headsetMic`）、聽筒（`.builtInReceiver`）、
   藍牙耳機（`.bluetoothHFP`/`.bluetoothA2DP`）→ 無回音 → **自動停用 AEC**
@@ -863,6 +886,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 的相關性更高。
 
 **修正**：
+
 - `updateStep` 0.2 → 0.05（保守步長，大幅降低獵振）
 - 新增 `maxTapStep = 0.02`：單次單 tap 更新幅度上限——即便雙講偵測漏判、
   濾波器誤追人聲，也壓住單次跳動，不會造成可聽爆音
@@ -877,6 +901,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **診斷**：
+
 - 實際 stream（app 已跑 current HEAD）audio wire delta 出現 `20/20/37ms`（mean ~26ms），
   正確應為 AAC 48k 的 `21/21/22ms`。ffprobe 抓 live FLV 為 ground truth；
   mpegts.js 每 ~360ms 偵測到 audio-ahead gap、插 silence → 斷續音 + 累積 A/V 錯位
@@ -886,32 +911,52 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
   `RTMPTimestamp.update` 的 `preferredDelta` 為 nil → wire 退回 source-time cadence
 
 **修正**：
+
 - `packetDuration` **永不回傳 nil**：packet description → ASBD mFramesPerPacket →
   codec 標稱幀長（AAC 1024 / Opus 960）三層 fallback，compressed audio 的 wire 永遠
   依封包 duration 前進、不再追隨來源時間節奏
 - 呼叫端：`packetDuration` 異常（僅 sampleRate <= 0）時記錄一次 warn，可診斷
 
 **效果**：
+
 - audio wire 穩定為 21/21/22ms，斷續音與累積 A/V 錯位消除
 
 ---
 
 ## 34. 新增雙軌物理回音消除（簡易 NLMS AEC）
 
-**檔案**: `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`（新增）, `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`, `HaishinKit/Sources/Mixer/AudioMixerSettings.swift`, `Examples/iOS/Screencast/SampleHandler.swift`
+**檔案**:
+
+- `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`（新增）,
+- `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`
+- `HaishinKit/Sources/Mixer/AudioMixerSettings.swift`
+- `Examples/iOS/Screencast/SampleHandler.swift`
 
 **診斷**：
+
 - 跨軌 PTS 對齊（第 33 條）解決處理層回音，但**喇叭外放被 mic 收音**的物理回音仍讓同一段聲音出現兩次
 - AEC 兩大前提已滿足：reference 訊號可用（App 軌就是被收音的原聲）、兩軌時間已對齊
 
 **修正**：
-- 新增 `AudioEchoCanceler`：NLMS 自適應濾波器（1024 tap ≈ 21ms @48k），以 App 軌為 reference、mic 為 target，`ŷ[n] = Σ w[k]·ref[n-k]` 相減後輸出乾淨人聲；雙講偵測（`micPower > 2×refPower`）凍結更新防發散
+
+- 新增 `AudioEchoCanceler`：NLMS 自適應濾波器（1024 tap ≈ 21ms @48k）
+- 以 App 軌為 reference、mic 為 target，`ŷ[n] = Σ w[k]·ref[n-k]`
+
+  相減後輸出乾淨人聲；雙講偵測（`micPower > 2×refPower`）凍結更新防發散
+
 - `AudioMixerByMultiTrack`：每 channel 一個 canceler，reference 逐幀餵入、mic 幀進混音 buffer 前先消除（serial queue 上，非執行緒安全）
-- `AudioMixerSettings`：新增 `isEchoCancellationEnabled`（預設 false）與 `echoCancellationReferenceTrack`（必填，指向 app 音訊軌；預設 `UInt8.max` = 未設定 → AEC 停用）。**AEC target（mic）自動取「非 reference 的軌」，與 mainTrack 完全脫鉤**——修正舊設計缺陷（mainTrack 若是 app 軌會把 app 誤當消除目標）。自訂 Codable 向後相容（decodeIfPresent）
+- `AudioMixerSettings`：新增 `isEchoCancellationEnabled`（預設 false）與 `echoCancellationReferenceTrack`（必填，指向 app 音訊軌
+- 預設 `UInt8.max` = 未設定 → AEC 停用）
+- **AEC target（mic）自動取「非 reference 的軌」，與 mainTrack 完全脫鉤**
+- 修正舊設計缺陷（mainTrack 若是 app 軌會把 app 誤當消除目標）
+- 自訂 Codable 向後相容（decodeIfPresent）
 - `SampleHandler`：廣播啟動時啟用（此 app 接線 app→track 1、mic→track 0，reference 顯式 = 1）
-- `AudioMixerByMultiTrack`：**混音時鐘 fallback**——main track 靜默（落後或從未輸出）時，其他軌的輸出接手推進時間軸，mix 不再停滯（例如 main=app 而 app 沒有播放聲音時 mic 仍持續輸出）；正常情形仍由 main track 驅動（避免其他軌搶先觸發造成內容被 align 丟棄）
+- `AudioMixerByMultiTrack`：**混音時鐘 fallback**——main track 靜默（落後或從未輸出）時，其他軌的輸出接手推進時間軸，mix 不再停滯
+- （例如 main=app 而 app 沒有播放聲音時 mic 仍持續輸出）
+- 正常情形仍由 main track 驅動（避免其他軌搶先觸發造成內容被 align 丟棄）
 
 **效果**：
+
 - 合成 echo path（延遲 50 samples、增益 0.5）實測：收斂後回音衰減約 18dB、雙講人聲保留、雙講後濾波器不發散（`.cortexkit/verify-aec.swift` 3 情境全過）
 - 為**衰減**非完全消除；戴耳機則無此問題
 
@@ -921,21 +966,36 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 
 ## 33. 修正 ReplayKit 多軌音訊跨軌對齊（回音 / 撕裂）
 
-**檔案**: `HaishinKit/Sources/Mixer/AudioRingBuffer.swift`, `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`, `Examples/iOS/Screencast/SampleHandler.swift`, `HaishinKit/Tests/Mixer/AudioRingBufferTests.swift`
+**檔案**:
+
+- `HaishinKit/Sources/Mixer/AudioRingBuffer.swift`
+- `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`
+- `Examples/iOS/Screencast/SampleHandler.swift`
+- `HaishinKit/Tests/Mixer/AudioRingBufferTests.swift`
 
 **診斷**：
+
 - ReplayKit 廣播同時推流 `.appAudio`（track 1）與 `.audioMic`（track 0），下游出現回音、撕裂（梳狀濾波）與偶發斷音
 - 來源端兩軌**共用同一來源時鐘**（host-time PTS），`when.sampleTime` 本質上落在同一條輸出樣本軸上——「時間戳應該一致」的前提正確
-- 混音端是**先到先混**：`AudioRingBuffer` append 把來源 PTS 算完 gap 後就丟棄（純 FIFO），`AudioMixerByMultiTrack.render` 依抵達順序消耗各軌，兩軌的起始相位差與動態漂移以錯誤的相對位置混入 → 相關內容（mic 收到外放）即回音
+- 混音端是**先到先混**：`AudioRingBuffer` append 把來源 PTS 算完 gap 後就丟棄（純 FIFO）
+- `AudioMixerByMultiTrack.render` 依抵達順序消耗各軌，兩軌的起始相位差與動態漂移以錯誤的相對位置混入 → 相關內容（mic 收到外放）即回音
 - 另：`SampleHandler` 的 `isAppendingAudioMic/App` guard 在 actor 忙碌時靜默丟音訊幀，mic/app 非相關性掉幀在混音造成 silence 缺口（撕裂）
 
 **修正**：
-- `AudioRingBuffer` 新增 `align(to:)`：以 main track 的 sampleTime 為基準把消耗前端對齊到正確位置軸——前端早於混音位置 → 丟棄過期樣本（消除相位差回音）；晚於 → 前方補 silence。對齊點 = `sampleTime - counts`（含 pending skip），持鎖運算，trace 日誌只在調整 ≥ 4096 samples 時記錄
+
+- `AudioRingBuffer` 新增 `align(to:)`：以 main track 的 sampleTime 為基準把消耗前端對齊到正確位置軸——前端早於混音位置 → 丟棄過期樣本（消除相位差回音）
+
+  晚於 → 前方補 silence。對齊點 = `sampleTime - counts`（含 pending skip），持鎖運算，trace 日誌只在調整 ≥ 4096 samples 時記錄
+
 - `AudioMixerByMultiTrack.render()`：非 main track render 前 `align(to: sampleTime)`；main track 是時鐘本身，不可對齊
-- `SampleHandler`：移除 `isAppendingAudioMic/App` guard 與旗標（保留 `dataReadiness == .ready`）。audio append 在 mixer 自己的 serial queue 上處理，排隊 append（保留 PTS）比丟幀正確；`isAppendingVideo` 保留
+- `SampleHandler`：移除 `isAppendingAudioMic/App` guard 與旗標（保留 `dataReadiness == .ready`）
+  
+  audio append 在 mixer 自己的 serial queue 上處理，排隊 append（保留 PTS）比丟幀正確；`isAppendingVideo` 保留
+
 - 驗證：`.cortexkit/verify-align.swift`（純整數鏡像，7 情境全過）+ `AudioRingBufferTests` 新增 4 個 align 單元測試
 
 **效果**：
+
 - 兩軌混音以來源 PTS 對齊（來源 PTS 不再被丟棄），起始相位差與積壓不再混入錯誤位置
 - 回音/撕裂消除；actor 忙碌時音訊改為排隊而非靜默丟幀，不再有非相關性 silence 缺口
 - 混音時鐘維持連續式（main 停滯時兩軌保持鎖定）；處理層回音已解，物理回音（喇叭外放被 mic 收音）仍須 AEC/耳機
@@ -949,11 +1009,13 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`, `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`
 
 **診斷**：
+
 - SRS 推流診斷頁顯示 AAC payload 本身合規：sequence header 為 `AF 00 12 10`（AAC-LC / 44.1k / stereo），raw packet 為 `AF 01`
 - 但 FLV audio tag timestamp 間距出現 `20ms` 與 `36/37ms` 交錯
 - 44.1k AAC 每包 1024 samples 的 media duration 應約 `23.22ms`，因此異常集中在 RTMP/FLV timestamp cadence，而非 AAC frame bytes
 
 **修正**：
+
 - `RTMPTimestamp.update` 新增 `preferredDelta`，讓 compressed audio 可用「該包音訊實際代表的 media duration」推進 wire timestamp
 - `RTMPStream` audio raw packet 發送改用 `AVAudioCompressedBuffer.packetDuration`
   - 優先讀 packet description 的 `mVariableFramesInPacket`
@@ -964,6 +1026,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 - 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC 仍輸出約 `23/23/23/23/24ms` 的 RTMP delta
 
 **效果**：
+
 - 不改 AAC payload、不改 sequence header
 - FLV/RTMP audio timestamp 依壓縮音訊 media duration 單調平滑前進
 - 診斷頁 audio 間距應由 `20/36/37ms` 改為接近 `23/23/23/23/24ms`，降低播放器將合法 AAC 誤排程成斷續音訊的機率
@@ -975,6 +1038,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 **檔案**: `Sources/Codec/VTSessionOptionKey.swift` `Sources/Codec/VideoCodecSettings.swift`
 
 ### Availability 修正
+
 - `kVTCompressionPropertyKey_VariableBitRate` 的 `@available` 從 **iOS 26.0** 下修至 **iOS 13.0**
 - 同步修正 `VideoCodecSettings.BitRateMode.variable` 的 availability
 
@@ -982,13 +1046,17 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 
 ### Bug 修復：`VariableBitRate` 屬性值型別錯誤
 
-**問題**：`makeOptions()` 與 `apply()` 將 `bitRate`（整數）直接傳入 `kVTCompressionPropertyKey_VariableBitRate`。但此屬性是 `CFBoolean` 開關（enable/disable），應傳入 `kCFBooleanTrue` 而非數值。
+**問題**：`makeOptions()` 與 `apply()` 將 `bitRate`（整數）直接傳入 `kVTCompressionPropertyKey_VariableBitRate`。
+
+但此屬性是 `CFBoolean` 開關（enable/disable），應傳入 `kCFBooleanTrue` 而非數值。
 
 後果：
+
 - `.variable` 模式下 `kVTCompressionPropertyKey_AverageBitRate` 從未被設定，encoder 沒有目標碼率
 - 即使 VBV 參數正確，VBR 也無法正常運作
 
 **修復**：
+
 - `makeOptions()` 與 `apply()` 中，`.variable` 模式改以 `.averageBitRate` key 傳入 `bitRate` 數值（作為目標碼率）
 - `.variable` 模式額外插入 `VariableBitRate = kCFBooleanTrue` 啟用 VBR
 
@@ -1027,7 +1095,9 @@ options.insert(.init(key: .variableBitRate, value: kCFBooleanTrue))
 
 #### 原因
 
-VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏 `dataRateLimits`（軟上限），這些大 frame 會塞爆 RTMP output queue，觸發 `publishInsufficientBWOccured`，導致 bitrate 死亡螺旋。`dataRateLimits` 提供 1.5× 軟上限約束，在**所有 iOS 版本**上防止 encoder 暴衝。
+VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏 `dataRateLimits`（軟上限），這些大 frame 會塞爆 RTMP output queue
+
+觸發 `publishInsufficientBWOccured`，導致 bitrate 死亡螺旋。`dataRateLimits` 提供 1.5× 軟上限約束，在**所有 iOS 版本**上防止 encoder 暴衝。
 
 #### 生效條件
 
@@ -1044,7 +1114,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 新增以下 VideoToolbox 屬性支援：
 
 | 屬性 | 對應 VT Key | iOS Availability |
-|---|---|---|
+| --- | --- | --- |
 | `vbvMaxBitRate` | `kVTCompressionPropertyKey_VBVMaxBitRate` | iOS 26.0+ |
 | `vbvBufferDuration` | `kVTCompressionPropertyKey_VBVBufferDuration` | iOS 26.0+ |
 | `vbvInitialDelayPercentage` | `kVTCompressionPropertyKey_VBVInitialDelayPercentage` | iOS 26.0+ |
@@ -1089,15 +1159,19 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ### 4.5 移除 zeroBytesOutPerSecondCounts 與 frameInterval 干預
 
-**問題**：`publishInsufficientBWOccured` 路徑中，`zeroBytesOutPerSecondCounts` 只增不減，用來逐步降低 frameInterval（30fps → 10fps → 5fps 鋸齒狀循環）。這會讓 encoder 的 frameInterval 突然跳變，導致輸出幀率不穩定、PTS 抖動，表現為畫面頓挫（PPT）。
+**問題**：`publishInsufficientBWOccured` 路徑中，`zeroBytesOutPerSecondCounts` 只增不減，用來逐步降低 frameInterval（30fps → 10fps → 5fps 鋸齒狀循環）
+
+這會讓 encoder 的 frameInterval 突然跳變，導致輸出幀率不穩定、PTS 抖動，表現為畫面頓挫（PPT）。
 
 **修正**：
+
 - 移除 `zeroBytesOutPerSecondCounts` 屬性與所有引用
 - 移除 `publishInsufficientBWOccured` 中對 `frameInterval` 的全部寫入
 - 移除除法遞減 `Int(...) / (zeroBytesOutPerSecondCounts + 1)`，改為直接使用 raw throughput
 - 策略現在只調整 `bitRate`，不干預 encoder 幀間隔
 
 **效果**：
+
 - 消除因 frameInterval 跳變造成的幀率抖動
 - bitrate 計算不再受不準確的計數器干擾
 - 單一關注點：ABR 只負責碼率，幀率控制回歸 encoder 自主決策
@@ -1142,7 +1216,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 ## 改動檔案總覽
 
 | 檔案 | 修改類型 |
-|---|---|
+| --- | --- |
 | `Sources/Codec/VTSessionOptionKey.swift` | VBR availability 修正 + 新增 VBV/EstimatedBytes keys |
 | `Sources/Codec/VideoCodecSettings.swift` | VBR/Quality availability + 新屬性 + makeOptions/apply 擴充 |
 | `Sources/Stream/StreamBitRateStrategy.swift` | ABR 演算法重寫 |
@@ -1161,9 +1235,12 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 **檔案**: `Sources/RTMP/RTMPMessage.swift`
 
-`RTMPUserControlMessage.init` 原本直接取 `header.payload[1]` 和 `payload[2..<count]` 不做長度檢查。收到少於 6 bytes（2-byte event + 4-byte value）的 malformed 訊息時，Swift bounds check 直接 SIGTRAP，crash 整個 process。
+`RTMPUserControlMessage.init` 原本直接取 `header.payload[1]` 和 `payload[2..<count]` 不做長度檢查。
+
+收到少於 6 bytes（2-byte event + 4-byte value）的 malformed 訊息時，Swift bounds check 直接 SIGTRAP，crash 整個 process。
 
 ### 修法
+
 - `Data(header.payload)` 先轉成 0-based copy（Data slice 保留 parent 的 indexing offset）
 - `guard 6 <= payload.count` 長度不足直接回 `.unknown` / `0`
 - 正常訊息行為不變
@@ -1181,7 +1258,9 @@ data.replaceSubrange(position...position + 3, with: message.timestamp.bigEndian.
 data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.data[1...3])
 ```
 
-`.zero` 與 `.one` chunk type 正確使用 `..<` half-open range，唯獨 `.two` 誤用 `...` ClosedRange。第一個 `.two` chunk 送出後下一個 chunk 的 basic header 被污染，串流資料從該點開始損毀，造成部分 RTMP 伺服器斷流。
+`.zero` 與 `.one` chunk type 正確使用 `..<` half-open range，唯獨 `.two` 誤用 `...` ClosedRange。
+
+第一個 `.two` chunk 送出後下一個 chunk 的 basic header 被污染，串流資料從該點開始損毀，造成部分 RTMP 伺服器斷流。
 
 ---
 
@@ -1196,7 +1275,9 @@ fourCcList: [String]? = RTMPConnection.supportedFourCcList,
 fourCcList: [String]? = nil,
 ```
 
-建制 `RTMPConnection()` 時 `fourCcList` / `videoFourCcInfoMap` / `audioFourCcInfoMap` 預設值自非 nil 改為 `nil`，connect command 中只有非 nil 時才加入。避免不支援 Enhanced RTMP 的伺服器因收到未知欄位而拒絕連線。
+建制 `RTMPConnection()` 時 `fourCcList` / `videoFourCcInfoMap` / `audioFourCcInfoMap` 預設值自非 nil 改為 `nil`
+
+connect command 中只有非 nil 時才加入。避免不支援 Enhanced RTMP 的伺服器因收到未知欄位而拒絕連線。
 
 ---
 
@@ -1209,11 +1290,13 @@ fourCcList: [String]? = nil,
 `invalidateSession()` 原本把 `maxKeyFrameIntervalDuration` 列為需要重建 session 的條件之一，但 `apply()` 卻沒有對應的動態更新邏輯。
 
 後果：
+
 - 改 `maxKeyFrameIntervalDuration` 會觸發 `invalidateSession` → 砍掉整個 VTCompressionSession 重建
 - 重建期間 encoder 無法處理 frame，造成短暫斷流
 - 如果 encoder 沒收到 frame 就不會觸發 rebuild，改值永遠不生效
 
 修法：
+
 - 從 `invalidateSession()` 中移除 `maxKeyFrameIntervalDuration`
 - 在 `apply()` 中加入 `VTSessionSetProperty` 直接對執行中的 session 下指令（VideoToolbox 支援 runtime 更改此屬性）
 
@@ -1235,10 +1318,17 @@ package var videoInputStream: AsyncStream<CMSampleBuffer> {
 三個問題：
 
 1. **預設值 `-1` 進入 unbounded 分支** — encoder 跟不上時 frame 無限累積在 AsyncStream buffer，記憶體暴漲、latency 無限增加
-2. **computed property 每次 access 建立新 Stream** — 雖然 `videoInputContinuation.didSet` 會 `oldValue?.finish()`，但如果 reconnect 時有 race condition，中間的 frame 全部遺失
-3. **`setVideoInputBufferCounts` 只能在 publish 前生效** — publish 時 `for await` 只 access `videoInputStream` 一次建立 AsyncStream，之後再改 count 不影響已存在的 stream
+2. **computed property 每次 access 建立新 Stream**
+
+    雖然 `videoInputContinuation.didSet` 會 `oldValue?.finish()`
+
+    但如果 reconnect 時有 race condition，中間的 frame 全部遺失
+
+3. **`setVideoInputBufferCounts` 只能在 publish 前生效** — publish 時 `for await` 只 access `videoInputStream`
+4. 一次建立 AsyncStream，之後再改 count 不影響已存在的 stream
 
 修法：
+
 - 預設值改為 `5`，使用 `.bufferingNewest(5)`，避免 unbounded 累積
 - `setVideoInputBufferCounts` 仍應在 publish 前呼叫
 
@@ -1247,12 +1337,16 @@ package var videoInputStream: AsyncStream<CMSampleBuffer> {
 **檔案**: `Sources/Extension/CMVideoFormatDescription+Extension.swift`（兩個 module 各有一個）
 
 原本實作只從 `kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms` extension dictionary 撈 `avcC`/`hvcC`：
+
 - 如果 format description 沒有此 extension → 回 nil
 - 如果 format description 是 H.264/H.265 但不包含 atoms → 回 nil
 
-後果：`RTMPVideoMessage(streamId:timestamp:formatDescription:)` 在 `didSet` 中因 `configurationBox` 為 nil 而回傳 nil，sequence header **從未送出**。RTMP receiver 收不到 AVCDecoderConfigurationRecord，無法解碼任何視訊幀，表現為全黑畫面或串流 0x0。
+後果：`RTMPVideoMessage(streamId:timestamp:formatDescription:)` 在 `didSet` 中因 `configurationBox` 為 nil 而回傳 nil，sequence header
+
+**從未送出**。RTMP receiver 收不到 AVCDecoderConfigurationRecord，無法解碼任何視訊幀，表現為全黑畫面或串流 0x0。
 
 修法：
+
 - 原本的 extension atoms 查詢保留為優先路徑
 - 撈不到時啟用 fallback：`CMVideoFormatDescriptionGetH264ParameterSetAtIndex` 直接取出 SPS/PPS NAL units
 - 手動組合 `AVCDecoderConfigurationRecord`，透過其 `data` getter 產生正確的 avcC box
@@ -1260,7 +1354,8 @@ package var videoInputStream: AsyncStream<CMSampleBuffer> {
 
 ### 11.4 `makeFormatDescription()` 陣列越界 crash
 
-**檔案**: 
+**檔案**:
+
 - `Sources/Codec/AVCDecoderConfigurationRecord.swift:46`
 - `Sources/Codec/HEVCDecoderConfigurationRecord.swift:35`
 
@@ -1269,7 +1364,9 @@ package var videoInputStream: AsyncStream<CMSampleBuffer> {
 return pictureParameterSets[0].withUnsafeBytes { ... }
 ```
 
-當 `init(data:)` 收到空或格式錯誤的二進位資料時，`sequenceParameterSets`、`pictureParameterSets`、或 `array[.vps/sps/pps]` 保持空陣列。`makeFormatDescription()` 直接 index `[0]` 導致 Swift bounds check SIGTRAP。
+當 `init(data:)` 收到空或格式錯誤的二進位資料時，`sequenceParameterSets`、`pictureParameterSets`、或 `array[.vps/sps/pps]` 保持空陣列。
+
+`makeFormatDescription()` 直接 index `[0]` 導致 Swift bounds check SIGTRAP。
 
 修法：在索引前 `guard !array.isEmpty`。
 
@@ -1277,7 +1374,7 @@ return pictureParameterSets[0].withUnsafeBytes { ... }
 
 完整視訊路徑 chain：
 
-```
+```swift
 MediaMixer.append() → VideoCaptureUnit → VideoMixer
   → _output.yield()  (AsyncStream #1)
   → MediaMixer startRunning Task #2
@@ -1293,13 +1390,18 @@ MediaMixer.append() → VideoCaptureUnit → VideoMixer
   → RTMPVideoMessage → doOutput()
 ```
 
-**三層中間 AsyncStream**（`_output`、`mixerVideoContinuation`、`videoInputStream`）各自有獨立 buffering policy，encoder 端沒有背壓機制傳回 source。當 encoder 跟不上時，frame 堆在 `videoInputStream` 的 buffer 裡而非在 source 端丟棄，導致延遲持續增加。
+**三層中間 AsyncStream**（`_output`、`mixerVideoContinuation`、`videoInputStream`）各自有獨立 buffering policy，encoder 端沒有背壓機制傳回 source。
+
+當 encoder 跟不上時，frame 堆在 `videoInputStream` 的 buffer 裡而非在 source 端丟棄，導致延遲持續增加。
 
 短期內 `videoInputBufferCounts` 限制 buffer 大小（`.bufferingNewest` 丟棄最舊幀）已可控制，長期應考慮合併 Stream 層數或導入 actor-based backpressure。
 
 ---
 
 ## 12. 支援語音通話（Voice Chat）與直播共存
+
+> [!WARNING]
+> 此功能可能已移除：`AudioRouteManager` 與 `MediaMixer.setVoiceChatEnabled()` 已於第 18 條移除，本條目僅保留歷史脈絡。
 
 **新增檔案**: `Sources/Mixer/AudioRouteManager.swift`
 **修改檔案**: `Sources/Mixer/MediaMixer.swift`
@@ -1315,7 +1417,8 @@ MediaMixer.append() → VideoCaptureUnit → VideoMixer
 
 #### `AudioRouteManager`（iOS 限定）
 
-- **AVAudioSession** 設定為 `.playAndRecord` + `.voiceChat` mode + `.mixWithOthers` + `.allowBluetooth` + `.defaultToSpeaker` + `.allowAirPlay`
+- **AVAudioSession** 設定為 `.playAndRecord` + `.voiceChat`
+- mode + `.mixWithOthers` + `.allowBluetooth` + `.defaultToSpeaker` + `.allowAirPlay`
   - 保證 mic 可錄音
   - 不中斷背景音樂或其他 app 音訊
   - 通話聲音走揚聲器而非聽筒
@@ -1340,7 +1443,10 @@ mixer.setVoiceChatEnabled(false)
 
 ### 注意事項（App 層需處理）
 
-1. **ReplayKit mic 雙重來源** — 啟用 voice chat 時，app 應關閉 `RPScreenRecorder.isMicrophoneEnabled = false`，只讓 ReplayKit 提供 `.audioApp`，mic 由 AVAudioEngine 負責
+1. **ReplayKit mic 雙重來源** — 啟用 voice chat 時，app 應關閉 `RPScreenRecorder.isMicrophoneEnabled = false`
+
+    只讓 ReplayKit 提供 `.audioApp`，mic 由 AVAudioEngine 負責
+
 2. **通話音訊回放** — `voiceChat` mode 只處理 mic 上鏈，下鏈（聽對方的聲音）由 app 自行管理（e.g. `AVAudioEngine` mixer node 或 system audio unit）
 3. **Bluetooth 相容** — `.allowBluetooth` 保證藍牙耳機的 mic 可用於通話
 
@@ -1349,7 +1455,7 @@ mixer.setVoiceChatEnabled(false)
 ## 改動檔案總覽（追加）
 
 | 檔案 | 修改類型 |
-|---|---|
+| --- | --- |
 | `Sources/Codec/VideoCodecSettings.swift` | `maxKeyFrameIntervalDuration` 動態 apply；自 `invalidateSession()` 移除 |
 | `Sources/Stream/OutgoingStream.swift` | `videoInputBufferCounts` 預設值 -1 → 5 |
 | `Sources/Extension/CMVideoFormatDescription+Extension.swift`（RTMP） | `configurationBox` 加入 AVC fallback |
@@ -1401,6 +1507,7 @@ Extension (`.appex` bundle) 無法呼叫 `setCategory()` / `setActive()`，會�
 
 原本：直接改 category 再 `setActive(true)`，且 `try?` 吞錯
 修正：
+
 ```swift
 try? session.setActive(false, options: .notifyOthersOnDeactivation)  // 先停用、通知其他 app
 try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])  // 改回播放類別
@@ -1426,6 +1533,7 @@ await mixer.append(buffer, when: AVAudioTime(hostTime: time.hostTime))
 ```
 
 這導致 `AudioTime.anchor(_ time: AVAudioTime)` 初始化時：
+
 - `sampleRate = 0`
 - `sampleTime = 0`
 - PTS 從 0 開始計算
@@ -1450,6 +1558,7 @@ await mixer.append(buffer, when: time)
 ## 15. 關鍵修復：Keyframe Interval 底層約束不足
 
 **檔案**:
+
 - `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
 - `HaishinKit/Sources/Codec/VideoCodec.swift`
 - `HaishinKit/Sources/Codec/VTSessionConvertible.swift`
@@ -1457,11 +1566,13 @@ await mixer.append(buffer, when: time)
 - `HaishinKit/Sources/Extension/VTDecompressionSession+Extension.swift`
 - `HaishinKit/Tests/Codec/VideoCodecSettingsTests.swift`
 
-### 問題
+### 問題 - 硬體路徑可能沒有穩定依照秒數產生 keyframe 造成 GOP 漂移
 
-原本只設定 `kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration`（秒數），部分 VideoToolbox encoder / 硬體路徑可能沒有穩定依照秒數產生 keyframe，導致實際 GOP 漂移，例如觀察到約 5 秒 keyframe interval。
+原本只設定 `kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration`（秒數），部分 VideoToolbox encoder / 硬體路徑可能沒有穩定依照秒數產生 keyframe
 
-### 修復
+導致實際 GOP 漂移，例如觀察到約 5 秒 keyframe interval。
+
+### 修復 - 第一幀與超過 `maxKeyFrameIntervalDuration` 時主動要求 keyframe
 
 - 保留既有 `maxKeyFrameIntervalDuration` API 語意。
 - 同步派生並設定 `kVTCompressionPropertyKey_MaxKeyFrameInterval`（幀數）。
@@ -1481,6 +1592,7 @@ await mixer.append(buffer, when: time)
 ## 16. 性能修復：Video Input Buffer 改為有界佇列
 
 **檔案**:
+
 - `HaishinKit/Sources/Stream/OutgoingStream.swift`
 - `HaishinKit/Sources/Stream/StreamConvertible.swift`
 - `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
@@ -1488,7 +1600,9 @@ await mixer.append(buffer, when: time)
 
 ### 問題
 
-`setVideoInputBufferCounts(0)` 或負數時，`OutgoingStream.videoInputStream` 會退回無限制 `AsyncStream`。當 ReplayKit / camera 持續送 frame，但 encoder、actor 或網路輸出變慢時，video frame 可能在記憶體中持續堆積，造成延遲上升、記憶體壓力，嚴重時表現為卡死。
+`setVideoInputBufferCounts(0)` 或負數時，`OutgoingStream.videoInputStream` 會退回無限制 `AsyncStream`。當 ReplayKit / camera 持續送 frame
+
+但 encoder、actor 或網路輸出變慢時，video frame 可能在記憶體中持續堆積，造成延遲上升、記憶體壓力，嚴重時表現為卡死。
 
 此外，RTMP / SRT 的 `MediaMixer -> Stream` video 中轉佇列原本也是 unbounded，壓力可能在進入 `OutgoingStream` 前就先累積。
 
@@ -1505,7 +1619,6 @@ await mixer.append(buffer, when: time)
 - 不再支援 video input unbounded queue。
 - 音訊 queue 未在本次改動中改為 bounded，避免語音通話或直播音訊被主動丟 sample。
 
-
 ## 17. RTMP 底層 Socket缺陷/性能問題
 
 [**改動說明 CHANGES**](./Docs/CHANGELOG_RTMP_SOCKET.md)
@@ -1515,22 +1628,27 @@ await mixer.append(buffer, when: time)
 ## 18. 移除無效的 AudioRouteManager / Voice Chat 功能
 
 **檔案**:
+
 - `Sources/Mixer/AudioRouteManager.swift` — 已刪除
 - `Sources/Mixer/MediaMixer.swift` — 移除 `setVoiceChatEnabled()`, `audioRouteManager` 屬性與 `deactivate()` 呼叫
 
 ### 刪除內容
+
 1. 整個 `AudioRouteManager` class（AVAudioEngine tap 擷取麥克風）
 2. `MediaMixer.audioRouteManager` 延遲屬性
 3. `MediaMixer.setVoiceChatEnabled()` 公開方法
 4. `stopRunning()` 中的 `audioRouteManager.deactivate()` 呼叫
 
 ### 原因
+
 `AudioRouteManager` 在 Broadcast Extension 中完全無效：
+
 - AVAudioSession category 無法在 extension 設定，方法直接跳過無作用
 - AVAudioEngine 無法在 extension 正常啟動 input tap
 - 與 `RPScreenRecorder.isMicrophoneEnabled = false` 搭配會導致麥克風音訊完全靜音
 
 ### 替代方案
+
 直接使用 ReplayKit 提供的 `.audioMic` / `.audioApp` buffer，透過 `AudioMixer` 混合兩軌，已由 `AudioProcessor` 實作。
 
 ---
@@ -1540,10 +1658,12 @@ await mixer.append(buffer, when: time)
 **檔案**: `Sources/Mixer/VideoCaptureUnit.swift`
 
 ### 改動
+
 - `inputs` AsyncStream: `.unbounded` → `.bufferingNewest(30)`
 - `output` AsyncStream: `.unbounded` → `.bufferingNewest(30)`
 
 ### 原因
+
 原本的 unbounded 策略會讓 frame 在 consumer 慢的時候無限堆積，導致記憶體膨脹及關閉時暴衝 flush。改成保留最新 30 幀，自動丟棄舊幀，符合直播低延遲需求。
 
 ---
@@ -1551,12 +1671,17 @@ await mixer.append(buffer, when: time)
 ## 20. 修復 RTMP `createStream` 回應被忽略導致推流管線未建立
 
 **檔案**:
+
 - `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
 - `Docs/RTMP_SOCKET_DESIGN.md`
 
 ### 問題
 
-RTMP connect 成功後，`RTMPConnection` 會從 `.handshakeDone` 轉成 `.connected`。但 `listen(_:)` 原本只在 `.handshakeDone` 狀態解析收到的 RTMP chunks；進入 `.connected` 後，socket 收到的 server 回包會直接落入 `default: break`。
+RTMP connect 成功後，`RTMPConnection` 會從 `.handshakeDone` 轉成 `.connected`。但 `listen(_:)`
+
+原本只在 `.handshakeDone` 狀態解析收到的 RTMP chunks
+
+進入 `.connected` 後，socket 收到的 server 回包會直接落入 `default: break`。
 
 因此 `createStream` command 已送出並註冊 transaction：
 
@@ -1591,6 +1716,7 @@ case .handshakeDone, .connected:
 ## 21. 修復推流中途 `videoFrame = 0` 的編碼輸出停滯
 
 **檔案**:
+
 - `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 - `HaishinKit/Sources/Stream/OutgoingStream.swift`
 
@@ -1602,7 +1728,9 @@ log 顯示 RTMP 連線與音訊仍持續工作，但 publish throughput 連續�
 videoFrames=0 videoBytes=0
 ```
 
-同時前段仍有 `[VFrame]`、`[VideoProcessor] 送出MediaMixer`。這代表 ReplayKit 與 video processor 沒有停止，真正停住的是 video codec 到 RTMP 的 encoded video 輸出，不是 socket 斷線。
+同時前段仍有 `[VFrame]`、`[VideoProcessor] 送出MediaMixer`
+
+這代表 ReplayKit 與 video processor 沒有停止，真正停住的是 video codec 到 RTMP 的 encoded video 輸出，不是 socket 斷線。
 
 ### 修正
 
@@ -1620,6 +1748,7 @@ videoFrames=0 videoBytes=0
 ## 22. 改善 RTMP Socket 發送效能與佇列統計
 
 **檔案**:
+
 - `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
 - `Docs/RTMP_SOCKET_DESIGN.md`
 - `Docs/CHANGELOG_RTMP_SOCKET.md`
@@ -1659,7 +1788,12 @@ RTMP message 會被切成多個 chunk。原本 socket 層逐 chunk enqueue，導
 `createStream()` 存在三個設計缺陷：
 
 1. **錯誤被吞掉**：catch 後僅 `logger.error()`，不回報給呼叫方。`publish()` 只能看到 `id == 0`，無法區分 timeout、server 回空值、或其他原因。
-2. **無重試機制**：`requestTimeout` (3s) 一過就永久失敗。若 RTMP server 短暫無回應（實際發生於內網 server），即使 txn=1 connect 已成功，txn=2 createStream 仍可能 timeout，導致推流完全失敗。
+2. **無重試機制**：`requestTimeout` (3s) 一過就永久失敗。
+
+    若 RTMP server 短暫無回應（實際發生於內網 server）
+
+    即使 txn=1 connect 已成功，txn=2 createStream 仍可能 timeout，導致推流完全失敗。
+
 3. **log 誤導**：失敗後仍打 `"publish: stream created id=0"`，但 stream 根本沒建立。
 
 ### 修正
@@ -1722,12 +1856,14 @@ if 2 == videoStallCount {
 ### restartVideoPipeline 加入連線檢查
 
 觸發前檢查 `connection?.connected == true`：
+
 - 若 socket 已斷 → 跳過 restart（讓 reconnection 機制處理），出 `.warn` 說明原因
 - 若 socket 正常 → 照常執行
 
 ### resumePublishing 加入連線與狀態檢查
 
 原本 `resumePublishing` 只在 `readyState == .idle` 時靜默跳過，現在：
+
 - `readyState != .idle` → `.warn` 記錄當前 state
 - `connection?.connected == false` → `.warn` 記錄連線已斷
 - `publish()` 失敗 → 透過 `connection?.log(.error, ...)` 輸出（原本只用 `logger.error`）
@@ -1752,7 +1888,7 @@ if 2 == videoStallCount {
 
 send 路徑存在兩層獨立的 AsyncStream：
 
-```
+```swift
 RTMPConnection.startOutputConsumer
   → AsyncStream #1 (bufferingOldest 512) → consumer Task → socket.send(data)
     → RTMPSocket.enqueue 
@@ -1760,6 +1896,7 @@ RTMPConnection.startOutputConsumer
 ```
 
 每個 RTMP chunk 經歷：
+
 1. actor hop 進 `RTMPSocket`
 2. `AsyncStream.yield()` 排入內部佇列
 3. consumer Task 喚醒 (`for await`)
@@ -1812,7 +1949,7 @@ private func didSend(_ data: Data, error: Error?) {
 - **零 latency 增加**：沒有定時器。空閒時 chunk 立刻 flush；高吞吐時自動批次
 - **不再有 AsyncStream/yield/consumer Task 開銷**：資料從 RTMPConnection 的 output AsyncStream 直接進 buffer → `NWConnection.send`
 
-### 效果
+### 效果 - 高碼率推流時 `NWConnection.send` 呼叫次數降低
 
 - 高碼率推流時 `NWConnection.send` 呼叫次數從 **chunk 數**降到 **並行 send 批次數**（通常減少 10~50 倍）
 - 消除 consumer Task 的 `for await` context switch
@@ -1824,17 +1961,23 @@ private func didSend(_ data: Data, error: Error?) {
 ## 26. HEVC Profile 自動降階（Fallback）機制
 
 **檔案**:
+
 - `Sources/Codec/VideoCodecSettings.swift`
 - `Sources/Codec/VTSessionMode.swift`
 
 ### 問題
 
 HEVC 編碼需要硬體支援特定的 profile level：
+
 - **Main** — A9+（iPhone 6s 以上）
 - **Main10**（10-bit）— A12+（iPhone XS 以上）
 - **Main42210**（4:2:2 10-bit）— A13+（iPhone 11 以上）
 
-當 `profileLevel` 設為裝置不支援的 HEVC profile（例如在 A11 裝置上設 `Main10_AutoLevel`），`VTCompressionSession` 建立或 `VTSessionSetProperty` 會直接失敗。原先的錯誤被 `catch` 吞掉後只出 warn log，session 保持 nil，後續所有 video frame 都被丟棄 — 表現為 HEVC 完全無法工作。
+當 `profileLevel` 設為裝置不支援的 HEVC profile（例如在 A11 裝置上設 `Main10_AutoLevel`），`VTCompressionSession`
+
+建立或 `VTSessionSetProperty` 會直接失敗。
+
+原先的錯誤被 `catch` 吞掉後只出 warn log，session 保持 nil，後續所有 video frame 都被丟棄 — 表現為 HEVC 完全無法工作。
 
 ### 修復
 
@@ -1860,14 +2003,18 @@ let chain = VideoCodecSettings.hevcFallbackChain(for: "HEVC_Main10_AutoLevel")
 ## 27. E-RTMP HEVC 修復：HEVC Sequence Header 無法送出
 
 **檔案**:
+
 - `RTMPHaishinKit/Sources/Extension/CMVideoFormatDescription+Extension.swift`
 - `RTMPHaishinKit/Sources/Codec/HEVCDecoderConfigurationRecord.swift`
 
 ### 問題：`makeHEVCConfigurationBox()` 為空 stub
 
-HEVC Encoder 輸出 `CMSampleBuffer` 時，VT 的 format description **不一定**包含 `hvcC` extension atom。此時 `configurationBox` 走 fallback 路徑 `makeHEVCConfigurationBox()`，但該函數直接 `return nil`。
+HEVC Encoder 輸出 `CMSampleBuffer` 時，VT 的 format description **不一定**包含 `hvcC` extension atom。
+
+此時 `configurationBox` 走 fallback 路徑 `makeHEVCConfigurationBox()`，但該函數直接 `return nil`。
 
 後果：
+
 - `RTMPVideoMessage(streamId:timestamp:formatDescription:)` 因 `configurationBox` 為 nil → 建構子回傳 nil
 - HEVC **sequence header 從未送出**
 - receiver 收不到 `HEVCDecoderConfigurationRecord`，無法解碼任何 HEVC 幀
@@ -1877,6 +2024,7 @@ HEVC Encoder 輸出 `CMSampleBuffer` 時，VT 的 format description **不一定
 
 寫入序列化時僅寫 `configurationVersion`（1 byte），其餘 20+ 個欄位以及 VPS/SPS/PPS NALU array 全部遺失。
 影響：
+
 - `makeHEVCConfigurationBox()` 即使正確建構 record，呼叫 `record.data` 回傳的資料也無法被 decoder 解析
 - 任何重新序列化 HEVC config record 的情境（parse-then-write）都會產出損毀輸出
 
@@ -1884,7 +2032,7 @@ HEVC Encoder 輸出 `CMSampleBuffer` 時，VT 的 format description **不一定
 
 **`HEVCDecoderConfigurationRecord.data`** — 完整實作 serialization，順序與欄位對應 ISO/IEC 14496-15 8.3.3.1.2：
 
-```
+```log
 configurationVersion          (1 byte)
 general_profile_space/tier/idc (1 byte, packed)
 general_profile_compatibility  (4 bytes)
@@ -1905,7 +2053,9 @@ numOfArrays                    (1 byte)
 ] (repeated per array entry)
 ```
 
-**`makeHEVCConfigurationBox()`** — 使用 `CMFormatDescription.parameterSets`（iOS 13+）提取 VPS/SPS/PPS，填入 `HEVCDecoderConfigurationRecord` 後回傳 `record.data`。
+**`makeHEVCConfigurationBox()`** — 使用 `CMFormatDescription.parameterSets`（iOS 13+）提取 VPS/SPS/PPS
+
+填入 `HEVCDecoderConfigurationRecord` 後回傳 `record.data`。
 
 ```swift
 // 遍歷 parameterSets 中的每個 NAL unit data：
@@ -1920,12 +2070,17 @@ numOfArrays                    (1 byte)
 
 ### `RTMPVideoMessage` HEVC 封包格式修正
 
-**問題**: HEVC 影片封包使用 E-RTMP v2 ExVideoHeader 格式（`0x80 | frameType<<4 | packetType` + FourCC `hvc1`），但 SRS 5.x / Oryx 5 只支援 CodecID=12 的 Legacy 擴展格式。
+**問題**: HEVC 影片封包使用 E-RTMP v2 ExVideoHeader 格式（`0x80 | frameType<<4 | packetType` + FourCC `hvc1`）
 
-**症狀**: SRS 5 回 `drop unknown header video, bytes[0]=0xa1` — 因為 ExVideoHeader 的 bit 7 (isExHeader=1) 讓 legacy FrameType 檢查（預期 1-5）失敗。
+但 SRS 5.x / Oryx 5 只支援 CodecID=12 的 Legacy 擴展格式。
+
+**症狀**: SRS 5 回 `drop unknown header video, bytes[0]=0xa1` — 因為 ExVideoHeader 的 bit 7 (isExHeader=1)
+
+讓 legacy FrameType 檢查（預期 1-5）失敗。
 
 **修復**: HEVC 改用 CodecID=12 的 Legacy 擴展格式（與 AVC 相同結構）：
-```
+
+```log
 Byte 0: FrameType(4) | CodecID(12 = 0x0C)
 Byte 1: PacketType (0=seq, 1=nal)
 Bytes 2-4: CompositionTime (SI24)
@@ -1947,6 +2102,7 @@ public static let frameInterval60 = (1 / 60) - 0.001
 ## 28. Server Codec Capability 偵測與自動降級
 
 **檔案**:
+
 - `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
 - `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1963,10 +2119,15 @@ public static let frameInterval60 = (1 / 60) - 0.001
 public private(set) var serverSupportedVideoCodecs: Set<String> = []
 ```
 
-`_result` 處理時從 AMF response 的 `videoFourCcInfoMap` 物件提取 key（如 `hvc1`、`av01`、`vp09`），僅保留 `canDecode` 旗標（value & 0x02 != 0）的 codec。
+`_result` 處理時從 AMF response 的 `videoFourCcInfoMap`
+
+物件提取 key（如 `hvc1`、`av01`、`vp09`）
+
+僅保留 `canDecode` 旗標（value & 0x02 != 0）的 codec。
 
 不支援時出 warn log：
-```
+
+```log
 [WARN] Server does NOT support HEVC/hvc1, will fallback to H.264
 ```
 
@@ -2000,6 +2161,7 @@ if let conn = rtmpConnection {
 ## 29. HE-AAC v1/v2 支援與自動降級
 
 **檔案**:
+
 - `HaishinKit/Sources/Codec/AudioCodecSettings.swift`
 - `HaishinKit/Sources/ISO/AudioSpecificConfig.swift`
 - `HaishinKit/Sources/Codec/AudioCodec.swift`
@@ -2011,7 +2173,7 @@ if let conn = rtmpConnection {
 `AudioCodecSettings.Format` 新增兩種高效 AAC 格式：
 
 | 格式 | CoreAudio FormatID | AudioObjectType | 說明 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `.aac` | `kAudioFormatMPEG4AAC` | 2 (AAC LC) | 標準 AAC |
 | `.heAac` | `kAudioFormatMPEG4AAC_HE` | 5 (SBR) | HE-AAC v1 (AAC+SBR) |
 | `.heAacV2` | `kAudioFormatMPEG4AAC_HE_V2` | 29 (PS) | HE-AAC v2 (AAC+SBR+PS) |
@@ -2074,7 +2236,10 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - Audio stall 檢測 — `restartAudioPipeline()` 對稱 video
 - `setVideoInputBufferCounts(-1)` 支援自動模式
 - `maxFrameDelayCount` — 限制 VT 內部 buffer，減少 live latency
-- `adaptiveFrameThrottle` 改用雙重檢測：`numberOfPendingFrames`（支援時）+ encode 速率 fallback（實際編碼 < 25fps 時降頻），解決部分裝置 pending frames 不可靠問題
+- `adaptiveFrameThrottle` 改用雙重檢測：`numberOfPendingFrames`（支援時）+ encode 速率 fallback（實際編碼 < 25fps 時降頻）
+
+    解決部分裝置 pending frames 不可靠問題
+
 - `allowTemporalCompression` 可設 `false` — 防止 VT 因壓力主動丟幀
 - `dataRateLimits` VBR 模式自動啟用（不再依賴使用者設定），防止 bitrate 暴衝
 - A/V sync on restart — pipeline 重啟後同步 audio/video 時間戳，防止音畫不同步
@@ -2091,13 +2256,16 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 **問題：** v31 的漸進式 throttle 以 `frameInterval`（PTS 間距過濾）作為調節旋鈕，有下列缺陷：
 
-- **Baseline 污染 + 階梯式下修**：baseline 由牆鐘 `Date()` 在「通過過濾的幀」上做 EMA。throttle 介入後量到的間隔混入過濾空窗 + encode 延遲，基準被拉低；間歇性負載下每輪 overload 都從被污染的 baseline 再降 10%，長期待在 20fps floor。
+- **Baseline 污染 + 階梯式下修**：baseline 由牆鐘 `Date()` 在「通過過濾的幀」上做 EMA。throttle 介入後量到的間隔混入過濾空窗 + encode 延遲，基準被拉低；
+
+    間歇性負載下每輪 overload 都從被污染的 baseline 再降 10%，長期待在 20fps floor。
+
 - **牆鐘 vs PTS 不一致**：決策變數是牆鐘 EMA，過濾條件是 PTS；CPU 爭用時牆鐘間隔暴漲，把 thread 調度抖動誤判成編碼過載。
 - **節拍不均勻**：10% 步進（60→54→48.6→...）配 PTS 相位丟幀，step 邊界節拍不規則；恢復時 20fps 瞬間跳回 60fps，動作恢復那一刻 stutter 明顯。
 - **狀態洩漏**：`resetSessionState()` / `stopRunning()` 不重置 `frameInterval`，重連或 settings 熱更新後帶舊的 throttled 值。
 - **違反 #53 原則**：frameInterval 是品質旋鈕，不該被自適應機制寫入。
 
-**新設計：pre-encode drop-ratio 閘控（不碰 frameInterval）**
+### 新設計：pre-encode drop-ratio 閘控（不碰 frameInterval）
 
 - 唯一狀態：`dropRatio: Int`（每 N 幀收 1 幀，1 = 全收）+ `frameCounter` + `lastThrottleTime`。
 - **信號**：只讀 `numberOfPendingFrames`（encoder backlog 的 ground truth），刪除牆鐘 EMA（`smoothedFrameInterval`/`lastFrameTime`）。
@@ -2114,7 +2282,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 **與 v31 的差別對照表：**
 
 | | v31（漸進式 throttle） | v32（drop-ratio 閘控） |
-|---|---|---|
+| --- | --- | --- |
 | 調節旋鈕 | `frameInterval`（PTS 間距） | `dropRatio`（每 N 幀取 1） |
 | 信號 | 牆鐘 EMA + pending | 僅 `numberOfPendingFrames` |
 | 步進 | 10% 遞減（60→54→48.6→...） | 整數比（60→30→20→15） |
@@ -2128,9 +2296,12 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`
 
-**問題：** 舊設計觸發時直接 60→30 腰斬，僅有兩種狀態；仰賴 `inputTimestamps`/`encodeTimestamps` 等 4 個追蹤變數；`applyCavlcIfNeeded()` 切換 CAVLC 後永不恢復，品質永久降級；`checkFrameRate()` 捆綁 encode 速率回退路徑過於間接。
+**問題：** 舊設計觸發時直接 60→30 腰斬，僅有兩種狀態；仰賴 `inputTimestamps`/`encodeTimestamps` 等 4 個追蹤變數
+
+`applyCavlcIfNeeded()` 切換 CAVLC 後永不恢復，品質永久降級；`checkFrameRate()` 捆綁 encode 速率回退路徑過於間接。
 
 **修改：**
+
 - **移除** `setProportionalThrottle()`、`checkFrameRate()`、`applyCavlcIfNeeded()` 與相關 4 個狀態變數
 - **新 `updateAdaptiveFrameInterval()`**：
   - 降速：`numberOfPendingFrames > threshold` 時每次 drop 15%（60→51→43→...），間隔至少 500ms，下限 15fps
@@ -2143,16 +2314,18 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 ### `maxFrameDelayCount` 自動計算支援
 
-**用途：** 控制 VT 編碼器內部佇列可暫存多少幀再開始丟幀。設越小則 live latency 越低（encoder 不會囤積太多未編碼幀），但 encoder 來不及處理時會直接丟幀。適合直播場景建議設 `2`，預設 `nil` 由 VT 自行決定。
+**用途：** 控制 VT 編碼器內部佇列可暫存多少幀再開始丟幀。設越小則 live latency 越低（encoder 不會囤積太多未編碼幀）
+
+但 encoder 來不及處理時會直接丟幀。適合直播場景建議設 `2`，預設 `nil` 由 VT 自行決定。
 
 **`nil` / `≤0` 自動計算：** 當 `maxFrameDelayCount` 未設定或設為 ≤0（含 `-1`）時，VT 端不設此屬性（使用 VT 預設），throttle threshold 改為自動推導：
 
-```
+```swift
 threshold = ceil(expectedFrameRate / 12)
 ```
 
 | expectedFrameRate | threshold | 等於多少 ms 緩衝 |
-|---|---|---|
+| --- | --- | --- |
 | 60 | 5 | ~83ms |
 | 30 | 3 | ~100ms |
 | 24 | 2 | ~83ms |
@@ -2167,6 +2340,7 @@ threshold = ceil(expectedFrameRate / 12)
 **用途：** 提供更細粒度的 GPU/CPU 與壓縮效率取捨控制，搭配 `h264EntropyMode` (CABAC/CAVLC) 使用。
 
 **修改：**
+
 - 新增 `prioritizeEncodingSpeedOverQuality: Bool`（預設 `false`）
   - 設 `true` 時 VT 採用更快編碼路徑（簡化 motion search），適合遊戲串流等 GPU 吃重場景
   - 代價：同視覺品質下 bitrate 略升
@@ -2182,11 +2356,16 @@ threshold = ceil(expectedFrameRate / 12)
 **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
 **問題：**
-- `VideoCodec` 註冊了 `AVAudioSession.interruptionNotification` 和 `UIApplication.willEnterForegroundNotification`，但這兩個事件不會讓 VT session 失效，handler 無故砍掉 session 造成自我干擾
+
+- `VideoCodec` 註冊了 `AVAudioSession.interruptionNotification` 和 `UIApplication.willEnterForegroundNotification`
+
+    但這兩個事件不會讓 VT session 失效，handler 無故砍掉 session 造成自我干擾
+
 - Audio/video stall detection 各自獨立計數，同時觸發時彼此 cancel 對方的 task，造成無窮 restart 循環（task 活不過一輪 status check）
 - `VideoCodec` 沒有 `deinit`，observer 可能 crash dangling pointer
 
 **修改：**
+
 - **移除所有 `NotificationCenter` observer** — `VideoCodec` 不再自行監聽 foreground/interruption 事件
   - camera restart 後 `inputFormat.didSet` 已自動重建 session，無須手動介入
   - 移除 `didAudioSessionInterruption`、`applicationWillEnterForeground` handler 及對應的 add/remove
@@ -2198,7 +2377,6 @@ threshold = ceil(expectedFrameRate / 12)
   - 新增 `setVideoCodecLogHandler()` 在 OutgoingStream 層級
 
 ---
-
 
 - `RTMPHaishinKit/Sources/RTMP/MediaMixerOutputBridge.swift`（新增）
 - `HaishinKit/Sources/Stream/OutgoingStream.swift`
@@ -2216,7 +2394,7 @@ threshold = ceil(expectedFrameRate / 12)
 
 **檔案**: `HaishinKit/Sources/Mixer/MediaMixer.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
-### 背景
+### 背景 - 可能發生音訊路由變更
 
 當 App 切換 `AVAudioSession.mode`（如 `.default` ↔ `.voiceChat`）或音訊路由變更（插拔耳機、藍牙連接），iOS 音訊硬體會重配置。這可能導致兩層問題：
 
@@ -2246,6 +2424,7 @@ private func didAudioSessionRouteChange(_ notification: Notification) {
 ```
 
 `AudioCaptureUnit.reset()` 做完整清理：
+
 1. 卸除所有 capture devices，保存 device 與 track 對應
 2. 重新建立 `AudioMixer`（含新的 `AVAudioConverter`，解決 resampling converter 卡死）
 3. 以新 mixer 的 `AudioDeviceUnitDataOutput` 重新建立 `AudioDeviceUnit` 並附接回 session
@@ -2276,13 +2455,13 @@ private func didAudioSessionRouteChange(_ notification: Notification) {
 ### 兩層的關係
 
 | 情況 | 第一層（routeChange） | 第二層（stall） |
-| ------ |:-:|:-:|
+| ------ | :-: | :-: |
 | 語音模式切換 → capture 中斷 | ✅ 即時重接 | 備援 |
 | 語音模式切換 → AVAudioConverter 損毀 | ❌ 無效 | ✅ ~3s 重啟 codec |
 | `routeChangeNotification` 未觸發 | ❌ 無效 | ✅ 備援恢復 |
 | 耳機插拔 / 藍牙連接 | ✅ 即時重接 | 備援 |
 
-### 改動檔案總覽
+### 改動檔案總覽 - 新增 audio stall 檢測分支
 
 | 檔案 | 修改類型 |
 | ------ | --------- |
