@@ -380,18 +380,13 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         }
         buffers[track.id]?.append(bufferToAppend, when: when)
         lastOutputPosition[track.id] = when.sampleTime + Int64(audioPCMBuffer.frameLength)
-        if settings.mainTrack == track.id {
-            // main 軌：正常驅動混音時間軸。
-            advanceMix(to: when, numberOfFrames: audioPCMBuffer.frameLength)
-        } else if let mainLastOutput = lastOutputPosition[settings.mainTrack] {
-            // main 軌落後（靜默）超過此幀位置 → 由其他軌推進，避免時間軸停滯
-            // （例如 app 根本沒有在播放聲音，main=app 時 mic 仍要持續輸出）。
-            // 只有 main 明確落後才推進，避免搶先觸發造成 mic 內容被 align 丟棄。
-            if mainLastOutput < when.sampleTime {
-                advanceMix(to: when, numberOfFrames: audioPCMBuffer.frameLength)
-            }
-        } else {
-            // main 軌從未輸出（例如 app 完全沒有播放過）→ 由其他軌推進。
+        // main 軌正常驅動時鐘；main 靜默/從未輸出時由其他軌接手推進（見 MixClockAdvance）。
+        if MixClockAdvance.shouldAdvance(
+            track: track.id,
+            mainTrack: settings.mainTrack,
+            mainLastOutputPosition: lastOutputPosition[settings.mainTrack],
+            position: when.sampleTime
+        ) {
             advanceMix(to: when, numberOfFrames: audioPCMBuffer.frameLength)
         }
     }

@@ -4,6 +4,45 @@
 
 ---
 
+## 62. 測試審計：抽 MixClockAdvance 純決策、補 RTMPTimestamp 缺漏、刪除過時的 verify-ts
+
+**檔案**：`HaishinKit/Sources/Mixer/MixClockAdvance.swift`（新）、
+`HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、
+`HaishinKit/Tests/Mixer/MixClockAdvanceTests.swift`（新）、
+`RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`、
+`.cortexkit/verify-mixer-clock.swift`（改寫）、`.cortexkit/verify-ts.swift`（刪除）
+
+### 62a. 診斷（逐一比對 XCTest 與 `.cortexkit/verify-*.swift`）
+
+- `verify-ts.swift` 是**過時 mirror**：只重寫了舊的 preferredDelta 邏輯，缺真碼
+  的 drift 修正（tolerance 80ms / max correction 5ms / ratio 0.1），案例會過但
+  抓不到 drift 修正的 regression。
+- **混音時鐘 fallback（main 靜默 → 其他軌推進）完全沒有真 XCTest**，只有 mirror
+  腳本；且 `AudioMixerByMultiTrackTests` 把 `outputs.count` 斷言註解掉了
+  （非同步 AU render 不穩），所以直接寫真測試會 flaky。
+- `RTMPTimestampTests` 缺 `allowJump` 分支（真碼 `RTMPTimestamp.swift:61-62` 過去
+  沒有任何測試傳過 `allowJump`）、缺 48k AAC preferredDelta 的 21/21/22 節奏。
+
+### 62b. 修正
+
+- 新增 `MixClockAdvance.shouldAdvance(track:mainTrack:mainLastOutputPosition:position:)`
+  純決策（Foundation-only）；`AudioMixerByMultiTrack.track(_:didOutput:)` 改呼叫
+  它，**行為不變**。決策抽離後即可確定性單元測試，也能在非 Apple 平台驗證。
+- 新增 `MixClockAdvanceTests`（main 驅動 / main 從未輸出 → 其他軌接手 / main 落後
+  → 推進 / 同位置或領先 → 不推進）。
+- `RTMPTimestampTests` 補：48k AAC preferredDelta（抖動來源壓成 21/21/22）、
+  preferredDelta nil 的來源 20/20/37 簽名、allowJump 大幅前跳分支。
+- 刪除 `.cortexkit/verify-ts.swift`（XCTest 已覆蓋其情境且已過時）。
+- `.cortexkit/verify-mixer-clock.swift` 改寫成編譯**真實** `MixClockAdvance.swift`
+  （不再是 mirror）。
+
+### 62c. 驗證
+
+- `swiftc` 實編 `verify-mixer-clock` 全過。
+- 全部改動 `swiftc -parse` 通過；macOS `swift test` 待實機。
+
+---
+
 ## 61. 修正 RTMP 重連：S2 之後同段資料被丟棄導致 connect 永不 resolve
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPHandshake.swift`、
