@@ -4,6 +4,31 @@
 
 ---
 
+## 64. 自動產生 kHaishinKitRevision（SwiftPM build tool plugin）
+
+**時間**：2026/10/05 22:01:46
+
+**檔案**：
+
+- `Plugins/RevisionTool/main.swift`
+- `Plugins/HaishinKitRevisionPlugin/plugin.swift`
+- `Package.swift`
+- `HaishinKit/Sources/Util/Constants.swift`
+
+### 64a. 動機
+
+原本是手動常數，會與實際 HEAD 漂移（App log 曾顯示舊值）；Docs 宣稱的 CI 自動流程並不存在。
+
+### 64b. 實作
+
+SwiftPM build tool plugin：RevisionTool 跑 git rev-parse --short HEAD，HaishinKitRevisionPlugin 產生常數並掛到 HaishinKit target。
+
+### 64c. 驗證
+
+dump-package 通過；Windows 實編 RevisionTool 輸出與 HEAD 相符；macOS build 待實機。
+
+---
+
 ## 63. 新增 CHANGES.md 管理工具 change_log.py（網頁 GUI + CLI）
 
 **時間**：2026/10/05 21:37:01
