@@ -192,17 +192,23 @@ struct RTMPCommandMessage: RTMPMessage {
         self.timestamp = header.timestamp
         self.objectEncoding = objectEncoding
         let serializer = AMF0Serializer(data: payload)
+        var decodeStage = "commandName"
         do {
             commandName = try serializer.deserialize()
+            decodeStage = "transactionId"
             transactionId = try serializer.deserialize()
+            decodeStage = "commandObject"
             commandObject = try serializer.deserialize()
             var arguments: [(any Sendable)?] = []
+            decodeStage = "arguments"
             while 0 < serializer.bytesAvailable {
                 arguments.append(try serializer.deserialize())
             }
             self.arguments = arguments
         } catch {
-            logger.error("\(serializer)")
+            // 不輸出 serializer 原始內容，避免伺服器回送的認證資料進入日誌。
+            header.commandDecodeDiagnostic = "stage=\(decodeStage) offset=\(serializer.position) remaining=\(serializer.bytesAvailable)"
+            logger.error("RTMP command decode failed: \(header.commandDecodeDiagnostic ?? "unknown")")
             return nil
         }
     }

@@ -52,7 +52,11 @@ final class RTMPChunkMessageHeader {
     }
     var messageTypeId: UInt8 = 0
     var messageStreamId: UInt32 = 0
+    // 只存解碼階段與位置，不存伺服器原始內容；由 connection.onLog 轉送。
+    var commandDecodeDiagnostic: String?
     private(set) var payload = Data()
+    /// 已組裝位元組數，供連線診斷區分半包與完整訊息解碼失敗。
+    var receivedPayloadBytes: Int { position }
     private var position = 0
 
     init() {
@@ -80,6 +84,7 @@ final class RTMPChunkMessageHeader {
     }
 
     func makeMessage() -> (any RTMPMessage)? {
+        commandDecodeDiagnostic = nil
         if position < payload.count {
             return nil
         }
