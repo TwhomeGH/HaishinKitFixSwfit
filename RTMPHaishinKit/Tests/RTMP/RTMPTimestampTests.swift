@@ -78,4 +78,46 @@ import Testing
         #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 99.923)), preferredDelta: packetDuration) == 18)
         #expect(abs(timestamp.updatedAt - 100.041) < 0.001)
     }
+
+    @Test func updateAVAudioTimePreferredDeltaKeeps48kAACCadence() throws {
+        // AAC 1024 mono @48k → 21.333ms/pkt。來源是抖動的 20/20/37ms 節奏，
+        // 但 preferredDelta 必須把 wire 壓成穩定的 21/21/22（不得洩漏 20/37；
+        // 平均 ~21.33ms）。mpegts.js 的 audio-ahead 偵測依賴這個穩定節奏。
+        let packetDuration = 1024.0 / 48000.0
+        var timestamp = RTMPTimestamp<AVAudioTime>()
+        var wires: [UInt32] = []
+        var source = 100.0
+        for index in 0..<30 {
+            if index > 0 { source += [0.020, 0.020, 0.037][(index - 1) % 3] }
+            wires.append(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: source)), preferredDelta: packetDuration))
+        }
+        let deltas = Array(wires.dropFirst())
+        #expect(deltas.allSatisfy { $0 == 21 || $0 == 22 }, "wire deltas must be 21/22 only, got \(deltas)")
+        let mean = Double(deltas.reduce(0) { $0 + Int($1) }) / Double(deltas.count)
+        #expect(abs(mean - 21.3333) < 0.1, "mean wire delta ~21.33ms, got \(mean)")
+    }
+
+    @Test func updateAVAudioTimeWithoutPreferredDeltaFollowsSourceCadence() throws {
+        // packetDuration nil（如 sampleRate <= 0）時，wire 直接跟隨來源
+        // 20/20/37ms 節奏——這是診斷用的來源簽名，與 preferredDelta 路徑成對。
+        var timestamp = RTMPTimestamp<AVAudioTime>()
+        var wires: [UInt32] = []
+        var source = 100.0
+        for index in 0..<7 {
+            if index > 0 { source += [0.020, 0.020, 0.037][(index - 1) % 3] }
+            wires.append(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: source))))
+        }
+        #expect(wires == [0, 20, 20, 37, 20, 20, 37])
+    }
+
+    @Test func updateAVAudioTimePreferredDeltaAllowJumpUsesSourceOnLargeDrift() throws {
+        // allowJump（音訊 A/V resync 用）+ 來源大幅前跳 > jump threshold(500ms)：
+        // 直接採用來源 delta 一次跳進同步範圍，而非被 drift 修正慢慢追。
+        let packetDuration = 0.023
+        var timestamp = RTMPTimestamp<AVAudioTime>()
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
+        // +600ms 前跳，drift 577ms > 500ms → jump 至來源 delta 600ms。
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.600)), allowJump: true, preferredDelta: packetDuration) == 600)
+        #expect(abs(timestamp.updatedAt - 100.600) < 0.001)
+    }
 }
