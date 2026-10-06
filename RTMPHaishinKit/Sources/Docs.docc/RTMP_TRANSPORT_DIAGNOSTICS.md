@@ -26,4 +26,4 @@ checkout 原有鎖定檔另存 checkout-Package.resolved；建置結束後的鎖
 
 建置失敗仍嘗試保存與上傳診斷；遭強制終止或 runner 中斷時不保證收尾執行。所有管線使用 bash 的 pipefail，tee 不會掩蓋建置失敗。文件站台 artifact 與 Pages 僅在前置步驟成功後執行，診斷檔不加入公開站台。
 
-新版首頁顯示 checkout 與模組入口，中文化範圍見 [API 文件中文化與首頁維護](DOCUMENTATION_CHINESE.md)。
+新版首頁顯示 checkout 與模組入口，中文化範圍見 [API 文件中文化與首頁維護](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/DOCUMENTATION_CHINESE.md)。
