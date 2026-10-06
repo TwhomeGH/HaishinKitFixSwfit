@@ -49,7 +49,7 @@ struct RTMPConnectionHandshakeTimeoutTests {
         handshakeTimeout: Int,
         timeout: Int
     ) async throws -> (error: RTMPConnection.Error?, elapsed: Duration, logs: String) {
-        let connection = RTMPConnection(handshakeTimeout: handshakeTimeout, timeout: timeout, minimumLogLevel: .error)
+        let connection = RTMPConnection(timeout: timeout, handshakeTimeout: handshakeTimeout, minimumLogLevel: .error)
         let box = LogBox()
         await connection.setOnLog { event in
             box.add("\(event.message) \(event.detail ?? "")")
