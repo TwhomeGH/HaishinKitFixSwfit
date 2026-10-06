@@ -1,5 +1,40 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 65. DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
+
+**時間**：2026/10/07 00:55:19
+
+**檔案**：
+
+- `.github/workflows/docc.yml`
+- `Scripts/build_docc_home.py`
+- `Scripts/docc_home.html`
+- `HaishinKit/Sources/Docs.docc/`
+- `RTMPHaishinKit/Sources/Docs.docc/`
+- `Docs/README.md`
+
+### 65a. 動機
+
+DocC 站台原本只建 2 個模組，公開文件又散在 repo 根 Docs/、未進站台。
+
+### 65b. 內容
+
+DocC 建置擴為 5 模組；5 個 index.md 中文化；23 篇公開面向文件自 Docs/ 遷入各模組 .docc 並以 <doc:> 關聯。
+
+### 65c. 關聯
+
+同模組用 <doc:>；跨模組或目標仍在 Docs 者用 GitHub URL。合併 VIDEO_PIPELINE_API 入 VideoPipelineDiagnostics。
+
+### 65d. 修正
+
+修 2 處過時範例：SRT 發布移除未定義的 audioPlayer；RTC Session 的 SessionBuilderFactory→StreamSessionBuilderFactory。
+
+### 65e. 驗證
+
+test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；CI docc job 待實機驗證。
+
+---
+
 ## 2026.10.06 22:49 補齊影片診斷事件與可用狀態文件
 
 - 將 VideoPipelineEvent 的 22 個 case 與 Availability 的 3 個 case 分別宣告，逐項補上中文觸發條件及限制。

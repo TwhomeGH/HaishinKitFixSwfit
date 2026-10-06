@@ -37,8 +37,9 @@ if sys.platform == "win32":
 
 ROOT = Path(__file__).resolve().parents[1]
 HISTORY = Path(os.environ.get("CHANGELOG_FILE") or (ROOT / "CHANGES.md"))
-# 條目標題：`## 61. 修正 …`
-ENTRY_RE = re.compile(r"^##\s+(\d+)\.\s*(.*)$")
+# 條目標題：`## 61. 修正 …`。數字後必須緊接空白，才不會把日期式標題
+# （`## 2026.10.06 22:49 …`）誤判成編號 2026。
+ENTRY_RE = re.compile(r"^##\s+(\d+)\.\s+(.*)$")
 # 條目時間行（可選）：`**時間**：2026/10/05 12:52:11`
 TIME_RE = re.compile(r"^\*\*時間\*\*[:：]\s*(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s*$", re.MULTILINE)
 
