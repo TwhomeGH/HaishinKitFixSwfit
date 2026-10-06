@@ -104,13 +104,13 @@ try await session.stream.publish("streamKey")
 | [錄影轉送](RECORDING_FORWARDING.md) | ReplayKit extension 錄影轉送設計：`StreamRecorderSink` + `CMSampleBufferCodec`（B+C 已實作，A/橋待接） |
 | [RTMP 恢復生命週期](RTMP_RECOVERY_LIFECYCLE.md) | ReplayKit pause/resume、編碼重啟 API、RTMP publish pipeline recovery |
 | [多平台邊界設計](PLATFORM_BOUNDARIES.md) | protocol/facade 分離 iOS、macOS、visionOS 等平台專屬 API 的規範 |
-| [Session 管理](SESSION_MANAGEMENT.md) | StreamSession 生命週期 |
+| [Session 管理](../HaishinKit/Sources/Docs.docc/SESSION_MANAGEMENT.md) | StreamSession 生命週期（已移入 DocC） |
 | [編解碼器設定](../HaishinKit/Sources/Docs.docc/CODEC_CONFIGURATION.md) | 影音編碼設定（已移入 DocC） |
-| [網路層](NETWORK_LAYER.md) | 網路傳輸與監控 |
+| [網路層](../HaishinKit/Sources/Docs.docc/NETWORK_LAYER.md) | 網路傳輸與監控（已移入 DocC） |
 | [開發指南](DEVELOPMENT_GUIDE.md) | 貢獻與開發環境設定 |
 | [測試](TESTING.md) | 測試結構與執行 |
-| [故障排除](TROUBLESHOOTING.md) | 常見問題與解決方案 |
-| [日誌架構](LOGGING.md) | 遠端日誌：logger 多 handler 並存 + connection.onLog 轉送 |
+| [故障排除](../HaishinKit/Sources/Docs.docc/TROUBLESHOOTING.md) | 常見問題與解決方案（已移入 DocC） |
+| [日誌架構](../HaishinKit/Sources/Docs.docc/LOGGING.md) | 遠端日誌：logger 多 handler 並存 + connection.onLog 轉送（已移入 DocC） |
 | [TODO / 計畫](TODO.md) | 已規劃未實作項目（目前：RTMP 握手分階段逾時） |
 
 ## 相依性

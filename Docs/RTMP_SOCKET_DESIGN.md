@@ -421,5 +421,5 @@ private func armNextReceive() {
 ## 相關檔案
 
 - [CHANGES.md](../CHANGES.md) - 變更記錄
-- [Network Layer](NETWORK_LAYER.md) - 網路層文檔
+- [Network Layer](../HaishinKit/Sources/Docs.docc/NETWORK_LAYER.md) - 網路層文檔
 - [RTMP Protocol](../RTMPHaishinKit/Sources/Docs.docc/RTMP_PROTOCOL.md) - RTMP 協議實現

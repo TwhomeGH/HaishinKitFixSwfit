@@ -6,7 +6,7 @@ HaishinKit.swift 的 StreamSession 管理提供統一的介面來處理不同的
 
 ## 架構
 
-```
+```text
 ┌─────────────────────────────────────┐
 │      StreamSessionBuilderFactory    │
 │  Factory 註冊與建立                  │
@@ -36,6 +36,7 @@ await StreamSessionBuilderFactory.shared.register(MoQTHaishinKit.MoQSessionFacto
 ### StreamSessionBuilder
 
 Builder 負責建立 Session：
+
 - URL 解析
 - 模式選擇（publish/playback）
 - 設定參數

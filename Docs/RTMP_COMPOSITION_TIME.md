@@ -79,4 +79,4 @@ static func offset(hasValidDecodeTimeStamp: Bool,
 ## 相關
 
 - `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`：wire 時間軸的 delta 累積與 clamp。
-- `Docs/NETWORK_LAYER.md`：publish throughput 的 `avOffset` 監測。
+- `HaishinKit/Sources/Docs.docc/NETWORK_LAYER.md`（DocC）：publish throughput 的 `avOffset` 監測。
