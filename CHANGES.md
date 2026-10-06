@@ -4,6 +4,32 @@
 
 ---
 
+## 72. RTMP 握手分階段逾時（P1）
+
+**時間**：2026/10/07 01:34:23
+
+**檔案**：
+
+- `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- `RTMPHaishinKit/Tests/RTMP/RTMPConnectionHandshakeTimeoutTests.swift`
+- `Docs/TODO.md`
+
+### 72a. 動機
+
+CHANGES #56a 只有整體 connect 逾時，無法區分卡在哪一階段、錯誤也無階段名，對診斷與調參不夠精確。
+
+### 72b. 內容
+
+RTMPConnection 改為依狀態分階段逾時：等 S0S1／等 S2 用 handshakeTimeout（預設 10s），等 connect 回應用 timeout；每次狀態前進以遞增 token 重裝，逾時訊息與診斷帶 sta
+ge 名（always）；close() 使計時器失效。
+
+### 72c. 驗證
+
+新增 RTMPConnectionHandshakeTimeoutTests（NWListener 卡在 S0S1／S2，斷言逾時時間與階段名）；swiftc -parse 通過；macOS／iOS 實機待驗（Windows 無法跑 N
+etwork.framework）。
+
+---
+
 ## 71. 新增開發索引（Tools/changelog 套件 + dev_index.py）
 
 **時間**：2026/10/07 01:07:29

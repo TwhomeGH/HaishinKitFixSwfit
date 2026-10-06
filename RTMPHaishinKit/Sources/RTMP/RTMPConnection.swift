@@ -29,6 +29,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     /// The default time to wait for TCP/IP Handshake done.
     public static let defaultTimeout: Int = 15 // sec
+    /// The default time to wait for each RTMP handshake stage (waiting S0S1 / S2).
+    public static let defaultHandshakeTimeout: Int = 10 // sec
     /// The default network's window size for RTMPConnection.
     public static let defaultWindowSizeS: Int64 = 250000
     /// The default capsEx value for E-RTMP compatibility.
@@ -234,6 +236,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     public let capsEx: Int
     /// The time to wait for TCP/IP Handshake done.
     public let timeout: Int
+    /// The time to wait for each RTMP handshake stage (waiting S0S1 / S2).
+    public let handshakeTimeout: Int
     /// The RTMP request timeout value. Defaul value is 500 msec.
     public let requestTimeout: UInt64
     /// The outgoing RTMPChunkSize.
@@ -328,6 +332,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// timeout timer captures the value and only fires if it still matches, so
     /// a stale timer from a previous attempt can never tear down a newer one.
     private var connectGeneration = 0
+    /// Monotonic token for the current handshake stage. Re-armed on each state
+    /// transition; a stale stage timer only fires if its token still matches.
+    private var connectStageToken = 0
     // 每次連線獨立統計；只在 connect 尚未完成時輸出，避免媒體流刷屏。
     private var connectDiagnosticEvents = 0
     private var connectReceivedBytes = 0
@@ -385,6 +392,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         audioFourCcInfoMap: AMFObject? = RTMPConnection.supportedAudioFourCcInfoMap,
         capsEx: Int = RTMPConnection.defaultCapsEx,
         timeout: Int = RTMPConnection.defaultTimeout,
+        handshakeTimeout: Int = RTMPConnection.defaultHandshakeTimeout,
         requestTimeout: UInt64 = RTMPConnection.defaultRequestTimeout,
         chunkSize: Int = RTMPConnection.defaultChunkSizeS,
         qualityOfService: DispatchQoS = .userInitiated,
@@ -400,6 +408,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         self.pageUrl = pageUrl
         self.flashVer = flashVer
         self.timeout = timeout
+        self.handshakeTimeout = handshakeTimeout
         self.fourCcList = useEnhancedRTMP ? fourCcList : nil
         self.videoFourCcInfoMap = useEnhancedRTMP ? videoFourCcInfoMap : nil
         self.audioFourCcInfoMap = useEnhancedRTMP ? audioFourCcInfoMap : nil
@@ -577,17 +586,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         state = .versionSent
                         await socket.send(handshake.c0c1packet)
                         operations[Self.connectTransactionId] = continutation
-                        // Overall connect timeout. The socket's own timeout only
-                        // guards the TCP-connect continuation, so a server that
-                        // accepts TCP but stalls the RTMP handshake (S0S1/S2) or
-                        // never answers the connect command would otherwise hang
-                        // forever (no reconnect would ever fire). `timeout`
-                        // (default 15s) now covers the whole exchange.
-                        let connectTimeout = timeout
-                        Task { [weak self] in
-                            try? await Task.sleep(nanoseconds: UInt64(connectTimeout) * 1_000_000_000)
-                            await self?.timeoutConnectIfPending(generation: generation)
-                        }
+                        // 分階段逾時：從等 S0S1 開始武裝，後續在 listen 的每次狀態
+                        // 前進重裝（等 S2、等 connect 回應）。比單一整體逾時更能
+                        // 區分卡在哪一階段，逾時訊息也帶上階段名。
+                        armStageTimeout(generation: generation, stage: "waiting S0S1", seconds: handshakeTimeout)
                         for await data in await socket.recv() {
                             try await listen(data)
                         }
@@ -693,16 +695,28 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
 
-    /// Fails a connect whose RTMP handshake / connect-command response never
-    /// completed within `timeout`. `generation` guards against a stale timer
-    /// from a previous attempt tearing down the current one.
-    private func timeoutConnectIfPending(generation: Int) async {
+    /// 為目前握手階段武裝逾時。每次狀態前進都以遞增 token 使前一階段的計時器
+    /// 失效，避免它誤殺已前進的連線。
+    private func armStageTimeout(generation: Int, stage: String, seconds: Int) {
+        connectStageToken += 1
+        let token = connectStageToken
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+            await self?.stageTimeoutIfPending(generation: generation, token: token, stage: stage, seconds: seconds)
+        }
+    }
+
+    /// Fails a connect whose handshake stage did not complete within its deadline.
+    /// `generation` guards against a stale timer from a previous attempt, and
+    /// `token` against a timer from an earlier stage of the same attempt.
+    private func stageTimeoutIfPending(generation: Int, token: Int, stage: String, seconds: Int) async {
         guard generation == connectGeneration,
+              token == connectStageToken,
               let operation = operations.removeValue(forKey: Self.connectTransactionId) else {
             return
         }
-        log(.error, "Connect timed out", detail: "timeout=\(timeout)s generation=\(generation)", always: true)
-        logConnectDiagnostic("timeout", detail: "state=\(state) postHandshakeBytes=\(connectReceivedBytes) messages=\(connectParsedMessages) bufferedBytes=\(inputBuffer.remaining) chunkSize=\(chunkSizeC) pendingTransactions=\(operations.keys.sorted())", force: true)
+        log(.error, "Connect timed out", detail: "stage=\(stage) timeout=\(seconds)s generation=\(generation)", always: true)
+        logConnectDiagnostic("timeout", detail: "stage=\(stage) state=\(state) postHandshakeBytes=\(connectReceivedBytes) messages=\(connectParsedMessages) bufferedBytes=\(inputBuffer.remaining) chunkSize=\(chunkSizeC) pendingTransactions=\(operations.keys.sorted())", force: true)
         for (csid, header) in chunks.sorted(by: { $0.key < $1.key }).prefix(16) {
             logConnectDiagnostic("pending chunk", detail: "csid=\(csid) type=\(header.messageTypeId) stream=\(header.messageStreamId) received=\(header.receivedPayloadBytes) expected=\(header.messageLength)", force: true)
         }
@@ -812,6 +826,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             }
         }
         operations.removeAll()
+        // 使任何仍在等待的階段逾時計時器失效，避免關閉後才回報逾時。
+        connectStageToken += 1
         statusContinuation?.yield(status)
     }
 
@@ -916,6 +932,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 log(.debug, "S0S1 received, sending C2", always: true)
                 await socket?.send(handshake.c2packet())
                 state = .ackSent
+                armStageTimeout(generation: connectGeneration, stage: "waiting S2", seconds: handshakeTimeout)
             case .ackSent:
                 handshake.put(pending)
                 pending = .init()
@@ -930,6 +947,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 await networkMonitor?.startRunning()
                 let accepted = doOutput(.zero, chunkStreamId: .command, message: message)
                 logConnectDiagnostic("command queued", detail: "txn=\(message.transactionId) payloadBytes=\(message.payload.count) acceptedBytes=\(accepted) outputGeneration=\(outputGeneration)")
+                armStageTimeout(generation: connectGeneration, stage: "waiting connect response", seconds: timeout)
                 // S2 之後的位元組（伺服器控制訊息 / connect 回應）常與 S2 同段
                 // 抵達；必須交給 chunk parser，否則會靜默丟棄、connect 永不 resolve。
                 pending = handshake.takeTrailing()
