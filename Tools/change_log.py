@@ -256,7 +256,12 @@ def cmd_add(args):
         label, _, body = spec.partition("=")
         sections.append({"label": label.strip(), "body": body.strip()})
     n = next_number()
-    time_str = args.time if args.time is not None else now_stamp()
+    if args.no_time:
+        time_str = ""
+    elif args.time:
+        time_str = args.time
+    else:
+        time_str = now_stamp()
     insert_block(build_block(n, args.title, args.file, sections, time_str=time_str))
     for msg in lint_after_write():
         print("⚠ " + msg)
@@ -389,7 +394,7 @@ a{color:var(--accent);text-underline-offset:2px}hr{border:none;border-top:1px so
 <div id="modal" hidden><div class="dialog">
   <h2>新增條目 <span class="num" id="next-num"></span></h2>
   <label for="f-title">標題</label><input id="f-title" placeholder="修正 RTMP 重連：…">
-  <label for="f-time">時間（可留空；預設當前時間）</label><input id="f-time" placeholder="YYYY/MM/DD HH:MM:SS">
+  <label for="f-time">時間（必填；預設當前時間）</label><input id="f-time" placeholder="YYYY/MM/DD HH:MM:SS">
   <label for="f-file">檔案（可用逗號 / 、 / 換行分隔多個）</label>
   <input id="f-file" placeholder="RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift" list="gitfiles">
   <datalist id="gitfiles"></datalist>
@@ -534,9 +539,11 @@ $('#add').onclick=async()=>{
 $('#cancel').onclick=()=>$('#modal').hidden=true;
 $('#submit').onclick=async()=>{
   const title=$('#f-title').value.trim();
+  const time=$('#f-time').value.trim();
   if(!title){$('#form-err').textContent='請填標題';$('#f-title').focus();return;}
+  if(!time){$('#form-err').textContent='請填時間（YYYY/MM/DD HH:MM:SS）';$('#f-time').focus();return;}
   $('#form-err').textContent='';
-  const body={title,time:$('#f-time').value.trim(),file:$('#f-file').value.trim(),sections:collectSections()};
+  const body={title,time,file:$('#f-file').value.trim(),sections:collectSections()};
   const j=await(await fetch('/api/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   $('#modal').hidden=true;await load();show(0);runLint();
 };
@@ -597,7 +604,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path == "/api/add":
                 num = next_number()
-                time_str = body["time"] if body.get("time") is not None else now_stamp()
+                time_str = (body.get("time") or "").strip() or now_stamp()
                 insert_block(build_block(num, body.get("title", "(無標題)"),
                                          body.get("file", ""), body.get("sections", []),
                                          time_str=time_str))
@@ -647,7 +654,8 @@ def main():
     a = sub.add_parser("add", help="插入新條目（CLI）")
     a.add_argument("title")
     a.add_argument("--file", default="")
-    a.add_argument("--time", default=None, help="時間 YYYY/MM/DD HH:MM:SS（預設當前；傳空字串則不附）")
+    a.add_argument("--time", default=None, help="時間 YYYY/MM/DD HH:MM:SS（預設當前時間）")
+    a.add_argument("--no-time", action="store_true", help="不附加時間（預設會帶當前時間）")
     a.add_argument("--section", action="append", default=[], help="小節，格式 標題=內容（可重複）")
 
     l = sub.add_parser("list", help="檢索條目（CLI）")

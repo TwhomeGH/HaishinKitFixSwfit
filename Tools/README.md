@@ -44,7 +44,7 @@ Windows 可直接雙擊 `Tools/change_log.cmd`。
 ```
 
 - `## <編號>. <標題>`：編號由工具自動取現有最大值 +1。
-- `**時間**：`：可選。新增時預設帶當前系統時間，清空則不附；舊條目若無此行
+- `**時間**：`：新增時**必填**（預設當前系統時間，不可留空）；舊條目若無此行
   不會被補上。
 - 小節為自由增減，工具自動接 `a / b / c …`。
 
@@ -63,7 +63,7 @@ Windows 可直接雙擊 `Tools/change_log.cmd`。
 ## CLI
 
 ```bash
-# 新增（時間預設當前；--time "" 可省略時間）
+# 新增（時間預設當前且必填；--no-time 可省略）
 python Tools/change_log.py add "修正 RTMP 重連" \
   --file "RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift" \
   --section "診斷=..." --section "修正=..." --section "驗證=..."
@@ -80,7 +80,8 @@ python Tools/change_log.py show packetDuration
 `add` 選項：
 
 - `--file` — 檔案，可用 `、` / `,` / 換行分隔多個；輸出為一行一檔（避免 MD013）
-- `--time` — `YYYY/MM/DD HH:MM:SS`；預設當前時間，傳空字串則不附
+- `--time` — `YYYY/MM/DD HH:MM:SS`；預設當前時間（必填）
+- `--no-time` — 不附加時間（預設會帶當前時間）
 - `--section` — `標題=內容`，可重複；順序對應 `a / b / c …`
 
 `list` 選項：`--grep`、`--file`、`--number`。

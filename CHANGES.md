@@ -1,6 +1,10 @@
 # HaishinKitFixSwfit — 改動說明
 
-## 65. DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
+本文件記錄相較於上游 [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) 的所有修正與增強。
+
+---
+
+## 70. DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
 
 **時間**：2026/10/07 00:55:19
 
@@ -13,40 +17,50 @@
 - `RTMPHaishinKit/Sources/Docs.docc/`
 - `Docs/README.md`
 
-### 65a. 動機
+### 70a. 動機
 
 DocC 站台原本只建 2 個模組，公開文件又散在 repo 根 Docs/、未進站台。
 
-### 65b. 內容
+### 70b. 內容
 
 DocC 建置擴為 5 模組；5 個 index.md 中文化；23 篇公開面向文件自 Docs/ 遷入各模組 .docc 並以 <doc:> 關聯。
 
-### 65c. 關聯
+### 70c. 關聯
 
 同模組用 <doc:>；跨模組或目標仍在 Docs 者用 GitHub URL。合併 VIDEO_PIPELINE_API 入 VideoPipelineDiagnostics。
 
-### 65d. 修正
+### 70d. 修正
 
 修 2 處過時範例：SRT 發布移除未定義的 audioPlayer；RTC Session 的 SessionBuilderFactory→StreamSessionBuilderFactory。
 
-### 65e. 驗證
+### 70e. 驗證
 
 test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；CI docc job 待實機驗證。
 
 ---
 
-## 2026.10.06 22:49 補齊影片診斷事件與可用狀態文件
+## 69. 補齊影片診斷事件與可用狀態文件
+
+**時間**：2026/10/06 22:49:00
 
 - 將 VideoPipelineEvent 的 22 個 case 與 Availability 的 3 個 case 分別宣告，逐項補上中文觸發條件及限制。
 - 保留所有 case 名稱與 rawValue；新增 DocC 型別連結與註釋關聯規則。
 
-## 2026.10.06 22:44 補齊影片管線診斷欄位文件
+---
+
+## 68. 補齊影片管線診斷欄位文件
+
+**時間**：2026/10/06 22:44:00
 
 - 為 VideoPipelineSnapshot 與相關佇列、事件快照補上中文欄位、單位、nil 與生命週期說明。
 - 新增 DocC 階段對照及取得範例，區分 Mixer、編碼、RTMP 入列與 socket 完成。
 - 僅修改註釋與文件，未更動執行邏輯；線上更新待下一次部署。
 
-## 2026.10.06 22:39 改善 API 文件首頁與核心診斷中文說明
+---
+
+## 67. 改善 API 文件首頁與核心診斷中文說明
+
+**時間**：2026/10/06 22:39:00
 
 - 首頁改為響應式雙模組卡片，顯示 checkout SHA、ref、標籤、UTC 時間與 CI 連結。
 - 發布前檢查模組輸出，產生 build-info.json 並保留 revision.txt。
@@ -55,24 +69,32 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 詳見 [中文化範圍與首頁維護](Docs/DOCUMENTATION_CHINESE.md)。
 
-## 2026.10.06 22:03 DocC 保留版本與失敗建置證據
+---
+
+## 66. DocC 保留版本與失敗建置證據
+
+**時間**：2026/10/06 22:03:00
 
 - 獨立上傳 revision、manifest、解析前後鎖定檔、工具鏈及模組建置日誌。
 - 失敗仍嘗試上傳診斷，pipefail 保留失敗狀態；僅成功建置可部署 Pages。
 - 加入 Package.resolved 的文件建置觸發條件。首次 CI 實跑仍待確認。
 
-## 2026.10.06 21:52 傳送完成計數與文件入口
+---
+
+## 65. 傳送完成計數與文件入口
+
+**時間**：2026/10/06 21:52:00
 
 - 修正 totalBytesOut 只累計本機無錯誤完成批次；失敗時先關閉，不再續送下一批。
 - 新增 RTMPConnection.transportDiagnostics() 公開快照與連線世代隔離。
 - 新增 HaishinKit／RTMPHaishinKit DocC 目錄及 GitHub Pages workflow。
 - Swift 語法檢查通過；Apple SDK 建置、重連／錯誤傳送與首次 DocC 部署待驗證。
 
-詳見 [傳送診斷](Docs/RTMP_TRANSPORT_DIAGNOSTICS.md)。
-
-本文件記錄相較於上游 [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) 的所有修正與增強。
+詳見 [傳送診斷](RTMPHaishinKit/Sources/Docs.docc/RTMP_TRANSPORT_DIAGNOSTICS.md)。
 
 ---
+
+詳見 [傳送診斷](Docs/RTMP_TRANSPORT_DIAGNOSTICS.md)。
 
 ## 64. 自動產生 kHaishinKitRevision（SwiftPM build tool plugin）
 
