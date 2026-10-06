@@ -108,18 +108,29 @@ try session.connect {
 ### 指南
 
 - <doc:ARCHITECTURE>
-- <doc:CODEC_CONFIGURATION>
-- <doc:MEDIA_MIXER>
 - <doc:SESSION_MANAGEMENT>
 - <doc:NETWORK_LAYER>
 - <doc:LOGGING>
 - <doc:TROUBLESHOOTING>
+- <doc:PLATFORM_BOUNDARIES>
+- <doc:DEVELOPMENT_GUIDE>
+- <doc:TESTING>
+
+### 影音與編碼
+
+- <doc:MEDIA_MIXER>
+- <doc:CODEC_CONFIGURATION>
 - <doc:AUDIO_MULTITRACK_ALIGNMENT>
+- <doc:AUDIO_PIPELINE_DIAGNOSTICS>
 - <doc:RECORDING_FORWARDING>
+- <doc:AudioHE-AAC>
 
 ### 影片管線診斷
 
 - <doc:VideoPipelineDiagnostics>
+- <doc:VIDEO_PIPELINE_API>
+- <doc:VIDEO_QUEUE_DIAGNOSTICS>
+- <doc:ABR_CONGESTION_DESIGN>
 - ``VideoPipelineSnapshot``
 - ``VideoQueueSnapshot``
 - ``VideoPipelineEventsSnapshot``

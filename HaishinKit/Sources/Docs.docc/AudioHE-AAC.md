@@ -15,5 +15,6 @@ await mediaMixer.setAudioMixerSettings(audioSettings)
 logger.info("audio: format=\(AudioCodecSettings.bestAacFormat.audioDescription)")
 ```
 
-# RTMP 端用同一 CodecID (10)
- 傳送，HE-AAC 的差異 只反應在 AudioSpecificConfig 的 AudioObjectType，server/player 自動判讀。
+## RTMP 端用同一 CodecID (10)
+
+使用同一 CodecID (10) 傳送；HE-AAC 的差異只反應在 AudioSpecificConfig 的 AudioObjectType，server/player 自動判讀。

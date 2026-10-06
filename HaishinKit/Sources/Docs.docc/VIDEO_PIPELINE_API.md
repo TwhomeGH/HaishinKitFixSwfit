@@ -2,7 +2,9 @@
 
 ## 入口與用途
 
-`RTMPStream.videoPipelineSnapshot() -> VideoPipelineSnapshot` 是 RTMP 推流的統一唯讀入口，包含原始影像佇列、編碼事件、RTMP 出站事件及背壓計數。此方法為 `public nonisolated`，不需要 `await`，不等待 RTMP／Mixer actor；內部仍會短暫取得統計鎖，並非完全無鎖。
+`RTMPStream.videoPipelineSnapshot() -> VideoPipelineSnapshot` 是 RTMP 推流的統一唯讀入口，包含原始影像佇列、
+編碼事件、RTMP 出站事件及背壓計數。此方法為 `public nonisolated`，不需要 `await`，不等待 RTMP／Mixer
+actor；內部仍會短暫取得統計鎖，並非完全無鎖。
 
 僅使用 Mixer 時，可呼叫 `MediaMixer.videoPipelineSnapshot() -> VideoMixerSnapshot`。舊的文字方法 `videoPipelineDiagnostics()` 仍保留，但新介面應使用結構化資料。
 
@@ -25,7 +27,8 @@ let callbackIdle = snapshot.encoder?.idle(for: .encoderCallback)
 previous = snapshot
 ```
 
-範例中的 `previous` 型別為 `VideoPipelineSnapshot?`，首次設為 `nil`，每次計算後再以本次快照替換。JSON 可包進既有 Socket 訊息；主 App 必須新增解碼／顯示接線，本 API 不會自動傳送到主 App。
+範例中的 `previous` 型別為 `VideoPipelineSnapshot?`，首次設為 `nil`，每次計算後再以本次快照替換。JSON 可包進
+既有 Socket 訊息；主 App 必須新增解碼／顯示接線，本 API 不會自動傳送到主 App。
 
 建議由宿主的固定計時器每 5 秒取樣，即使沒有收到影格也繼續採集；同一時間只允許一個採集工作，UI 保留固定長度歷史。RTMP 內建日誌在推流開始及之後每 5 秒採集，停止時記錄最後快照。
 
@@ -163,7 +166,9 @@ previous = snapshot
    ```
 
 3. 分析頁顯示各階段速率、等待時間及「距上次回呼／交付」；資料缺失標成未知。不要只用前段 FPS 顯示整體 healthy。
-4. 原始輸入持續但 encoderCallback 不前進：查 VT 提交／回呼；callback 前進但 delivered 不動：查失敗與關鍵幀／yield 拒收；delivered 前進但 encodedReceived 不動：查編碼輸出 consumer；videoQueued 前進但 connectionVideoAccepted 不動：查出站 consumer／連線。
+4. 原始輸入持續但 encoderCallback 不前進：查 VT 提交／回呼；callback 前進但 delivered 不動：查失敗與關鍵幀／
+   yield 拒收；delivered 前進但 encodedReceived 不動：查編碼輸出 consumer；videoQueued 前進但
+   connectionVideoAccepted 不動：查出站 consumer／連線。
 5. 沒有輸入時，不應僅因 outputIdle 增加就報消費端故障。停止推流、背景暫停與資料未更新應分開呈現。
 
 時間是單調時鐘，不是日期。UI 必須使用自己的接收時間判斷資料是否過期，不要跨程序直接相減。各階段是依序取樣，並非同一瞬間的原子快照。

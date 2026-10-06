@@ -86,7 +86,7 @@ actor 忙碌時**靜默丟棄音訊幀**。mic 與 app 若**非相關性掉幀**
 5.8ms），門檻內視為量測抖動**不修正**，避免來源 PTS 抖動造成每幀微丟/微補
 （細碎斷音）。累計 `alignFireCount` / `lastAlignDiff` 可從
 `MediaMixer.audioPipelineDiagnostics()` 觀察是否仍在持續動手
-（見 [音訊管線診斷](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/AUDIO_PIPELINE_DIAGNOSTICS.md)）。
+（見 [音訊管線診斷](doc:AUDIO_PIPELINE_DIAGNOSTICS)）。
 
 ### 2. `AudioMixerByMultiTrack.render()`（非 main track 對齊）
 

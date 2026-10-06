@@ -122,7 +122,9 @@ func connect(_ command: String) async throws -> RTMPResponse {
 public struct XYZSessionFactory: StreamSessionFactory {
     public let supportedProtocols: Set<String> = ["xyz"]
     
-    public func make(_ uri: URL, mode: StreamSessionMode, configuration: (any StreamSessionConfiguration)?) -> any StreamSession {
+    public func make(
+        _ uri: URL, mode: StreamSessionMode, configuration: (any StreamSessionConfiguration)?
+    ) -> any StreamSession {
         return XYZSession(uri: uri, mode: mode, configuration: configuration)
     }
 }
@@ -153,7 +155,7 @@ swift test
 swift test --filter RTMPConnectionTests
 ```
 
-詳見 [TESTING.md](TESTING.md)。
+詳見 [測試](doc:TESTING)。
 
 ## 提交 PR
 

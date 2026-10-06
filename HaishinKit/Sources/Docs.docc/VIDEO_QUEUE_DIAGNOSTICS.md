@@ -76,7 +76,8 @@ Mixer 佇列的診斷使用獨立的鎖，不需要等待 Mixer actor。
 
 ## 統一結構化入口
 
-使用 `RTMPStream.videoPipelineSnapshot()` 取得 `VideoPipelineSnapshot`。入口為 `nonisolated`，不必等待 RTMP 或 Mixer actor，包含 Mixer 輸入／輸出、編碼輸入佇列及橋接層背壓計數。RTMP 日誌也使用此入口。
+使用 `RTMPStream.videoPipelineSnapshot()` 取得 `VideoPipelineSnapshot`。入口為 `nonisolated`，不必等待 RTMP
+或 Mixer actor，包含 Mixer 輸入／輸出、編碼輸入佇列及橋接層背壓計數。RTMP 日誌也使用此入口。
 
 快照遵循 `Codable` 與 `Sendable`，主 App 可透過既有 Socket 傳送 JSON，無須解析日誌文字。`schemaVersion` 表示資料格式版本。這次未修改主 App 傳輸協定與分析頁；App 仍須更新底層依賴並接入資料。
 
@@ -93,4 +94,4 @@ Mixer 佇列的診斷使用獨立的鎖，不需要等待 Mixer actor。
 
 ## API 接入文件
 
-完整呼叫範例、回傳欄位、事件語意與 JSON 範例請見 [影像管線診斷 API 使用說明](VIDEO_PIPELINE_API.md)。
+完整呼叫範例、回傳欄位、事件語意與 JSON 範例請見 [影像管線診斷 API 使用說明](doc:VIDEO_PIPELINE_API)。
