@@ -56,7 +56,11 @@ struct RTMPConnectionHandshakeTimeoutTests {
                 self.connections.append(connection)
                 connection.stateUpdateHandler = { [weak self, weak connection] state in
                     guard let self, let connection else { return }
-                    if case .ready = state { self.receiveC0C1(connection) }
+                    if case .ready = state {
+                        self.evidence.add("server ready")
+                        // S0S1 情境刻意保持沉默，也不要求 server 端消費 C0C1。
+                        if self.sendS0S1 { self.receiveC0C1(connection) }
+                    }
                     if case .failed(let error) = state { self.evidence.add("server failed: \(error)") }
                 }
                 connection.start(queue: self.queue)
@@ -126,7 +130,13 @@ struct RTMPConnectionHandshakeTimeoutTests {
         let logs = Evidence()
         // connect 回應逾時拉開距離，保留 CI 排程餘裕但仍能辨別錯用整體逾時。
         let connection = RTMPConnection(timeout: 30, handshakeTimeout: 2, minimumLogLevel: .error)
-        await connection.setOnLog { logs.add("\($0.message) \($0.detail ?? "")") }
+        await connection.setOnLog { event in
+            logs.add("\(event.message) \(event.detail ?? "")")
+            // 沉默 peer 的逾時由 client 計時；不能要求 peer 的 receive callback 先執行。
+            if !sendS0S1, event.message == "TCP connected, sending C0C1" {
+                logs.enteredStage("client entered S0S1 handshake")
+            }
+        }
         var thrown: (any Error)?
         do { _ = try await connection.connect("rtmp://127.0.0.1:\(port)/app/inst") }
         catch { thrown = error }
@@ -140,7 +150,8 @@ struct RTMPConnectionHandshakeTimeoutTests {
         }
         let serverState = server.evidence.snapshot()
         let detail = "error=\(String(describing: thrown))\nserver:\n\(serverState.text)\nclient:\n\(logs.snapshot().text)"
-        let entered = try #require(serverState.start, "未進入預期握手階段；\(detail)")
+        let stageStart = sendS0S1 ? serverState.start : logs.snapshot().start
+        let entered = try #require(stageStart, "未進入預期握手階段；\(detail)")
         let typed = try #require(thrown as? RTMPConnection.Error, "非 RTMP 握手錯誤；\(detail)")
         if case .requestTimedOut = typed {} else { Issue.record("預期 requestTimedOut；\(detail)") }
         let elapsed = entered.duration(to: completedAt)

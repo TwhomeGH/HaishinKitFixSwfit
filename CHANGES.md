@@ -1,5 +1,18 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.07 04:14 修正重複 drain 覆蓋等待者造成 continuation 洩漏
+
+- 完整 CI 日誌確認 waiting S0S1 已正常 requestTimedOut；失敗來自伺服器收包前置條件。
+- RTMPSocket 原先單一 drain continuation 被後續呼叫覆蓋，改為等待者集合；送完或 close 時全部完成，重複 close 不重複 resume。
+- 增加不依賴 TCP 的雙等待者回歸測試；模擬器六百秒收集診斷逾時的成因尚不能直接歸因於此。
+
+## 2026.10.07 04:11 CI 摘要保留 Swift Testing 失敗原因
+
+- 保留 issue 後最多四十行診斷內容，避免握手測試僅顯示 Expectation 而遺失原始錯誤。
+- 整場結果與 issue 不再計為額外失敗測試；XCTest 零測試明確與 Swift Testing 分開。
+- S0S1 測試移除「沉默伺服器必須讀完 C0C1」的額外前置條件，改用客戶端進入握手的時間；保留錯誤型別、耗時及階段日誌斷言。S2 仍要求收到 C2。
+- 原始錯誤尚未取得，不能斷言 TCP 或正式逾時實作無問題；修正後仍需 Apple CI 驗證。
+
 ## 2026.10.07 03:50 強化握手逾時整合測試的階段證據
 
 - 等待 listener ready，讀完整 C0C1 後才回 S0S1，並以收到 C2 證明進入等 S2 階段。

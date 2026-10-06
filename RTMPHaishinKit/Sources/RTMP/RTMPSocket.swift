@@ -131,7 +131,7 @@ final actor RTMPSocket {
     private var isSending = false
     private var qualityOfService: DispatchQoS = .userInitiated
     private var continuation: CheckedContinuation<Void, any Swift.Error>?
-    private var drainContinuation: CheckedContinuation<Void, Never>?
+    private var drainWaiters = RTMPDrainWaiters()
     /// Receive continuation feeding the `recv()` AsyncStream. Kept so the
     /// callback-driven receive loop can yield/finish and close() can tear down.
     private var receiveContinuation: AsyncStream<Data>.Continuation?
@@ -319,22 +319,19 @@ final actor RTMPSocket {
         guard connected else { return }
         guard !sendQueue.isEmpty || isSending else { return }
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            drainContinuation = c
+            drainWaiters.append(c)
         }
     }
 
     func close(_ error: NWError? = nil) {
         sendGeneration &+= 1
+        drainWaiters.finish()
         guard connection != nil else {
             return
         }
         if let continuation {
             continuation.resume(throwing: Error.connectionNotEstablished(error))
             self.continuation = nil
-        }
-        if let drainContinuation {
-            drainContinuation.resume()
-            self.drainContinuation = nil
         }
         
         onLog?(.init(level: .info, message: "Socket close", detail: "error=\(error.map{"\($0)"} ?? "nil") totalBytesIn=\(totalBytesIn) totalBytesOut=\(totalBytesOut)", always: true))
@@ -432,9 +429,8 @@ final actor RTMPSocket {
         backpressureSignal?.update(queueBytes: sendQueue.totalBytes)
         if !sendQueue.isEmpty {
             sendNextChunk()
-        } else if let drainContinuation {
-            drainContinuation.resume()
-            self.drainContinuation = nil
+        } else {
+            drainWaiters.finish()
         }
     }
 

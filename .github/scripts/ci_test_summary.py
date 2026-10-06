@@ -108,6 +108,18 @@ def parse(log_text: str):
     testing_failed_block: list[str] = []
 
     lines = log_text.splitlines()
+    # Swift Testing 的 issue 原因常在下一行（含多行 comment），不能只留下 Expectation。
+    issues: list[str] = []
+    for index, raw in enumerate(lines):
+        if "recorded an issue" not in raw and "Issue recorded" not in raw:
+            continue
+        block = [raw.rstrip()]
+        for following in lines[index + 1:index + 41]:
+            if re.match(r"^\s*[◇✔✘✗✓]\s+(?:Test|Suite)", following) or EXECUTED.search(following):
+                break
+            block.append(following.rstrip())
+        issues.append("\n".join(block).rstrip())
+
     in_failed_block = False
     for raw_line in lines:
         line = raw_line.rstrip()
@@ -149,6 +161,12 @@ def parse(log_text: str):
                     entry["locs"].append(f"{m.group('path')}:{m.group('line')}")
             continue
 
+        # 整場結果與 issue 不是額外的測試個案。
+        if RUN_DONE.search(line):
+            verdict = RUN_DONE.search(line).group(1)
+            continue
+        if "recorded an issue" in line or "Issue recorded" in line:
+            continue
         if TEST_PASS.search(line):
             tests_passed.append(TEST_PASS.search(line).group(1))
             continue
@@ -175,6 +193,7 @@ def parse(log_text: str):
             entry["count"] += 1
 
     return {
+        "issues": issues,
         "errors": errors,
         "other_errors": other_errors,
         "warnings": warnings,
@@ -236,8 +255,13 @@ def print_console(result) -> None:
         for name in result["suites_failed"]:
             print(col(f"  ✘ Suite {name}", "red"))
         console_endgroup()
+    if result["issues"]:
+        console_group("Swift Testing 失敗詳細資訊")
+        for issue in result["issues"]:
+            print(issue)
+        console_endgroup()
     if result["exec_line"]:
-        print(result["exec_line"])
+        print("XCTest 計數（不含 Swift Testing）：" + result["exec_line"])
 
 
 def render_markdown(result) -> str:
@@ -246,7 +270,7 @@ def render_markdown(result) -> str:
     warn_total = warnings_total(result["warnings"])
     passed = len(result["tests_passed"])
     failed = len(result["tests_failed"])
-    ok = not errors and not other_errors and failed == 0 and not result["testing_failed"]
+    ok = not errors and not other_errors and failed == 0 and not result["testing_failed"] and not result["issues"] and result["verdict"] != "failed"
 
     out = []
     out.append("# CI 測試摘要")
@@ -297,8 +321,16 @@ def render_markdown(result) -> str:
     if not result["tests_passed"] and not result["tests_failed"]:
         out.append("_no test results (build failed before running)_")
         out.append("")
+    if result["issues"]:
+        out.extend(["### Swift Testing 失敗詳細資訊", ""])
+        for issue in result["issues"]:
+            # 使用縮排區塊，避免原始訊息中的反引號破壞摘要。
+            out.extend("    " + line for line in issue.splitlines())
+            out.append("")
+    if result["verdict"]:
+        out.extend(["Swift Testing 整場結果：" + result["verdict"], ""])
     if result["exec_line"]:
-        out.append(result["exec_line"])
+        out.append("XCTest 計數（不含 Swift Testing）：" + result["exec_line"])
         out.append("")
 
     return "\n".join(out)
