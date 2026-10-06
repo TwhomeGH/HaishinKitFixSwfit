@@ -29,6 +29,19 @@ final actor RTMPSocket {
     private var securityLevel: StreamSocketSecurityLevel = .none
     private var totalBytesIn = 0
     private var totalBytesOut = 0
+    private var sendGeneration: UInt64 = 0
+    private var failedBatchBytes = 0
+    private var completedBatches = 0
+    private var failedBatches = 0
+    private var lastCompletionMilliseconds: Double?
+
+    /// 由 actor 取得一致快照，無逐封包日誌開銷。
+    func transportDiagnostics() -> RTMPTransportDiagnostics {
+        .init(generation: sendGeneration, queuedBytes: sendQueue.totalBytes,
+              completedBytes: totalBytesOut, failedBatchBytes: failedBatchBytes,
+              completedBatches: completedBatches, failedBatches: failedBatches,
+              lastCompletionMilliseconds: lastCompletionMilliseconds)
+    }
     private var parameters: NWParameters = .tcp
     private var connection: NWConnection? {
         didSet {
@@ -161,6 +174,11 @@ final actor RTMPSocket {
         isSending = false
         totalBytesIn = 0
         totalBytesOut = 0
+        sendGeneration &+= 1
+        failedBatchBytes = 0
+        completedBatches = 0
+        failedBatches = 0
+        lastCompletionMilliseconds = nil
         lastRecvError = nil
         didEndStream = false
         isReceiveStopped = true
@@ -306,6 +324,7 @@ final actor RTMPSocket {
     }
 
     func close(_ error: NWError? = nil) {
+        sendGeneration &+= 1
         guard connection != nil else {
             return
         }
@@ -387,27 +406,35 @@ final actor RTMPSocket {
             return
         }
         isSending = true
+        let generation = sendGeneration
+        let started = DispatchTime.now().uptimeNanoseconds
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             guard let self else { return }
-            Task { await self.didSendChunk(chunk.count, error: error) }
+            Task { await self.didSendChunk(chunk.count, error: error, generation: generation, started: started) }
         })
     }
 
-    private func didSendChunk(_ size: Int, error: NWError?) {
+    private func didSendChunk(_ size: Int, error: NWError?, generation: UInt64, started: UInt64) {
+        // 關閉或重連後的舊 completion 不得消耗新佇列或污染新統計。
+        guard generation == sendGeneration, connection != nil else { return }
+        lastCompletionMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        isSending = false
+        if let error {
+            failedBatches += 1
+            failedBatchBytes += size
+            onLog?(.init(level: .error, message: "Failed to send data", detail: "\(error) failedBatchBytes=\(size)", always: true))
+            close(error)
+            return
+        }
         totalBytesOut += size
+        completedBatches += 1
         sendQueue.consume(size)
         backpressureSignal?.update(queueBytes: sendQueue.totalBytes)
-        isSending = false
         if !sendQueue.isEmpty {
             sendNextChunk()
         } else if let drainContinuation {
             drainContinuation.resume()
             self.drainContinuation = nil
-        }
-        if let error {
-            logger.error("Failed to send data:", error)
-            onLog?(.init(level: .error, message: "Failed to send data", detail: "\(error)", always: true))
-            close(error)
         }
     }
 

@@ -271,6 +271,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         return currentTransactionId
     }
 
+    /// 取得目前 socket 的累計傳送診斷。
+    /// - Returns: socket 不存在時為 nil。成功完成僅代表本機 Network.framework 完成處理。
+    /// 建議每秒取樣並以 generation 分段，不逐幀呼叫；ACK 目前保持未知。
+    public func transportDiagnostics() async -> RTMPTransportDiagnostics? {
+        await socket?.transportDiagnostics()
+    }
+
     private var socket: RTMPSocket?
     /// Non-isolated congestion signal shared with the socket (writer) and the
     /// streams (raw-frame intake readers). Owned here so it survives socket

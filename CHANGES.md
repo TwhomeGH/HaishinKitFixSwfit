@@ -1,5 +1,20 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.06 22:03 DocC 保留版本與失敗建置證據
+
+- 獨立上傳 revision、manifest、解析前後鎖定檔、工具鏈及模組建置日誌。
+- 失敗仍嘗試上傳診斷，pipefail 保留失敗狀態；僅成功建置可部署 Pages。
+- 加入 Package.resolved 的文件建置觸發條件。首次 CI 實跑仍待確認。
+
+## 2026.10.06 21:52 傳送完成計數與文件入口
+
+- 修正 totalBytesOut 只累計本機無錯誤完成批次；失敗時先關閉，不再續送下一批。
+- 新增 RTMPConnection.transportDiagnostics() 公開快照與連線世代隔離。
+- 新增 HaishinKit／RTMPHaishinKit DocC 目錄及 GitHub Pages workflow。
+- Swift 語法檢查通過；Apple SDK 建置、重連／錯誤傳送與首次 DocC 部署待驗證。
+
+詳見 [傳送診斷](Docs/RTMP_TRANSPORT_DIAGNOSTICS.md)。
+
 本文件記錄相較於上游 [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) 的所有修正與增強。
 
 ---

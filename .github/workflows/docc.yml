@@ -1,0 +1,105 @@
+name: DocC Documentation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'HaishinKit/Sources/**'
+      - 'RTMPHaishinKit/Sources/**'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - '.github/workflows/docc.yml'
+permissions:
+  contents: read
+concurrency:
+  group: docc
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Prepare build evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p DocumentationArtifacts
+          git rev-parse HEAD > DocumentationArtifacts/revision.txt
+          cp Package.swift DocumentationArtifacts/Package.swift
+          if [ -f Package.resolved ]; then
+            cp Package.resolved DocumentationArtifacts/checkout-Package.resolved
+          fi
+          {
+            date -u '+builtAt=%Y-%m-%dT%H:%M:%SZ'
+            printf 'runId=%s\nrunAttempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'developerDir=%s\n' "$DEVELOPER_DIR"
+          } > DocumentationArtifacts/build-info.txt
+      - name: Prepare toolchain and resolve packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            xcodebuild -version
+            swift --version
+            xcodebuild -downloadComponent metalToolchain
+            swift package resolve
+          } 2>&1 | tee DocumentationArtifacts/prepare.log
+      - name: Build documentation for both modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          BASE="${GITHUB_REPOSITORY#*/}"
+          for MODULE in HaishinKit RTMPHaishinKit; do
+            swift package --allow-writing-to-directory "site/$MODULE" generate-documentation \
+              --target "$MODULE" --output-path "site/$MODULE" \
+              --transform-for-static-hosting --hosting-base-path "$BASE/$MODULE" \
+              2>&1 | tee "DocumentationArtifacts/$MODULE.log"
+          done
+          printf '<meta charset="utf-8"><h1>HaishinKit API 文件</h1><a href="HaishinKit/documentation/haishinkit/">HaishinKit</a><br><a href="RTMPHaishinKit/documentation/rtmphaishinkit/">RTMPHaishinKit</a>' > site/index.html
+          git rev-parse HEAD > site/revision.txt
+          (cd site && zip -qr ../docc-site.zip .)
+      - name: Preserve resolved packages after success or failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p DocumentationArtifacts
+          if [ -f Package.resolved ]; then
+            cp Package.resolved DocumentationArtifacts/Package.resolved
+          else
+            printf 'Package.resolved was not produced; check prepare.log.\n' > DocumentationArtifacts/package-resolution-status.txt
+          fi
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docc-diagnostics-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: DocumentationArtifacts/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docc-site-${{ github.sha }}
+          path: docc-site.zip
+          if-no-files-found: error
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
