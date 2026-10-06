@@ -6,7 +6,7 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 
 ## 整體架構
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     應用層 (Examples)                        │
 │    iOS / macOS / tvOS / visionOS 範例程式                    │
@@ -31,7 +31,7 @@ HaishinKit.swift 是一套完整的即時串流框架，支援 iOS、macOS、tvO
 
 ## 模組依賴關係
 
-```
+```text
 HaishinKit (核心)
   ├── RTMPHaishinKit → 依賴 HaishinKit
   ├── SRTHaishinKit  → 依賴 HaishinKit
@@ -44,7 +44,7 @@ HaishinKit (核心)
 
 ### 發布串流
 
-```
+```text
 相機/麥克風
     ↓
 MediaMixer (混合/處理)
@@ -64,7 +64,7 @@ RTMPSocket.send() (NWConnection)
 
 ### 播放串流
 
-```
+```text
 網路 ← RTMP 伺服器
     ↓
 RTMPSocket.recv() (NWConnection)
@@ -98,7 +98,7 @@ IncomingStream.append() → 播放
 
 ### 資料流通道
 
-```
+```text
 RTMPStream (actor)
   outputContinuation (AsyncStream)
     → closure

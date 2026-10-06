@@ -139,7 +139,7 @@ await stream.restartVideoEncoding(reason: "video settings updated")
 
 bitrate 類調整通常可由現有 session 動態套用，不應高頻搭配 `restartVideoEncoding(reason:)`。
 RTMP 發布時，`restartVideoEncoding(reason:)` 會重接 publish tasks 與 codec output stream；
-完整 lifecycle 設計見 [RTMP 恢復生命週期](RTMP_RECOVERY_LIFECYCLE.md)。
+完整 lifecycle 設計見 [RTMP 恢復生命週期](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/RTMP_RECOVERY_LIFECYCLE.md)。
 
 ### 音訊設定
 

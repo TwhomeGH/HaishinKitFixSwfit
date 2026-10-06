@@ -18,7 +18,8 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 
 監聽 `AVAudioSession.interruptionNotification`：
 
-- **Began**：記錄 `isAudioSessionInterrupted = true`，`audioIO.suspend()` 卸除所有 AVCaptureDevice 音訊輸入，`session.startRunningIfNeeded()` 保持視訊運作
+- **Began**：記錄 `isAudioSessionInterrupted = true`，`audioIO.suspend()` 卸除所有
+  AVCaptureDevice 音訊輸入，`session.startRunningIfNeeded()` 保持視訊運作
 - **Ended + shouldResume**：依中斷期間是否收到有效 route change 決定 `audioIO.resume()` 或 `audioIO.reset()`，再呼叫輸出端 `restartAudioEncoding(reason:)`
 - **Ended without shouldResume**：不自動恢復音訊 capture，清除延後 reset 狀態，交由上層或後續 session 事件處理
 
@@ -34,7 +35,11 @@ MediaMixer 自動管理 `AVAudioSession` 事件，無需外部配置。
 | interruption 中 | 上述三種原因 | 延後 reset，等 interruption ended 且 `.shouldResume` 時處理 |
 | 任意 | 其他原因 | 不重建管線 |
 
-路由變更發生時會重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後音訊輸入側持續運作。`MediaMixer` 會先透過 `MediaMixerOutput.mixer(_:didReceiveAudioSessionEvent:)` 將 audio session 狀態送給輸出端；RTMPStream 會把這些事件寫入 RTMP connection `onLog`。完成輸入側恢復後，`MediaMixer` 再對已掛上的 `StreamConvertible` 輸出呼叫 `restartAudioEncoding(reason:)`，讓 RTMP 等輸出端用自己的 recovery API 重接 codec output stream 與 publish tasks。
+路由變更發生時會重新附接 capture 裝置，確保語音模式切換（`.default` ↔ `.voiceChat`）、耳機插拔、藍牙連接後
+音訊輸入側持續運作。`MediaMixer` 會先透過 `MediaMixerOutput.mixer(_:didReceiveAudioSessionEvent:)`
+將 audio session 狀態送給輸出端；RTMPStream 會把這些事件寫入 RTMP connection `onLog`。完成輸入側恢復後，
+`MediaMixer` 再對已掛上的 `StreamConvertible` 輸出呼叫 `restartAudioEncoding(reason:)`，讓 RTMP 等
+輸出端用自己的 recovery API 重接 codec output stream 與 publish tasks。
 
 這裡刻意區分兩層責任：
 
@@ -55,7 +60,8 @@ Audio session event 與輸出端 recovery reason 會包含：
 - `currentRoute`
 - `previousRoute`
 
-這些資訊用來確認當時系統回報的 session 狀態，避免把 `.shouldResume` 缺失、interruption 期間 route change、或非必要 route reason 誤判成同一種恢復流程。發布中的 RTMP 診斷透過 `MediaMixerOutput` audio session event callback 與 `restartAudioEncoding(reason:)` 送進 `RTMPConnection.onLog`。
+這些資訊用來確認當時系統回報的 session 狀態，避免把 `.shouldResume` 缺失、interruption 期間 route change、或非必要 route reason 誤判成同一種恢復流程。
+發布中的 RTMP 診斷透過 `MediaMixerOutput` audio session event callback 與 `restartAudioEncoding(reason:)` 送進 `RTMPConnection.onLog`。
 
 ### 清理
 
@@ -211,4 +217,4 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 兩軌混音必須以**來源端 PTS 派生**的位置對齊，否則「先到先混」會把兩軌的起始相位差
 與積壓以錯誤的相對位置混入 → 回音/撕裂。實作於 `AudioRingBuffer.align(to:)` +
 `AudioMixerByMultiTrack.render()`，詳細說明與問題區別見
-[AUDIO_MULTITRACK_ALIGNMENT.md](AUDIO_MULTITRACK_ALIGNMENT.md)。
+[多軌音訊對齊](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/AUDIO_MULTITRACK_ALIGNMENT.md)。

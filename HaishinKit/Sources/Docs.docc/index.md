@@ -105,6 +105,12 @@ try session.connect {
 
 ## Topics
 
+### 指南
+
+- <doc:ARCHITECTURE>
+- <doc:CODEC_CONFIGURATION>
+- <doc:MEDIA_MIXER>
+
 ### 影片管線診斷
 
 - <doc:VideoPipelineDiagnostics>
