@@ -1,0 +1,63 @@
+/* 共用主題：色票（深/淺）、基礎元素與共用元件。各頁再載入自己的版面 CSS。 */
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7; --fg: #111827; --mut: #6b7280; --card: #fff; --field: #fff;
+  --line: #e5e7eb; --line2: #eef0f3; --accent: #2563eb; --accent-fg: #fff;
+  --code: #f3f4f6; --ring: rgba(37, 99, 235, .22); --hdr: rgba(244, 245, 247, .85);
+  --shadow: 0 12px 36px rgba(17, 24, 39, .13); --warn: #b45309; --ok: #059669;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1013; --fg: #e6e8ec; --mut: #98a1ad; --card: #191c22; --field: #14171c;
+  --line: #2b313a; --line2: #232830; --accent: #4f8cff; --accent-fg: #fff;
+  --code: #20242c; --ring: rgba(79, 140, 255, .30); --hdr: rgba(14, 16, 19, .85);
+  --shadow: 0 18px 52px rgba(0, 0, 0, .6); --warn: #fbbf24; --ok: #34d399;
+}
+* { box-sizing: border-box }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.65 -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 10px; height: 10px }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 9px; border: 2px solid var(--bg) }
+::-webkit-scrollbar-thumb:hover { background: var(--mut) }
+a { color: var(--accent); text-underline-offset: 2px; overflow-wrap: anywhere }
+code { background: var(--code); padding: 1px 6px; border-radius: 6px; font-size: .92em }
+pre.code { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow: auto; border: 1px solid var(--line); white-space: pre-wrap }
+.muted { color: var(--mut) }
+small { color: var(--mut) }
+
+input, select, textarea, button { font: inherit; color: var(--fg) }
+input, select, textarea {
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--field); width: 100%; transition: border-color .15s, box-shadow .15s;
+}
+input:hover, select:hover, textarea:hover { border-color: var(--mut) }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring) }
+::placeholder { color: var(--mut); opacity: .8 }
+button {
+  cursor: pointer; padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); transition: background .15s, border-color .15s, transform .05s;
+}
+button:hover { background: var(--line2) }
+button:active { transform: translateY(1px) }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
+button.primary:hover { filter: brightness(1.07); background: var(--accent) }
+
+/* 頂列與共用卡片／標籤 */
+.appbar {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 8px;
+  padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+  background: var(--hdr); backdrop-filter: blur(10px); z-index: 5;
+}
+.appbar h1 { font-size: 16px; font-weight: 700; margin: 0 10px 0 0; white-space: nowrap }
+.appbar input, .appbar select { width: auto }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin: 12px 0 }
+.chip {
+  font-size: 12px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 20px;
+  cursor: pointer; background: var(--bg); color: var(--mut);
+}
+.chip:hover { border-color: var(--accent); color: var(--accent) }
+.empty { color: var(--mut); padding: 30px; text-align: center }
+@media (max-width: 640px) { .appbar { gap: 6px } }

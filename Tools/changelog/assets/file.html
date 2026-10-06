@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{title}} — 開發索引</title>
+<script src="/assets/theme.js"></script>
+<link rel="stylesheet" href="/assets/theme.css">
+<link rel="stylesheet" href="/assets/file.css">
+</head><body>
+<header class="appbar">
+  <a href="/development" id="back">← 返回索引</a>
+  <strong id="name">{{title}}</strong>
+  <span class="muted">{{repo}}</span>
+  <span class="spacer"></span>
+  <button id="mode" hidden>原始碼</button>
+  <input id="jump" type="number" min="1" placeholder="行號" aria-label="跳到行號">
+  <button id="copy" title="複製路徑">複製路徑</button>
+  <button id="theme" aria-label="切換深淺色" title="切換深/淺色">🌙</button>
+</header>
+<div class="wrap">
+  <pre id="src" data-repo="{{repo}}" data-path="{{path}}" data-line="{{line}}">{{content}}</pre>
+  <article id="rendered" class="rendered" hidden></article>
+</div>
+<script src="/assets/highlight.js"></script>
+<script src="/assets/markdown.js"></script>
+<script src="/assets/file.js"></script>
+</body></html>

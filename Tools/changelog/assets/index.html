@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>變更歷史</title>
+<script src="/assets/theme.js"></script>
+<link rel="stylesheet" href="/assets/theme.css">
+<link rel="stylesheet" href="/assets/index.css">
+</head><body>
+<header class="appbar">
+  <h1>變更歷史</h1>
+  <a href="/development">功能／API／近期改動索引</a>
+  <input id="q" aria-label="搜尋標題或內容" placeholder="搜尋標題 / 內容…">
+  <select id="type" aria-label="依類型篩選">
+    <option value="">全部類型</option><option>修復</option><option>新增</option>
+    <option>優化</option><option>重構</option><option>測試</option>
+  </select>
+  <button id="reload" aria-label="重新載入" title="重新載入">↻</button>
+  <button id="theme" aria-label="切換深淺色" title="切換深/淺色">🌙</button>
+  <button id="add" class="primary">＋ 新增紀錄</button>
+</header>
+<main>
+  <aside id="list"></aside>
+  <section id="detail"><div class="empty">← 選擇一筆紀錄</div></section>
+</main>
+
+<div id="modal" hidden><div class="dialog">
+  <h2>新增紀錄</h2>
+  <label for="f-title">標題</label><input id="f-title" placeholder="修復 PiP 閃退">
+  <div class="row">
+    <div><label for="f-date">日期</label><input id="f-date" placeholder="YYYY.MM.DD"></div>
+    <div><label for="f-time">時間（可留空）</label><input id="f-time" placeholder="HH:MM"></div>
+    <div><label for="f-type">類型</label>
+      <select id="f-type"><option>修復</option><option>新增</option><option>優化</option><option>重構</option><option>測試</option></select>
+    </div>
+  </div>
+  <label for="f-file">檔案</label><input id="f-file" placeholder="liveAPP/Socket.swift" list="gitfiles">
+  <datalist id="gitfiles"></datalist>
+  <div class="chips" id="chips"></div>
+  <label for="f-problem">問題（第一行 = 標題摘要）</label><textarea id="f-problem" placeholder="症狀摘要&#10;（其後可換行寫詳述）"></textarea>
+  <label for="f-cause">根因（可選，第一行 = 標題摘要）</label><textarea id="f-cause" placeholder="根因摘要&#10;（其後可換行寫詳述）"></textarea>
+  <label for="f-changes">修改（第一行 = 標題摘要，其後每行一項）</label><textarea id="f-changes" placeholder="核心手法摘要&#10;其他改動（每行一項）"></textarea>
+  <label>相關文件（可選，可多筆）</label>
+  <div id="refs"></div>
+  <button type="button" id="add-ref">＋ 新增文件</button>
+  <div class="foot">
+    <div id="form-err" class="err"></div>
+    <div class="right"><button id="cancel">取消</button><button id="submit" class="primary">插入</button></div>
+  </div>
+</div></div>
+
+<script src="/assets/index.js"></script>
+</body></html>

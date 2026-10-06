@@ -1,0 +1,67 @@
+/* 檔案檢視頁：行號、行跳轉、目標行高亮與語法上色。主題與共用元件在 theme.css。 */
+.appbar .spacer { flex: 1 }
+.appbar #jump { width: 92px }
+.wrap { height: calc(100vh - 53px); overflow: auto }
+#src {
+  margin: 0; padding: 6px 0 40px;
+  font: 13px/1.55 ui-monospace, Consolas, "Courier New", monospace;
+  white-space: pre; min-width: max-content;
+}
+#src .ln { display: block; padding: 0 16px 0 0 }
+#src .ln:hover { background: var(--line2) }
+#src .ln:target, #src .ln.hit { background: rgba(245, 158, 11, .24) }
+#src .no {
+  color: var(--mut); text-decoration: none; display: inline-block;
+  width: 4.6em; text-align: right; margin-right: 14px; user-select: none;
+}
+#src .no:hover { color: var(--accent) }
+
+/* 語法上色：深色預設，淺色主題再覆寫。 */
+.tok-k { color: #c586c0 } /* 關鍵字 */
+.tok-t { color: #4ec9b0 } /* 型別 */
+.tok-f { color: #dcdcaa } /* 函式 */
+.tok-s { color: #ce9178 } /* 字串 */
+.tok-c { color: #6a9955 } /* 註釋 */
+.tok-n { color: #b5cea8 } /* 數字 */
+.tok-a { color: #d7ba7d } /* 屬性／前置 */
+:root[data-theme="light"] .tok-k { color: #af00db }
+:root[data-theme="light"] .tok-t { color: #267f99 }
+:root[data-theme="light"] .tok-f { color: #795e26 }
+:root[data-theme="light"] .tok-s { color: #a31515 }
+:root[data-theme="light"] .tok-c { color: #008000 }
+:root[data-theme="light"] .tok-n { color: #098658 }
+:root[data-theme="light"] .tok-a { color: #795e26 }
+
+@media (max-width: 640px) { .appbar #name { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap } }
+
+/* Markdown 排版檢視 */
+.wrap > [hidden] { display: none }
+.rendered { max-width: 920px; margin: 0 auto; padding: 22px 22px 64px; line-height: 1.75 }
+.rendered h1, .rendered h2, .rendered h3, .rendered h4 { line-height: 1.3; margin: 1.4em 0 .5em }
+.rendered h1 { font-size: 1.7em; border-bottom: 1px solid var(--line); padding-bottom: .3em }
+.rendered h2 { font-size: 1.35em; border-bottom: 1px solid var(--line); padding-bottom: .25em }
+.rendered h3 { font-size: 1.15em }
+.rendered p, .rendered ul, .rendered ol, .rendered table, .rendered pre, .rendered blockquote, .rendered .alert { margin: .7em 0 }
+.rendered ul, .rendered ol { padding-left: 1.6em }
+.rendered li { margin: .2em 0 }
+.rendered img { max-width: 100%; border-radius: 8px }
+.rendered hr { border: 0; border-top: 1px solid var(--line); margin: 1.4em 0 }
+.rendered table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto }
+.rendered th, .rendered td { border: 1px solid var(--line); padding: 6px 10px; text-align: left }
+.rendered th { background: var(--code) }
+.rendered blockquote { border-left: 3px solid var(--line); margin-left: 0; padding: .2em 0 .2em 1em; color: var(--mut) }
+
+/* GitHub 提示框（> [!NOTE] 等） */
+.rendered .alert { border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px; padding: 10px 14px }
+.rendered .alert-title { margin: 0 0 .3em; font-weight: 600; display: flex; align-items: center; gap: .4em }
+.rendered .alert p:last-child { margin-bottom: 0 }
+.alert-note { border-left-color: #3b82f6; background: rgba(59, 130, 246, .10) }
+.alert-tip { border-left-color: #10b981; background: rgba(16, 185, 129, .10) }
+.alert-important { border-left-color: #8b5cf6; background: rgba(139, 92, 246, .10) }
+.alert-warning { border-left-color: #f59e0b; background: rgba(245, 158, 11, .12) }
+.alert-caution { border-left-color: #ef4444; background: rgba(239, 68, 68, .10) }
+.alert-note .alert-title { color: #3b82f6 }
+.alert-tip .alert-title { color: #10b981 }
+.alert-important .alert-title { color: #8b5cf6 }
+.alert-warning .alert-title { color: #f59e0b }
+.alert-caution .alert-title { color: #ef4444 }

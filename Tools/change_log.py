@@ -35,6 +35,9 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
+# 讓 Tools/ 下的 changelog 套件（開發索引）可被 import。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 ROOT = Path(__file__).resolve().parents[1]
 HISTORY = Path(os.environ.get("CHANGELOG_FILE") or (ROOT / "CHANGES.md"))
 # 條目標題：`## 61. 修正 …`。數字後必須緊接空白，才不會把日期式標題
@@ -381,6 +384,7 @@ a{color:var(--accent);text-underline-offset:2px}hr{border:none;border-top:1px so
   <h1>CHANGES.md</h1>
   <span class="num" id="count"></span>
   <span id="lint" class="warn"></span>
+  <a href="/development" style="padding:9px 13px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);text-decoration:none">開發索引</a>
   <input id="q" aria-label="搜尋標題或內容" placeholder="搜尋標題 / 內容…">
   <button id="reload" aria-label="重新載入" title="重新載入">↻</button>
   <button id="theme" aria-label="切換深淺色" title="切換深/淺色">🌙</button>
@@ -567,6 +571,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path.startswith("/development"):
+            from changelog import devindex
+            return self._send(*devindex.route(u.path, u.query))
+        if u.path.startswith("/assets/"):
+            from changelog import assets
+            name = u.path[len("/assets/"):]
+            try:
+                return self._send(200, assets.read(name), assets.mime(name))
+            except (ValueError, OSError):
+                return self._send(404, b"", "text/plain; charset=utf-8")
         if u.path == "/":
             return self._send(200, PAGE, "text/html; charset=utf-8")
         if u.path == "/favicon.ico":

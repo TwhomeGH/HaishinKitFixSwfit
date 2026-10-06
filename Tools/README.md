@@ -17,6 +17,27 @@ python Tools/change_log.py serve --port 8765 --no-browser
 
 Windows 可直接雙擊 `Tools/change_log.cmd`。
 
+## 開發索引（dev_index.py）
+
+除變更歷史外，另提供「開發索引」本機頁面，方便查 API 與追蹤近期改動：
+
+```bash
+python Tools/dev_index.py                 # 啟動並自動開瀏覽器（預設 8711）
+python Tools/dev_index.py --port 8712 --no-browser
+```
+
+- **API 宣告**：純文字掃描 repo 內 `.swift`（func／struct／class／enum／protocol／
+  actor／extension／typealias／property，含多行簽名與相鄰 `///` 註釋），可點進
+  `file:line`；搜尋符號名稱。
+- **文件**：列出所有 `.md`。
+- **近期改動／版本**：HEAD、未提交變更、最近 20 筆 commit 與其檔案、`Package.resolved`。
+- **檔案檢視**：行號、跳行、目標行高亮、Swift 語法上色；`.md` 預設排版檢視可切回原始碼。
+- 同一頁面亦可由變更歷史伺服器的 `/development` 進入（`change_log.py` 啟動後，標題列
+  有「開發索引」連結）。
+
+實作位於 `Tools/changelog/`（`devindex` 索引 + `assets` 網頁資產）。若存在
+`Docs/development/features.json`（可選，人工維護的功能清單），會多出「功能與接入」分頁。
+
 ## 條目格式
 
 工具產生與解析的格式：
