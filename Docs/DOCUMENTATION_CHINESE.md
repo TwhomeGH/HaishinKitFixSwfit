@@ -18,7 +18,9 @@ API 名稱、協定常數與範例程式保留原文。DocC 的 Overview、Topic
 
 ## 文件首頁
 
-`Scripts/build_docc_home.py --site site` 使用 `Scripts/docc_home.html` 產生響應式首頁。先檢查每個模組的 index.html 與 data/documentation 模組 JSON，再寫入首頁、build-info.json 與 revision.txt。沒有實際模組資料時建置失敗，避免發布無效導覽。
+`Scripts/build_docc_home.py --site site` 使用 `Scripts/docc_home.html` 產生響應式首頁。
+
+先檢查每個模組的 index.html 與 data/documentation 模組 JSON，再寫入首頁、build-info.json 與 revision.txt。沒有實際模組資料時建置失敗，避免發布無效導覽。
 
 版本資訊包含實際 HEAD、Git ref、HEAD 上的標籤、已追蹤檔案是否修改、UTC 產生時間及 CI 執行連結。Git ref 只是補充資訊；完整 HEAD 才是版本依據。這不是使用者裝置上的 App BuildInfo，也不涵蓋未追蹤檔案。
 
@@ -27,7 +29,6 @@ API 名稱、協定常數與範例程式保留原文。DocC 的 Overview、Topic
 使用者已於 2026-10-06 確認原版 DocC 網站與傳送診斷頁可瀏覽。新版首頁與中文註釋仍需下一次 workflow 部署驗收。
 
 本機執行 `python Scripts/test_docc_home.py` 驗證版本資訊、HTML 跳脫與缺模組時停止產出。Apple SDK 的文件連結解析以 DocC workflow 為準。此次瀏覽器工具無法建立連線，尚未完成桌面／窄螢幕視覺驗收。
-
 
 ## 文件註釋關聯規則
 
@@ -44,3 +45,7 @@ public var acknowledgedBytes: Int? { nil }
 Markdown 文章負責流程、跨型別對照與使用範例，屬性／case 定義以 Swift 註釋為單一來源。新增接口要同步記錄用途、單位、生命週期及 nil 意義。
 
 影片診斷追加批次已補齊 VideoPipelineEvent 的 22 個 case、Availability 的 3 個 case，以及快照屬性說明。網站更新仍需重新建置並部署 DocC。
+
+## 社群入口
+
+根首頁提供 Discord 開發交流與 Twitch 開發／日常／遊戲直播入口；連結集中維護於 `Scripts/docc_home.html`。修改模板會觸發 DocC 工作流程，需部署後才會更新網站。

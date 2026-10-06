@@ -1,5 +1,10 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.07 03:23 文件首頁加入社群與直播入口
+
+- 根首頁導覽新增社群交流定位，提供 Discord 群與 Twitch 開發／日常／遊戲直播連結。
+- 保留目前五個公開模組與 checkout 版本資訊；網站更新待 DocC 部署。
+
 本文件記錄相較於上游 [HaishinKit/HaishinKit.swift](https://github.com/HaishinKit/HaishinKit.swift) 的所有修正與增強。
 
 ---
