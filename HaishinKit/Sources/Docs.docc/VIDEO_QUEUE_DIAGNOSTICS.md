@@ -94,4 +94,4 @@ Mixer 佇列的診斷使用獨立的鎖，不需要等待 Mixer actor。
 
 ## API 接入文件
 
-完整呼叫範例、回傳欄位、事件語意與 JSON 範例請見 [影像管線診斷 API 使用說明](doc:VIDEO_PIPELINE_API)。
+完整呼叫範例、回傳欄位、事件語意與 JSON 範例請見 [影片管線診斷](doc:VideoPipelineDiagnostics)。

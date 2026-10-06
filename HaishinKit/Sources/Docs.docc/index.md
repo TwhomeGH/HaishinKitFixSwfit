@@ -128,7 +128,6 @@ try session.connect {
 ### 影片管線診斷
 
 - <doc:VideoPipelineDiagnostics>
-- <doc:VIDEO_PIPELINE_API>
 - <doc:VIDEO_QUEUE_DIAGNOSTICS>
 - <doc:ABR_CONGESTION_DESIGN>
 - ``VideoPipelineSnapshot``
