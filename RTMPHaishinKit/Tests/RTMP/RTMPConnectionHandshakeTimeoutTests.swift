@@ -22,22 +22,42 @@ struct RTMPConnectionHandshakeTimeoutTests {
         }
     }
 
+    /// 保留 server 端已接受的連線。**必須保留**：`newConnectionHandler` 給的
+    /// `NWConnection` 若無人持有會被釋放，TCP 連線隨之拆除，客戶端的
+    /// `RTMPSocket.connect` 便永遠等不到 `.ready`，直到它自己的 15s 逾時。
+    private final class ServerConnections: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [NWConnection] = []
+        func retain(_ connection: NWConnection) {
+            lock.lock(); items.append(connection); lock.unlock()
+        }
+        func cancelAll() {
+            lock.lock(); items.forEach { $0.cancel() }; items.removeAll(); lock.unlock()
+        }
+    }
+
     private static func isRequestTimedOut(_ error: RTMPConnection.Error?) -> Bool {
         guard let error else { return false }
         if case .requestTimedOut = error { return true }
         return false
     }
 
-    /// 接受 TCP 連線但對每個連線的回應由 `respond` 決定；回傳可用的 port。
-    private func startListener(_ respond: @escaping @Sendable (NWConnection) -> Void) async throws -> (NWListener, UInt16) {
+    /// 接受 TCP 連線，並在連線 `.ready` 後呼叫 `respond`；回傳可用的 port 與連線持有盒。
+    private func startListener(
+        _ respond: @escaping @Sendable (NWConnection) -> Void
+    ) async throws -> (listener: NWListener, port: UInt16, connections: ServerConnections) {
         let listener = try NWListener(using: .tcp, on: .any)
+        let connections = ServerConnections()
         listener.newConnectionHandler = { connection in
+            connections.retain(connection)
+            connection.stateUpdateHandler = { state in
+                if case .ready = state { respond(connection) }
+            }
             connection.start(queue: .global())
-            respond(connection)
         }
         listener.start(queue: .global())
         for _ in 0..<200 {
-            if let port = listener.port { return (listener, port.rawValue) }
+            if let port = listener.port { return (listener, port.rawValue, connections) }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         listener.cancel()
@@ -74,11 +94,14 @@ struct RTMPConnectionHandshakeTimeoutTests {
     @Test("等不到 S0S1：以 handshakeTimeout 逾時，訊息帶 waiting S0S1")
     func timesOutWaitingForS0S1() async throws {
         // TCP 接受連線但完全不送資料 → 卡在等 S0S1。
-        let (listener, port) = try await startListener { _ in }
-        defer { listener.cancel() }
+        let server = try await startListener { _ in }
+        defer {
+            server.listener.cancel()
+            server.connections.cancelAll()
+        }
 
         // handshakeTimeout(1s) 應先於 timeout(5s) 觸發。
-        let result = try await connectExpectingTimeout(port: port, handshakeTimeout: 1, timeout: 5)
+        let result = try await connectExpectingTimeout(port: server.port, handshakeTimeout: 1, timeout: 5)
 
         #expect(Self.isRequestTimedOut(result.error))
         #expect(result.elapsed < .seconds(4))
@@ -88,14 +111,17 @@ struct RTMPConnectionHandshakeTimeoutTests {
     @Test("等到 S0S1 但等不到 S2：逾時訊息帶 waiting S2")
     func timesOutWaitingForS2() async throws {
         // 送 S0 + S1（version 3 + 1536 bytes）後不再送 S2。
-        let (listener, port) = try await startListener { connection in
+        let server = try await startListener { connection in
             var s0s1 = Data([0x03])
             s0s1.append(Data(repeating: 0x00, count: 1536))
             connection.send(content: s0s1, completion: .contentProcessed { _ in })
         }
-        defer { listener.cancel() }
+        defer {
+            server.listener.cancel()
+            server.connections.cancelAll()
+        }
 
-        let result = try await connectExpectingTimeout(port: port, handshakeTimeout: 1, timeout: 5)
+        let result = try await connectExpectingTimeout(port: server.port, handshakeTimeout: 1, timeout: 5)
 
         #expect(Self.isRequestTimedOut(result.error))
         #expect(result.elapsed < .seconds(4))
