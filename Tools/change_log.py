@@ -123,6 +123,53 @@ def _letters(idx):
     return out
 
 
+# 原子片段：不要在其中換行（行內程式碼、Markdown 連結目的）。
+_ATOMIC_RE = re.compile(r"`[^`\n]*`|\[[^\]]*\]\([^)]*\)")
+
+
+def _wrap(text, width=118):
+    """把過長的行折到 width 以內（避免 markdownlint MD013）。
+
+    以字元數計算（markdownlint 即如此）；CJK 逐字可斷行，但不打斷行內程式碼
+    （`` `…` ``）與 Markdown 連結（``[..](..)``）。
+    """
+    out = []
+    for line in text.split("\n"):
+        if len(line) <= width:
+            out.append(line)
+            continue
+        tokens, pos = [], 0
+        for m in _ATOMIC_RE.finditer(line):
+            if m.start() > pos:
+                tokens.append(("text", line[pos:m.start()]))
+            tokens.append(("atomic", m.group(0)))
+            pos = m.end()
+        if pos < len(line):
+            tokens.append(("text", line[pos:]))
+        cur = ""
+        for kind, tok in tokens:
+            if kind == "atomic":
+                if cur and len(cur) + len(tok) > width:
+                    out.append(cur.rstrip())
+                    cur = ""
+                if len(tok) > width:
+                    if cur:
+                        out.append(cur.rstrip())
+                        cur = ""
+                    out.append(tok)
+                else:
+                    cur += tok
+            else:
+                for ch in tok:
+                    if len(cur) >= width:
+                        out.append(cur.rstrip())
+                        cur = ""
+                    cur += ch
+        if cur:
+            out.append(cur.rstrip())
+    return "\n".join(out)
+
+
 def build_block(number, title, files="", sections=None, time_str=""):
     """組出這個 repo 風格的條目：`## n. 標題` + 時間 + 檔案 + 自由小節（自動接字母）。"""
     lines = ["## %d. %s" % (number, title), ""]
@@ -148,7 +195,7 @@ def build_block(number, title, files="", sections=None, time_str=""):
         heading = "### %d%s. %s" % (number, letter, label) if label else "### %d%s." % (number, letter)
         lines.append(heading)
         if body:
-            lines += ["", body]
+            lines += ["", _wrap(body)]
         lines.append("")
     while lines and lines[-1] == "":
         lines.pop()
