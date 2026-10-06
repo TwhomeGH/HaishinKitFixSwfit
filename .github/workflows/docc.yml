@@ -8,6 +8,9 @@ on:
       - 'RTMPHaishinKit/Sources/**'
       - 'Package.swift'
       - 'Package.resolved'
+      - 'Scripts/build_docc_home.py'
+      - 'Scripts/docc_home.html'
+      - 'Scripts/test_docc_home.py'
       - '.github/workflows/docc.yml'
 permissions:
   contents: read
@@ -39,6 +42,8 @@ jobs:
             printf 'runId=%s\nrunAttempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
             printf 'developerDir=%s\n' "$DEVELOPER_DIR"
           } > DocumentationArtifacts/build-info.txt
+      - name: Test documentation home generator
+        run: python3 Scripts/test_docc_home.py
       - name: Prepare toolchain and resolve packages
         shell: bash
         run: |
@@ -61,8 +66,8 @@ jobs:
               --transform-for-static-hosting --hosting-base-path "$BASE/$MODULE" \
               2>&1 | tee "DocumentationArtifacts/$MODULE.log"
           done
-          printf '<meta charset="utf-8"><h1>HaishinKit API 文件</h1><a href="HaishinKit/documentation/haishinkit/">HaishinKit</a><br><a href="RTMPHaishinKit/documentation/rtmphaishinkit/">RTMPHaishinKit</a>' > site/index.html
-          git rev-parse HEAD > site/revision.txt
+          python3 Scripts/build_docc_home.py --site site
+          cp site/build-info.json DocumentationArtifacts/site-build-info.json
           (cd site && zip -qr ../docc-site.zip .)
       - name: Preserve resolved packages after success or failure
         if: always()

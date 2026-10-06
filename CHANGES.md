@@ -1,5 +1,25 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.06 22:49 補齊影片診斷事件與可用狀態文件
+
+- 將 VideoPipelineEvent 的 22 個 case 與 Availability 的 3 個 case 分別宣告，逐項補上中文觸發條件及限制。
+- 保留所有 case 名稱與 rawValue；新增 DocC 型別連結與註釋關聯規則。
+
+## 2026.10.06 22:44 補齊影片管線診斷欄位文件
+
+- 為 VideoPipelineSnapshot 與相關佇列、事件快照補上中文欄位、單位、nil 與生命週期說明。
+- 新增 DocC 階段對照及取得範例，區分 Mixer、編碼、RTMP 入列與 socket 完成。
+- 僅修改註釋與文件，未更動執行邏輯；線上更新待下一次部署。
+
+## 2026.10.06 22:39 改善 API 文件首頁與核心診斷中文說明
+
+- 首頁改為響應式雙模組卡片，顯示 checkout SHA、ref、標籤、UTC 時間與 CI 連結。
+- 發布前檢查模組輸出，產生 build-info.json 並保留 revision.txt。
+- 中文化九份核心診斷、網路及狀態文件，修正區塊、樣本、位元組與速率的說明；可執行程式碼未變。
+- 原 DocC 網站已由使用者確認有效；新版首頁視覺與部署仍待驗收。
+
+詳見 [中文化範圍與首頁維護](Docs/DOCUMENTATION_CHINESE.md)。
+
 ## 2026.10.06 22:03 DocC 保留版本與失敗建置證據
 
 - 獨立上傳 revision、manifest、解析前後鎖定檔、工具鏈及模組建置日誌。

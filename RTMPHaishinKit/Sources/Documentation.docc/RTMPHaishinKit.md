@@ -1,6 +1,6 @@
 # ``RTMPHaishinKit``
 
-串流套件 API 文件。
+RTMP 連線、串流發布與傳送診斷 API。
 
 ## Overview
 
@@ -12,6 +12,14 @@
 
 - ``RTMPConnection``
 - ``RTMPTransportDiagnostics``
+- ``RTMPLogEvent``
+- ``RTMPLogLevel``
+
+### 串流狀態與回應
+
+- ``RTMPStatus``
+- ``RTMPResponse``
+- ``RTMPStreamInfo``
 
 ## 使用傳送診斷
 

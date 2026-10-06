@@ -16,7 +16,7 @@
 
 `.github/workflows/docc.yml` 以現有 swift-docc-plugin 分別產生 HaishinKit／RTMPHaishinKit 文件，zip artifact 與 GitHub Pages 共用同一站台
 
-附 revision.txt。倉庫 Pages 需選用 GitHub Actions。Apple SDK 建置與首次部署尚待 workflow 實跑確認。
+附 revision.txt。倉庫 Pages 需選用 GitHub Actions。使用者已於 2026-10-06 確認已部署的 DocC 網站與 RTMPTransportDiagnostics 頁有效；不代表 RTMP 傳送行為已完成實機驗證。
 
 ### DocC 建置證據
 
@@ -25,3 +25,5 @@
 checkout 原有鎖定檔另存 checkout-Package.resolved；建置結束後的鎖定檔保存為 Package.resolved。解析尚未產生檔案時，以 package-resolution-status.txt 明確標示。
 
 建置失敗仍嘗試保存與上傳診斷；遭強制終止或 runner 中斷時不保證收尾執行。所有管線使用 bash 的 pipefail，tee 不會掩蓋建置失敗。文件站台 artifact 與 Pages 僅在前置步驟成功後執行，診斷檔不加入公開站台。
+
+新版首頁顯示 checkout 與模組入口，中文化範圍見 [API 文件中文化與首頁維護](DOCUMENTATION_CHINESE.md)。

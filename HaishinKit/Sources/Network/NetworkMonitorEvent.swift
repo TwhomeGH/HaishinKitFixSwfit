@@ -1,11 +1,11 @@
 import Foundation
 
-/// An enumeration that indicate the network monitor event.
+/// 網路監控事件。
 public enum NetworkMonitorEvent: Sendable {
-    /// To update statistics.
+    /// 更新網路統計。
     case status(report: NetworkMonitorReport)
-    /// To publish sufficient bandwidth occured.
+    /// 偵測到推流頻寬不足。
     case publishInsufficientBWOccured(report: NetworkMonitorReport)
-    /// To reset  statistics.
+    /// 重設統計狀態。
     case reset
 }

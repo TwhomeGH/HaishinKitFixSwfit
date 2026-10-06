@@ -1,13 +1,13 @@
 import Foundation
 
-/// A struct that represents a it reports its rtmp status.
+/// RTMP 回報的狀態事件，保留協定事件代碼、等級與說明。
 @dynamicMemberLookup
 public struct RTMPStatus: Sendable {
-    /// The string that represents a specific event.
+    /// 協定事件代碼，例如 NetConnection.Connect.Success。
     public let code: String
-    /// The string that is either "status" or "error".
+    /// 事件等級，通常為 "status" 或 "error"。
     public let level: String
-    /// The string that is code description.
+    /// 事件的文字說明。
     public let description: String
 
     private let data: AMFObject?

@@ -1,15 +1,15 @@
 import Foundation
 
-/// The struct represents a network statistics.
+/// 網路監控的累計量、即時佇列大小與傳輸速率。
 public struct NetworkMonitorReport: Sendable {
-    /// The statistics of total incoming bytes.
+    /// 傳輸層回報的累計接收位元組數。
     public let totalBytesIn: Int
-    /// The statistics of total outgoing bytes.
+    /// 傳輸層回報的累計送出位元組數，不代表對端已解碼。
     public let totalBytesOut: Int
-    /// The statistics of outgoing queue bytes per second.
+    /// 目前待送佇列的位元組數（bytes），不是每秒速率。
     public let currentQueueBytesOut: Int
-    /// The statistics of incoming bytes per second.
+    /// 最近取樣區間估算的接收速率（bytes/s）。
     public let currentBytesInPerSecond: Int
-    /// The statistics of outgoing bytes per second.
+    /// 最近取樣區間估算的送出速率（bytes/s）。
     public let currentBytesOutPerSecond: Int
 }

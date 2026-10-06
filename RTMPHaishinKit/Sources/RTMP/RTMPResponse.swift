@@ -1,6 +1,6 @@
 import Foundation
 
-/// The metadata  associated with the response to an RTMP protocol request.
+/// RTMP 請求回應的狀態與參數。
 public struct RTMPResponse: Sendable, CustomStringConvertible {
     public var description: String {
         if let status {
@@ -8,9 +8,9 @@ public struct RTMPResponse: Sendable, CustomStringConvertible {
         }
         return "no status"
     }
-    /// The RTMP response status.
+    /// 回應附帶的狀態；無可解析狀態時為 nil。
     public let status: RTMPStatus?
-    /// The RTMP response arguments.
+    /// 回應參數，順序沿用協定訊息。
     public let arguments: [(any Sendable)?]
 
     init(status: RTMPStatus?, arguments: [(any Sendable)?] = []) {
