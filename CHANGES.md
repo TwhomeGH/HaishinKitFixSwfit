@@ -4,6 +4,35 @@
 
 ---
 
+## 71. 新增開發索引（Tools/changelog 套件 + dev_index.py）
+
+**時間**：2026/10/07 01:07:29
+
+**檔案**：
+
+- `Tools/dev_index.py`
+- `Tools/changelog/devindex.py`
+- `Tools/changelog/assets.py`
+- `Tools/changelog/assets/`
+- `Tools/change_log.py`
+- `Tools/README.md`
+
+### 71a. 動機
+
+變更歷史之外，需要在本機追蹤近期新增 API 與快速查代碼；參考並移植 ReplyKit 的 changelog 模組設計。
+
+### 71b. 內容
+
+新增 `Tools/changelog`（devindex 掃描 Swift 宣告含多行簽名與 `///`、文件、近 20 筆 commit、
+`Package.resolved`；assets 前端）與 `Tools/dev_index.py`（預設 8711）；`change_log.py` 於
+`/development` 與 `/assets/*` 轉交，標題列加連結。
+
+### 71c. 驗證
+
+py_compile；Playwright 實測 /development 3668 符號、搜尋、鎖定套件、檔案檢視（1278 行 + Swift 上色）、CHANGES.md 排版檢視；console 0 error。
+
+---
+
 ## 70. DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
 
 **時間**：2026/10/07 00:55:19
