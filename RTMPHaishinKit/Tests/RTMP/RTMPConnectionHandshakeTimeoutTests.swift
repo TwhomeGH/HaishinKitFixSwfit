@@ -4,127 +4,157 @@ import Testing
 
 @testable import RTMPHaishinKit
 
-/// 握手分階段逾時（P1）：TCP 接通但伺服器卡在某一階段時，必須在該階段的
-/// `handshakeTimeout`（等 S0S1／等 S2）或 `timeout`（等 connect 回應）內失敗，
-/// 且逾時訊息帶上階段名，方便遠端 log 判讀。
-@Suite("RTMPConnection：握手分階段逾時")
+/// 本機 TCP 整合測試：先證明進入指定握手階段，再檢查逾時。
+/// 序列執行避免同套件的網路／日誌工作互相擠壓；不依賴固定日誌等待時間。
+@Suite("RTMPConnection：握手分階段逾時", .serialized)
 struct RTMPConnectionHandshakeTimeoutTests {
-    /// 執行緒安全的 log 收集器（onLog 為 @Sendable，可能來自其他執行緒）。
-    private final class LogBox: @unchecked Sendable {
+    private final class Evidence: @unchecked Sendable {
         private let lock = NSLock()
         private var lines: [String] = []
-        func add(_ line: String) {
-            lock.lock(); lines.append(line); lock.unlock()
-        }
-        func joined() -> String {
+        private var startedAt: ContinuousClock.Instant?
+        func add(_ text: String) {
             lock.lock(); defer { lock.unlock() }
-            return lines.joined(separator: "\n")
+            lines.append(text)
+        }
+        func enteredStage(_ stage: String) {
+            lock.lock(); defer { lock.unlock() }
+            startedAt = ContinuousClock().now
+            lines.append(stage)
+        }
+        func snapshot() -> (text: String, start: ContinuousClock.Instant?) {
+            lock.lock(); defer { lock.unlock() }
+            return (lines.joined(separator: "\n"), startedAt)
         }
     }
 
-    /// 保留 server 端已接受的連線。**必須保留**：`newConnectionHandler` 給的
-    /// `NWConnection` 若無人持有會被釋放，TCP 連線隨之拆除，客戶端的
-    /// `RTMPSocket.connect` 便永遠等不到 `.ready`，直到它自己的 15s 逾時。
-    private final class ServerConnections: @unchecked Sendable {
-        private let lock = NSLock()
-        private var items: [NWConnection] = []
-        func retain(_ connection: NWConnection) {
-            lock.lock(); items.append(connection); lock.unlock()
-        }
-        func cancelAll() {
-            lock.lock(); items.forEach { $0.cancel() }; items.removeAll(); lock.unlock()
-        }
-    }
+    /// 所有 listener／connection 狀態只在 queue 存取，cleanup 解除回呼並取消連線。
+    private final class Server: @unchecked Sendable {
+        let listener: NWListener
+        let evidence = Evidence()
+        private let queue = DispatchQueue(label: "test.rtmp.handshake.server")
+        private var connections: [NWConnection] = []
+        private var readyPort: UInt16?
+        private var failure: NWError?
+        private let sendS0S1: Bool
 
-    private static func isRequestTimedOut(_ error: RTMPConnection.Error?) -> Bool {
-        guard let error else { return false }
-        if case .requestTimedOut = error { return true }
-        return false
-    }
+        init(sendS0S1: Bool) throws {
+            self.sendS0S1 = sendS0S1
+            listener = try NWListener(using: .tcp, on: .any)
+        }
 
-    /// 接受 TCP 連線，並在連線 `.ready` 後呼叫 `respond`；回傳可用的 port 與連線持有盒。
-    private func startListener(
-        _ respond: @escaping @Sendable (NWConnection) -> Void
-    ) async throws -> (listener: NWListener, port: UInt16, connections: ServerConnections) {
-        let listener = try NWListener(using: .tcp, on: .any)
-        let connections = ServerConnections()
-        listener.newConnectionHandler = { connection in
-            connections.retain(connection)
-            connection.stateUpdateHandler = { state in
-                if case .ready = state { respond(connection) }
+        func start() async throws -> UInt16 {
+            listener.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .ready: self.readyPort = self.listener.port?.rawValue
+                case .failed(let error): self.failure = error
+                default: break
+                }
             }
-            connection.start(queue: .global())
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self else { connection.cancel(); return }
+                self.connections.append(connection)
+                connection.stateUpdateHandler = { [weak self, weak connection] state in
+                    guard let self, let connection else { return }
+                    if case .ready = state { self.receiveC0C1(connection) }
+                    if case .failed(let error) = state { self.evidence.add("server failed: \(error)") }
+                }
+                connection.start(queue: self.queue)
+            }
+            listener.start(queue: queue)
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(5))
+            do {
+                while clock.now < deadline {
+                    let state = queue.sync { (readyPort, failure) }
+                    if let error = state.1 { throw error }
+                    if let port = state.0 { return port }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                throw NWError.posix(.ETIMEDOUT)
+            } catch {
+                stop()
+                throw error
+            }
         }
-        listener.start(queue: .global())
-        for _ in 0..<200 {
-            if let port = listener.port { return (listener, port.rawValue, connections) }
-            try await Task.sleep(nanoseconds: 10_000_000)
+
+        private func receiveC0C1(_ connection: NWConnection) {
+            connection.receive(minimumIncompleteLength: 1537, maximumLength: 1537) { [weak self] data, _, _, error in
+                guard let self else { return }
+                guard error == nil, let data, data.count == 1537, data.first == 3 else {
+                    self.evidence.add("invalid C0C1 bytes=\(data?.count ?? 0) error=\(String(describing: error))")
+                    return
+                }
+                guard self.sendS0S1 else {
+                    self.evidence.enteredStage("received C0C1")
+                    return
+                }
+                var response = Data([3])
+                response.append(Data(repeating: 0, count: 1536))
+                connection.send(content: response, completion: .contentProcessed { [weak self] error in
+                    if let error { self?.evidence.add("S0S1 send failed: \(error)") }
+                })
+                connection.receive(minimumIncompleteLength: 1536, maximumLength: 1536) { [weak self] data, _, _, error in
+                    guard error == nil, data?.count == 1536 else {
+                        self?.evidence.add("invalid C2 bytes=\(data?.count ?? 0) error=\(String(describing: error))")
+                        return
+                    }
+                    self?.evidence.enteredStage("received C2")
+                    // 刻意不傳 S2，使客戶端只可能停在 waiting S2。
+                }
+            }
         }
-        listener.cancel()
-        throw NWError.posix(.ETIMEDOUT)
+
+        func stop() {
+            queue.sync {
+                listener.stateUpdateHandler = nil
+                listener.newConnectionHandler = nil
+                listener.cancel()
+                for connection in connections {
+                    connection.stateUpdateHandler = nil
+                    connection.cancel()
+                }
+                connections.removeAll()
+            }
+        }
     }
 
-    private func connectExpectingTimeout(
-        port: UInt16,
-        handshakeTimeout: Int,
-        timeout: Int
-    ) async throws -> (error: RTMPConnection.Error?, elapsed: Duration, logs: String) {
-        let connection = RTMPConnection(timeout: timeout, handshakeTimeout: handshakeTimeout, minimumLogLevel: .error)
-        let box = LogBox()
-        await connection.setOnLog { event in
-            box.add("\(event.message) \(event.detail ?? "")")
-        }
-        let clock = ContinuousClock()
-        let start = clock.now
+    private func verifyTimeout(sendS0S1: Bool, stage: String) async throws {
+        let server = try Server(sendS0S1: sendS0S1)
+        let port = try await server.start()
+        defer { server.stop() }
+        let logs = Evidence()
+        // connect 回應逾時拉開距離，保留 CI 排程餘裕但仍能辨別錯用整體逾時。
+        let connection = RTMPConnection(timeout: 30, handshakeTimeout: 2, minimumLogLevel: .error)
+        await connection.setOnLog { logs.add("\($0.message) \($0.detail ?? "")") }
         var thrown: (any Error)?
-        do {
-            _ = try await connection.connect("rtmp://127.0.0.1:\(port)/app/inst")
-            Issue.record("預期在握手階段逾時，但 connect 成功")
-        } catch {
-            thrown = error
-        }
-        let elapsed = start.duration(to: clock.now)
+        do { _ = try await connection.connect("rtmp://127.0.0.1:\(port)/app/inst") }
+        catch { thrown = error }
+        let completedAt = ContinuousClock().now
         try? await connection.close()
-        // onLog 以非同步 Task 投遞，給它一點時間。
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        let typed = thrown as? RTMPConnection.Error
-        return (typed, elapsed, box.joined())
+
+        // 等待實際目標事件，最多兩秒；未到指定階段時直接留下原始錯誤與伺服器證據。
+        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+        while !logs.snapshot().text.contains("stage=\(stage)"), ContinuousClock().now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let serverState = server.evidence.snapshot()
+        let detail = "error=\(String(describing: thrown))\nserver:\n\(serverState.text)\nclient:\n\(logs.snapshot().text)"
+        let entered = try #require(serverState.start, "未進入預期握手階段；\(detail)")
+        let typed = try #require(thrown as? RTMPConnection.Error, "非 RTMP 握手錯誤；\(detail)")
+        if case .requestTimedOut = typed {} else { Issue.record("預期 requestTimedOut；\(detail)") }
+        let elapsed = entered.duration(to: completedAt)
+        #expect(elapsed >= .seconds(1) && elapsed < .seconds(12), "階段耗時 \(elapsed)；\(detail)")
+        #expect(logs.snapshot().text.contains("stage=\(stage)"), "\(detail)")
     }
 
-    @Test("等不到 S0S1：以 handshakeTimeout 逾時，訊息帶 waiting S0S1")
+    @Test("等不到 S0S1：握手逾時並標明 waiting S0S1")
     func timesOutWaitingForS0S1() async throws {
-        // TCP 接受連線但完全不送資料 → 卡在等 S0S1。
-        let server = try await startListener { _ in }
-        defer {
-            server.listener.cancel()
-            server.connections.cancelAll()
-        }
-
-        // handshakeTimeout(1s) 應先於 timeout(5s) 觸發。
-        let result = try await connectExpectingTimeout(port: server.port, handshakeTimeout: 1, timeout: 5)
-
-        #expect(Self.isRequestTimedOut(result.error))
-        #expect(result.elapsed < .seconds(4))
-        #expect(result.logs.contains("stage=waiting S0S1"), "log: \(result.logs)")
+        try await verifyTimeout(sendS0S1: false, stage: "waiting S0S1")
     }
 
-    @Test("等到 S0S1 但等不到 S2：逾時訊息帶 waiting S2")
+    @Test("已收到 C2 但不回 S2：握手逾時並標明 waiting S2")
     func timesOutWaitingForS2() async throws {
-        // 送 S0 + S1（version 3 + 1536 bytes）後不再送 S2。
-        let server = try await startListener { connection in
-            var s0s1 = Data([0x03])
-            s0s1.append(Data(repeating: 0x00, count: 1536))
-            connection.send(content: s0s1, completion: .contentProcessed { _ in })
-        }
-        defer {
-            server.listener.cancel()
-            server.connections.cancelAll()
-        }
-
-        let result = try await connectExpectingTimeout(port: server.port, handshakeTimeout: 1, timeout: 5)
-
-        #expect(Self.isRequestTimedOut(result.error))
-        #expect(result.elapsed < .seconds(4))
-        #expect(result.logs.contains("stage=waiting S2"), "log: \(result.logs)")
+        try await verifyTimeout(sendS0S1: true, stage: "waiting S2")
     }
 }
