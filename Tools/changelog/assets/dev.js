@@ -100,6 +100,8 @@ async function load() {
     const result = await response.json();
     if (!response.ok) throw Error(result.error);
     data = result;
+    if (tab === "features" && !(data.features && data.features.length)) tab = "symbols";
+    buildTabs();
     const repos = [...new Set((data.symbols.concat(data.documents)).map((r) => r.repo))].sort();
     const sel = $("#repo");
     sel.innerHTML = '<option value="">全部來源</option>' +
@@ -110,11 +112,16 @@ async function load() {
   }
 }
 
-for (const [key, title] of Object.entries(LABELS)) {
-  const b = document.createElement("button");
-  b.textContent = title; b.dataset.key = key;
-  b.onclick = () => { tab = key; render(); };
-  $("#tabs").append(b);
+function buildTabs() {
+  const nav = $("#tabs");
+  nav.innerHTML = "";
+  for (const [key, title] of Object.entries(LABELS)) {
+    if (key === "features" && !(data.features && data.features.length)) continue;
+    const b = document.createElement("button");
+    b.textContent = title; b.dataset.key = key;
+    b.onclick = () => { tab = key; render(); };
+    nav.append(b);
+  }
 }
 $("#search").oninput = render;
 $("#repo").onchange = render;
