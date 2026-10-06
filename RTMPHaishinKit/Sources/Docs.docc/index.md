@@ -1,25 +1,30 @@
 # ``RTMPHaishinKit``
-This module supports the RTMP protocol.
+
+本模組支援 RTMP 協定。
 
 ## 🔍 Overview
-RTMPHaishinKit is RTMP protocols stack in Swift. 
 
-## 🎨 Features
-- [x] FMLE-compatible Authentication
-- [x] Publish
-  - H264, HEVC, AAC and OPUS support.
-- [x] Playback
-  - H264, HEVC and AAC support.
+RTMPHaishinKit 是以 Swift 實作的 RTMP 協定堆疊。
+
+## 🎨 功能
+
+- [x] 相容 FMLE 的認證
+- [x] 發布（Publish）
+  - 支援 H264、HEVC、AAC 與 OPUS。
+- [x] 播放（Playback）
+  - 支援 H264、HEVC 與 AAC。
 - [ ] Action Message Format
   - [x] AMF0
   - [ ] AMF3
 - [x] SharedObject
 - [x] RTMPS
-  - [x] Native (RTMP over SSL/TLS)
+  - [x] Native（RTMP over SSL/TLS）
 - [x] [Enhanced RTMP](E-RTMP.md)
 
-## 📓 Usage
-### Publish
+## 📓 使用方式
+
+### 發布
+
 ```swift
 let mixer = MediaMixer()
 let connection = RTMPConnection()
@@ -62,7 +67,8 @@ Task {
 }
 ```
 
-### Playback
+### 播放
+
 ```swift
 let connection = RTMPConnection()
 let stream = RTMPStream(connection: connection)
@@ -91,10 +97,40 @@ Task {
 }
 ```
 
-### Authentication
-It supports FME-compatible authentication. Some other services may use their own unique authentication methods, so connection may not be possible in those cases.
+### 認證
+
+支援相容 FME 的認證。其他服務可能使用各自專屬的認證方式，在那些情況下可能無法連線。
+
 ```swift
 var connection = RTMPConnection()
 connection.connect("rtmp://username:password@localhost/appName/instanceName")
 ```
 
+## Topics
+
+### 連線與傳送診斷
+
+- ``RTMPConnection``
+- ``RTMPTransportDiagnostics``
+- ``RTMPLogEvent``
+- ``RTMPLogLevel``
+
+### 串流狀態與回應
+
+- ``RTMPStatus``
+- ``RTMPResponse``
+- ``RTMPStreamInfo``
+
+## 使用傳送診斷
+
+```swift
+if let snapshot = await connection.transportDiagnostics() {
+    print(snapshot.completedBytes, snapshot.failedBatchBytes)
+}
+```
+
+建議每秒取樣。queuedBytes 包含正在送的批次，completedBytes 只計無錯誤完成；failedBatchBytes 是失敗批次大小，不代表所有 bytes 都未傳出。
+
+批次數不等於 RTMP chunk 數；acknowledgedBytes 目前為 nil。
+
+本 API 尚未涵蓋影音分類、chunk 數與伺服器 ACK；不能推論遠端已收到或成功解碼。

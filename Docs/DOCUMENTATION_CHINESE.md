@@ -18,7 +18,7 @@ API 名稱、協定常數與範例程式保留原文。DocC 的 Overview、Topic
 
 ## 文件首頁
 
-`Scripts/build_docc_home.py --site site` 使用 `Scripts/docc_home.html` 產生響應式首頁。先檢查兩個模組的 index.html 與 data/documentation 模組 JSON，再寫入首頁、build-info.json 與 revision.txt。沒有實際模組資料時建置失敗，避免發布無效導覽。
+`Scripts/build_docc_home.py --site site` 使用 `Scripts/docc_home.html` 產生響應式首頁。先檢查每個模組的 index.html 與 data/documentation 模組 JSON，再寫入首頁、build-info.json 與 revision.txt。沒有實際模組資料時建置失敗，避免發布無效導覽。
 
 版本資訊包含實際 HEAD、Git ref、HEAD 上的標籤、已追蹤檔案是否修改、UTC 產生時間及 CI 執行連結。Git ref 只是補充資訊；完整 HEAD 才是版本依據。這不是使用者裝置上的 App BuildInfo，也不涵蓋未追蹤檔案。
 

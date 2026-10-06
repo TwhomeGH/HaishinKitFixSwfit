@@ -6,6 +6,9 @@ on:
     paths:
       - 'HaishinKit/Sources/**'
       - 'RTMPHaishinKit/Sources/**'
+      - 'SRTHaishinKit/Sources/**'
+      - 'RTCHaishinKit/Sources/**'
+      - 'MoQTHaishinKit/Sources/**'
       - 'Package.swift'
       - 'Package.resolved'
       - 'Scripts/build_docc_home.py'
@@ -54,13 +57,13 @@ jobs:
             xcodebuild -downloadComponent metalToolchain
             swift package resolve
           } 2>&1 | tee DocumentationArtifacts/prepare.log
-      - name: Build documentation for both modules
+      - name: Build documentation for all modules
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p site
           BASE="${GITHUB_REPOSITORY#*/}"
-          for MODULE in HaishinKit RTMPHaishinKit; do
+          for MODULE in HaishinKit RTMPHaishinKit SRTHaishinKit RTCHaishinKit MoQTHaishinKit; do
             swift package --allow-writing-to-directory "site/$MODULE" generate-documentation \
               --target "$MODULE" --output-path "site/$MODULE" \
               --transform-for-static-hosting --hosting-base-path "$BASE/$MODULE" \

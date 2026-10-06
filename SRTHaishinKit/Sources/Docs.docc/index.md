@@ -1,27 +1,34 @@
 # ``SRTHaishinKit``
-This module supports the SRT protocol.
+
+本模組支援 SRT 協定。
 
 ## 🔍 Overview
-SRTHaishinKit is SRT protocols stack in Swift. It internally uses a library that is built from [libsrt](https://github.com/Haivision/srt) and converted into an xcframework.
 
-## 🎨 Features
-- Publish
-  - H264, HEVC and AAC support.
-- Playback
-  - H264, HEVC and AAC support.
-- SRT Mode
+SRTHaishinKit 是以 Swift 實作的 SRT 協定堆疊。內部使用由 [libsrt](https://github.com/Haivision/srt) 建置並轉為 xcframework 的函式庫。
+
+## 🎨 功能
+
+- 發布（Publish）
+  - 支援 H264、HEVC 與 AAC。
+- 播放（Playback）
+  - 支援 H264、HEVC 與 AAC。
+- SRT 模式
   - [x] caller
   - [x] listener
   - [x] rendezvous
 
-## 📓 Usage
-### Logging
-- Defining a Swift wrapper method for `srt_setloglevel`.
+## 📓 使用方式
+
+### 日誌（Logging）
+
+- 包裝 `srt_setloglevel` 的 Swift 方法。
+
 ```swift
 await SRTLogger.shared.setLevel(.debug)
 ```
 
-### Publish
+### 發布
+
 ```swift
 let mixer = MediaMixer()
 let connection = SRTConnection()
@@ -51,7 +58,6 @@ Task { MainActor in
 }
 
 Task {
-  stream.attachAudioPlayer(audioPlayer)
   do {
     try await connection.connect("srt://host:port")
     await stream.publish()
@@ -61,7 +67,8 @@ Task {
 }
 ```
 
-### Playback
+### 播放
+
 ```swift
 let connection = SRTConnection()
 let stream = SRTStream(connection: connection)
@@ -87,35 +94,45 @@ Task {
 }
 ```
 
-### Specify socket options.
-- On the HaishinKit side, the default settings of libsrt are used.
-  - Please check [the following code](https://github.com/shogo4405/HaishinKit.swift/blob/main/SRTHaishinKit/Sources/SRT/SRTSocketOption.swift) for the support status.
-- Many SRT options can be defined as query parameters in the connection URL as follows.
+### 指定 socket 選項
+
+- HaishinKit 端預設沿用 libsrt 的設定。
+  - 支援狀況請見[這段程式碼](https://github.com/shogo4405/HaishinKit.swift/blob/main/SRTHaishinKit/Sources/SRT/SRTSocketOption.swift)。
+- 多數 SRT 選項可用連接 URL 的查詢參數指定，如下：
+
 ```swift
 try await connection.connect("srt://host:port?key=value")
 ```
 
 ### Session
+
 ```swift
 import SRTHaishinKit
 
 await StreamSessionBuilderFactory.shared.register(SRTSessionFactory())
 ```
 
-## 🔧 Test
-### ffplay as a SRT service for publish HaishinKit.
+## 🔧 測試
+
+### 以 ffplay 作為 SRT 服務，發布給 HaishinKit
+
 ```sh
-$ ffplay -i 'srt://${YOUR_IP_ADDRESS}?mode=listener'
-```
-### ffmpeg as a SRT service for playback HaishinKit.
-```sh
-$ ffmpeg -stream_loop -1 -re -i input.mp4 -c copy -f mpegts 'srt://0.0.0.0:9998?mode=listener'
+ffplay -i 'srt://${YOUR_IP_ADDRESS}?mode=listener'
 ```
 
-## 📜 License
+### 以 ffmpeg 作為 SRT 服務，讓 HaishinKit 播放
+
+```sh
+ffmpeg -stream_loop -1 -re -i input.mp4 -c copy -f mpegts 'srt://0.0.0.0:9998?mode=listener'
+```
+
+## 📜 授權
+
 ### SRTHaishinKit
-- SRTHaishinKit is licensed under the BSD-3-Clause.
+
+- SRTHaishinKit 採 BSD-3-Clause 授權。
 
 ### libsrt.xcframework
-- libsrt.xcframework is licensed under MPLv2.0.
-- This is a build of https://github.com/Haivision/srt as an xcframework.
+
+- libsrt.xcframework 採 MPLv2.0 授權。
+- 這是將 [Haivision/srt](https://github.com/Haivision/srt) 建置為 xcframework 的產物。

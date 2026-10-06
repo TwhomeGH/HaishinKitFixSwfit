@@ -1,31 +1,37 @@
 # ``HaishinKit``
-This is the main module.
+
+這是主要模組。
 
 ## 🔍 Overview
-Provides camera and microphone mixing functionality required for live streaming.  
-It also offers common processing across each module.
 
-### Module Structure
-| Module | Description |
-|:-|:-|
-| HaishinKit | This module. |
-| RTMPHaishinKit | Provides the RTMP protocol stack. |
-| SRTHaishinKit | Provides the SRT protocol stack. |
-| RTCHaishinKit | Provides the WebRTC WHEP/WHIP protocol stack. Currently in alpha. |
-| MoQTHaishinKit | Provides the MoQT protocol stack. Currently in alpha. |
+提供直播所需的攝影機與麥克風混音功能，也提供各模組共用的處理。
 
-## 🎨 Features
-The following features are available:
-- Live Mixing
-  - [Video Mixing](doc://HaishinKit/videomixing)  
-    - Treats camera video and still images as a single stream source.  
-  - Audio Mixing  
-    - Combines different microphone audio sources into a single audio stream source.  
-- Session  
-  - Provides a unified API for protocols such as RTMP, SRT, WHEP, and WHIP.  
+### 模組結構
 
-## 📖 Usage
-### Live Mixing
+| 模組 | 說明 |
+| :- | :- |
+| HaishinKit | 本模組。 |
+| RTMPHaishinKit | 提供 RTMP 協定堆疊。 |
+| SRTHaishinKit | 提供 SRT 協定堆疊。 |
+| RTCHaishinKit | 提供 WebRTC WHEP/WHIP 協定堆疊。目前為 alpha。 |
+| MoQTHaishinKit | 提供 MoQT 協定堆疊。目前為 alpha。 |
+
+## 🎨 功能
+
+提供下列功能：
+
+- 直播混音（Live Mixing）
+  - [影像混音](doc://HaishinKit/videomixing)
+    - 將攝影機影像與靜態圖片視為單一的串流來源。
+  - 音訊混音
+    - 將多個麥克風音訊來源合併為單一的音訊串流來源。
+- Session
+  - 為 RTMP、SRT、WHEP、WHIP 等協定提供統一 API。
+
+## 📖 使用方式
+
+### 直播混音
+
 ```swift
 let mixer = MediaMixer()
 
@@ -51,9 +57,11 @@ Task {
 ```
 
 ### StreamSession API
-Provides a unified API for implementing clients with RTMP and SRT. Retry handling is also performed internally by the API.
 
-#### Preparation
+提供以 RTMP 與 SRT 實作客戶端的統一 API，重試處理亦由 API 內部完成。
+
+#### 前置準備
+
 ```swift
 import HaishinKit
 import RTMPHaishinKit
@@ -65,26 +73,55 @@ Task {
 }
 ```
 
-#### Make StreamSession
+#### 建立 StreamSession
+
 **RTMP**
-Please provide the RTMP connection URL combined with the streamName.
+請提供結合 streamName 的 RTMP 連線 URL。
+
 ```swift
 let session = try await StreamSessionBuilderFactory.shared.make(URL(string: "rtmp://hostname/appName/stramName"))
   .setMode(.publish)
   .build()
 ```
+
 **SRT**
+請提供帶 stream 查詢參數的 SRT 連線 URL。
+
 ```swift
 let session = try await StreamSessionBuilderFactory.shared.make(URL(string: "srt://hostname:448?stream=xxxxx"))
   .setMode(.playback)
   .build()
 ```
 
-#### Connecting
-Used for publishing or playback.
+#### 連線
+
+用於發布或播放。
+
 ```swift
 try session.connect {
   print("on disconnected")
 }
 ```
 
+## Topics
+
+### 影片管線診斷
+
+- <doc:VideoPipelineDiagnostics>
+- ``VideoPipelineSnapshot``
+- ``VideoQueueSnapshot``
+- ``VideoPipelineEventsSnapshot``
+
+### 音訊與混音診斷
+
+- ``AudioPipelineDiagnostics``
+- ``MediaMixerOutput``
+
+### 網路監控
+
+- ``NetworkMonitorReport``
+- ``NetworkMonitorEvent``
+
+## 診斷資料判讀
+
+累計量須取差值再計算速率。目前佇列大小是 bytes，網路速率是 bytes/s；音訊區塊數與 PCM 樣本數也須分開。Mixer 產出不等於編碼完成，傳輸層完成不等於伺服器已解碼。

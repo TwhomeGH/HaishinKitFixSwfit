@@ -9,7 +9,13 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = {"HaishinKit": "haishinkit", "RTMPHaishinKit": "rtmphaishinkit"}
+MODULES = {
+    "HaishinKit": "haishinkit",
+    "RTMPHaishinKit": "rtmphaishinkit",
+    "SRTHaishinKit": "srthaishinkit",
+    "RTCHaishinKit": "rtchaishinkit",
+    "MoQTHaishinKit": "moqthaishinkit",
+}
 
 
 def git(*args):

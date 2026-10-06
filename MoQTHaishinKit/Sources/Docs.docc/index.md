@@ -1,11 +1,14 @@
 # ``MoQTHaishinKit``
-This module supports the MoQT protocol.
 
-## Overview
-- This is a Swift implementation of MoQT, based on draft7. It is being developed for research and testing purposes.
-- The features for live streaming and viewing have not been implemented yet, so testing is not possible at this time.
+本模組支援 MoQT 協定。
 
-## Control Messages
+## 🔍 Overview
+
+- 這是基於 draft7 的 MoQT Swift 實作，開發目的為研究與測試。
+- 直播與收看功能尚未實作，因此目前無法進行測試。
+
+## 控制訊息
+
 - [x] 6.2. CLIENT_SETUP
 - [x] 6.2. SERVER_SETUP
 - [ ] 6.3. GOAWAY
@@ -17,8 +20,8 @@ This module supports the MoQT protocol.
 - [x] 6.9. ANNOUNCE_OK
 - [x] 6.10. ANNOUNCE_ERROR
 - [ ] 6.11. ANNOUNCE_CANCEL
-- [ ] 6.12. TRACK_STATUS_REQUEST 
-- [ ] 6.13. SUBSCRIBE_ANNOUNCES 
+- [ ] 6.12. TRACK_STATUS_REQUEST
+- [ ] 6.13. SUBSCRIBE_ANNOUNCES
 - [ ] 6.14. UNSUBSCRIBE_ANNOUNCES
 - [x] 6.15. SUBSCRIBE_OK
 - [x] 6.16. SUBSCRIBE_ERROR
