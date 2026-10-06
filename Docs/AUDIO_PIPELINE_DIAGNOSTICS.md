@@ -83,6 +83,6 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 
 ## 相關
 
-- `Docs/AUDIO_MULTITRACK_ALIGNMENT.md`（跨軌對齊、死區、AEC）
+- `HaishinKit/Sources/Docs.docc/AUDIO_MULTITRACK_ALIGNMENT.md`（跨軌對齊、死區、AEC）
 - `HaishinKit/Sources/Docs.docc/MEDIA_MIXER.md`（DocC）
 - ReplyKit `Docs/av-pipeline.md`（AHealth telemetry）

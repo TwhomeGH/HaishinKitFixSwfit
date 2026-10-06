@@ -97,12 +97,12 @@ try await session.stream.publish("streamKey")
 | ------ | ------ |
 | [架構](../HaishinKit/Sources/Docs.docc/ARCHITECTURE.md) | 系統架構與資料流（已移入 DocC） |
 | [RTMP 通訊協定](../RTMPHaishinKit/Sources/Docs.docc/RTMP_PROTOCOL.md) | RTMP 實作細節（已移入 DocC） |
-| [Composition Time 與 A/V 補償](RTMP_COMPOSITION_TIME.md) | CTS（PTS−DTS）在 A/V 偏移補償下的正確性與負 CTS 缺陷 |
+| [Composition Time 與 A/V 補償](../RTMPHaishinKit/Sources/Docs.docc/RTMP_COMPOSITION_TIME.md) | CTS（PTS−DTS）在 A/V 偏移補償下的正確性與負 CTS 缺陷（已移入 DocC） |
 | [Media Mixer](../HaishinKit/Sources/Docs.docc/MEDIA_MIXER.md) | 影音混合與特效（已移入 DocC） |
-| [多軌音訊對齊](AUDIO_MULTITRACK_ALIGNMENT.md) | ReplayKit 多軌混音跨軌對齊 + NLMS 物理回音消除 |
+| [多軌音訊對齊](../HaishinKit/Sources/Docs.docc/AUDIO_MULTITRACK_ALIGNMENT.md) | ReplayKit 多軌混音跨軌對齊 + NLMS 物理回音消除（已移入 DocC） |
 | [音訊管線診斷](AUDIO_PIPELINE_DIAGNOSTICS.md) | `MediaMixer.audioPipelineDiagnostics()`：align / skip / underrun 累計計數，供 host telemetry |
-| [錄影轉送](RECORDING_FORWARDING.md) | ReplayKit extension 錄影轉送設計：`StreamRecorderSink` + `CMSampleBufferCodec`（B+C 已實作，A/橋待接） |
-| [RTMP 恢復生命週期](RTMP_RECOVERY_LIFECYCLE.md) | ReplayKit pause/resume、編碼重啟 API、RTMP publish pipeline recovery |
+| [錄影轉送](../HaishinKit/Sources/Docs.docc/RECORDING_FORWARDING.md) | ReplayKit extension 錄影轉送設計：`StreamRecorderSink` + `CMSampleBufferCodec`（B+C 已實作，A/橋待接）（已移入 DocC） |
+| [RTMP 恢復生命週期](../RTMPHaishinKit/Sources/Docs.docc/RTMP_RECOVERY_LIFECYCLE.md) | ReplayKit pause/resume、編碼重啟 API、RTMP publish pipeline recovery（已移入 DocC） |
 | [多平台邊界設計](PLATFORM_BOUNDARIES.md) | protocol/facade 分離 iOS、macOS、visionOS 等平台專屬 API 的規範 |
 | [Session 管理](../HaishinKit/Sources/Docs.docc/SESSION_MANAGEMENT.md) | StreamSession 生命週期（已移入 DocC） |
 | [編解碼器設定](../HaishinKit/Sources/Docs.docc/CODEC_CONFIGURATION.md) | 影音編碼設定（已移入 DocC） |

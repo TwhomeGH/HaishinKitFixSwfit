@@ -111,6 +111,8 @@ connection.connect("rtmp://username:password@localhost/appName/instanceName")
 ### 協定
 
 - <doc:RTMP_PROTOCOL>
+- <doc:RTMP_COMPOSITION_TIME>
+- <doc:RTMP_RECOVERY_LIFECYCLE>
 
 ### 連線與傳送診斷
 

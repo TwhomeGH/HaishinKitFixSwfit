@@ -217,4 +217,4 @@ func attachAudio(_ device: AVCaptureDevice?) async throws
 兩軌混音必須以**來源端 PTS 派生**的位置對齊，否則「先到先混」會把兩軌的起始相位差
 與積壓以錯誤的相對位置混入 → 回音/撕裂。實作於 `AudioRingBuffer.align(to:)` +
 `AudioMixerByMultiTrack.render()`，詳細說明與問題區別見
-[多軌音訊對齊](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/AUDIO_MULTITRACK_ALIGNMENT.md)。
+[多軌音訊對齊](doc:AUDIO_MULTITRACK_ALIGNMENT)。

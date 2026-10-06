@@ -69,7 +69,7 @@ actor 忙碌時**靜默丟棄音訊幀**。mic 與 app 若**非相關性掉幀**
 
 以 main track 的 `sampleTime` 為基準，把本緩衝區的消耗前端對齊到 `position`：
 
-```
+```text
 對齊點（frontier）= sampleTime - counts   // 下一個將輸出的樣本位置，含 pending skip
 ```
 
@@ -86,7 +86,7 @@ actor 忙碌時**靜默丟棄音訊幀**。mic 與 app 若**非相關性掉幀**
 5.8ms），門檻內視為量測抖動**不修正**，避免來源 PTS 抖動造成每幀微丟/微補
 （細碎斷音）。累計 `alignFireCount` / `lastAlignDiff` 可從
 `MediaMixer.audioPipelineDiagnostics()` 觀察是否仍在持續動手
-（見 `Docs/AUDIO_PIPELINE_DIAGNOSTICS.md`）。
+（見 [音訊管線診斷](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/AUDIO_PIPELINE_DIAGNOSTICS.md)）。
 
 ### 2. `AudioMixerByMultiTrack.render()`（非 main track 對齊）
 
@@ -144,6 +144,7 @@ target，在混音前對 mic 幀做 NLMS（normalized least mean squares）自�
 
 > **Track 編號是呼叫端自訂的**：`MediaMixer.append(_:track:)` 的參數沒有內建
 > 0=mic/1=app 的意義。AEC 的 reference 必須**顯式**指向 app 軌：
+>
 > - 框架範例 `SampleHandler` 接線 `.audioApp`→track 1 → reference = 1
 > - 你的 app 接線 app→track 0、mic→track 1 → reference = 0
 >

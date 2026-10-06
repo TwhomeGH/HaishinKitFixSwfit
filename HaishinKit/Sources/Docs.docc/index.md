@@ -114,6 +114,8 @@ try session.connect {
 - <doc:NETWORK_LAYER>
 - <doc:LOGGING>
 - <doc:TROUBLESHOOTING>
+- <doc:AUDIO_MULTITRACK_ALIGNMENT>
+- <doc:RECORDING_FORWARDING>
 
 ### 影片管線診斷
 

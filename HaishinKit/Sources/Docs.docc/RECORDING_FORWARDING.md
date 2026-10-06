@@ -73,7 +73,7 @@ public enum CMSampleBufferCodec {
 
 Wire 格式（全 big-endian、開頭版本 byte，可演進）：
 
-```
+```text
 version:u8
 mediaType:u8            // 0=video, 1=audio, 2=other
 pts: i64 value, i32 timescale, i32 flags
