@@ -4,6 +4,24 @@ import Testing
 
 @testable import RTMPHaishinKit
 
+/// 一次性 resume 防護：listener 狀態回呼與 backstop 可能同時觸發，
+/// 以鎖保證 continuation 只被 resume 一次。
+private final class OneShotResume: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<UInt16, any Error>?
+
+    init(_ continuation: CheckedContinuation<UInt16, any Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ result: Result<UInt16, any Error>) {
+        lock.lock(); defer { lock.unlock() }
+        guard let c = continuation else { return }
+        continuation = nil
+        c.resume(with: result)
+    }
+}
+
 /// 本機 TCP 整合測試：先證明進入指定握手階段，再檢查逾時。
 /// 序列執行避免同套件的網路／日誌工作互相擠壓；不依賴固定日誌等待時間。
 @Suite("RTMPConnection：握手分階段逾時", .serialized)
@@ -35,6 +53,7 @@ struct RTMPConnectionHandshakeTimeoutTests {
         private var connections: [NWConnection] = []
         private var readyPort: UInt16?
         private var failure: NWError?
+        private var waitingError: NWError?
         private let sendS0S1: Bool
 
         init(sendS0S1: Bool) throws {
@@ -43,14 +62,6 @@ struct RTMPConnectionHandshakeTimeoutTests {
         }
 
         func start() async throws -> UInt16 {
-            listener.stateUpdateHandler = { [weak self] state in
-                guard let self else { return }
-                switch state {
-                case .ready: self.readyPort = self.listener.port?.rawValue
-                case .failed(let error): self.failure = error
-                default: break
-                }
-            }
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self else { connection.cancel(); return }
                 self.connections.append(connection)
@@ -65,17 +76,39 @@ struct RTMPConnectionHandshakeTimeoutTests {
                 }
                 connection.start(queue: self.queue)
             }
-            listener.start(queue: queue)
-            let clock = ContinuousClock()
-            let deadline = clock.now.advanced(by: .seconds(5))
+            // 事件驅動：ready 立即回傳（不猜固定秒數）；失敗回報真實 NWError。
+            // 不再用「固定 deadline + 輪詢」決定成敗——那會把排程延遲誤判為失敗，
+            // 且逾時只丟合成的 ETIMEDOUT，看不到真正原因。backstop 僅為避免無限等待，
+            // 且優先回報實際的 waiting 原因。
             do {
-                while clock.now < deadline {
-                    let state = queue.sync { (readyPort, failure) }
-                    if let error = state.1 { throw error }
-                    if let port = state.0 { return port }
-                    try await Task.sleep(for: .milliseconds(10))
+                return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, any Error>) in
+                    let oneShot = OneShotResume(continuation)
+                    listener.stateUpdateHandler = { [weak self] state in
+                        guard let self else { return }
+                        switch state {
+                        case .ready:
+                            guard let port = self.listener.port?.rawValue else {
+                                oneShot.resume(.failure(NWError.posix(.EINVAL)))
+                                return
+                            }
+                            self.readyPort = port
+                            oneShot.resume(.success(port))
+                        case .failed(let error):
+                            self.failure = error
+                            oneShot.resume(.failure(error))
+                        case .waiting(let error):
+                            self.waitingError = error
+                        default:
+                            break
+                        }
+                    }
+                    listener.start(queue: queue)
+                    Task { [weak self] in
+                        try? await Task.sleep(for: .seconds(30))
+                        guard let self else { return }
+                        oneShot.resume(.failure(self.waitingError ?? NWError.posix(.ETIMEDOUT)))
+                    }
                 }
-                throw NWError.posix(.ETIMEDOUT)
             } catch {
                 stop()
                 throw error
