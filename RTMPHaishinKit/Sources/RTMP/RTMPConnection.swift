@@ -52,7 +52,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// The default object encoding for RTMPConnection class.
     public static let defaultObjectEncoding: RTMPObjectEncoding = .amf0
     /// The default an rtmp request time out value (ms).
-    public static let defaultRequestTimeout: UInt64 = 3000
+    ///
+    /// App 進入 .inactive／背景瞬間 iOS 可能暫停收包，3s 常來不及處理
+    /// createStream 的 `_result` 而誤判逾時；放寬到 8s 讓短暫的前後景轉換被吸收
+    /// （正常回覆仍在毫秒級，不影響正常延遲）。
+    public static let defaultRequestTimeout: UInt64 = 8000
     /// The default max reconnect attempts.
     public static let defaultMaxReconnectAttempts: Int = 5
     /// The default reconnect base delay in seconds.
