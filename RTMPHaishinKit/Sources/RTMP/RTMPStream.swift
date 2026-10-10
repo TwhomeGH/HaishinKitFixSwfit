@@ -267,6 +267,9 @@ public actor RTMPStream {
     /// Wire-cumulative PTS (seconds) of the last encoded frame sent, snapshotted
     /// at the previous status interval.
     private var lastStatusVideoOutputPTSSeconds: Double = -1
+    private var lastStatusAudioOutputPTSSeconds: Double = -1
+    private var videoOutputPTSRegressions = 0
+    private var audioOutputPTSRegressions = 0
     private var audioInputFrames: Int {
         get { inflowLock.withLock { _audioInputFrames } }
         set { inflowLock.withLock { _audioInputFrames = newValue } }
@@ -1419,6 +1422,7 @@ extension RTMPStream: _Stream {
             metadataIncludesVideo = false
             lastStatusVideoInputPTSSeconds = -1
             lastStatusVideoOutputPTSSeconds = -1
+            lastStatusAudioOutputPTSSeconds = -1
         case .status(let report):
             let now = Date()
             let interval = now.timeIntervalSince(lastStatusTime)
@@ -1430,6 +1434,10 @@ extension RTMPStream: _Stream {
             let inputPTS = lastVideoInputPTSSeconds
             let inputPTSAdvanced = 0 <= lastStatusVideoInputPTSSeconds && lastStatusVideoInputPTSSeconds < inputPTS
             let outputPTSAdvanced = lastStatusVideoOutputPTSSeconds < videoTimestamp.updatedAt
+            // 偵測輸出時間戳倒退（「包亂序」的候選訊號）。
+            if 0 <= lastStatusVideoOutputPTSSeconds, videoTimestamp.updatedAt < lastStatusVideoOutputPTSSeconds {
+                videoOutputPTSRegressions += 1
+            }
             lastStatusVideoInputPTSSeconds = inputPTS
             lastStatusVideoOutputPTSSeconds = videoTimestamp.updatedAt
             if interval > 1.5 {
@@ -1442,6 +1450,10 @@ extension RTMPStream: _Stream {
                 // 固定 = 健康；持續增大 = 兩時鐘漂移（player 可能因此棄音/凍結畫面）。
                 let videoPTS = videoTimestamp.updatedAt
                 let audioPTS = audioTimestamp.updatedAt
+                if 0 <= lastStatusAudioOutputPTSSeconds, audioPTS < lastStatusAudioOutputPTSSeconds {
+                    audioOutputPTSRegressions += 1
+                }
+                lastStatusAudioOutputPTSSeconds = audioPTS
                 let avOffset = videoPTS - audioPTS
                 // A/V 對齊自動補償量測：啟動後前幾個 status 累積 avOffset 樣本，
                 // 取中位數設為 video wire 補償（見 append(sampleBuffer:)）。audio 為
@@ -1463,7 +1475,7 @@ extension RTMPStream: _Stream {
                 publishThroughputLogCount += 1
                 if publishThroughputLogCount % 10 == 0 {
                     await connection?.log(.debug, "publish throughput",
-                        detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes) videoPTS=\(String(format: "%.3f", videoPTS))s audioPTS=\(String(format: "%.3f", audioPTS))s avOffset=\(String(format: "%.3f", avOffset))s")
+                        detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes) videoPTS=\(String(format: "%.3f", videoPTS))s audioPTS=\(String(format: "%.3f", audioPTS))s avOffset=\(String(format: "%.3f", avOffset))s outputPTSAdvanced=\(outputPTSAdvanced) ptsRegress{v=\(videoOutputPTSRegressions),a=\(audioOutputPTSRegressions)}")
                 }
             }
             if videoInputFrames > Int(frameCount) * 2, videoInputFrames > 10 {

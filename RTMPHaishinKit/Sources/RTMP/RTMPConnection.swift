@@ -598,18 +598,18 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                             try await listen(data)
                         }
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
-                            try? await close()
+                            try? await close(reason: "recvLoopEnded")
                             await startReconnection()
                         } else {
-                            try? await close()
+                            try? await close(reason: "recvLoopEnded")
                         }
                     } catch {
                         log(.error, "Socket recv loop ended with error", detail: "\(error)", always: true)
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
-                            try? await close()
+                            try? await close(reason: "recvLoopError")
                             await startReconnection()
                         } else {
-                            try? await close()
+                            try? await close(reason: "recvLoopError")
                         }
                     }
                 }
@@ -725,7 +725,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             logConnectDiagnostic("pending chunk", detail: "csid=\(csid) type=\(header.messageTypeId) stream=\(header.messageStreamId) received=\(header.receivedPayloadBytes) expected=\(header.messageLength)", force: true)
         }
         operation.resume(throwing: Error.requestTimedOut)
-        try? await close()
+        try? await close(reason: "stageTimeout")
     }
 
     private func startReconnection() async {
@@ -773,13 +773,16 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     /// Closes the connection from the server.
-    public func close() async throws {
+    /// 關閉連線。`reason` 會寫進日誌，用來分辨是誰要求關閉：
+    /// `external`＝呼叫端主動、`serverClose`＝伺服器送 close 命令、
+    /// `stageTimeout`／`recvLoop*`／`protocolError*`＝內部偵測到問題。
+    public func close(reason: String = "external") async throws {
         guard state != .uninitialized else {
             throw Error.invalidState
         }
 
         unregisterLoggerForwarding()
-        log(.info, "Close requested, state=\(state)", always: true)
+        log(.info, "Close requested, state=\(state) reason=\(reason)", always: true)
         reconnectionTask?.cancel()
         reconnectionTask = nil
         stopKeepAlive()
@@ -929,7 +932,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     return
                 }
                 guard handshake.s0Version >= 3 else {
-                    try await close()
+                    try await close(reason: "protocolError.s0")
                     log(.error, "S0 version mismatch", detail: "got \(handshake.s0Version)", always: true)
                     throw Error.requestFailed(response: .init(status: .init(code: Code.connectFailed.rawValue, level: "error", description: "Unsupported RTMP protocol version: \(handshake.s0Version)")))
                 }
@@ -945,7 +948,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 }
                 state = .handshakeDone
                 guard let message = makeConnectionMessage() else {
-                    try await close()
+                    try await close(reason: "protocolError.connectMessage")
                     return
                 }
                 await networkMonitor?.startRunning()
@@ -1000,7 +1003,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         } catch RTMPChunkError.unknowChunkType(let value) {
             logger.error("Received unknow chunk type =", value)
             log(.error, "Unknown chunk type", detail: "\(value)")
-            try await close()
+            try await close(reason: "protocolError.chunkType")
         } catch RTMPChunkError.bufferUnderflow {
             log(.trace, "Buffer underflow, waiting for more data", detail: "position=\(rollbackPosition) remaining=\(inputBuffer.remaining)")
             inputBuffer.position = rollbackPosition
@@ -1091,7 +1094,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             switch message {
             case let message as RTMPSetChunkSizeMessage:
                 chunkSizeC = min(Int(message.size), RTMPChunkBuffer.defaultMaxBufferSize)
-                logConnectDiagnostic("chunk size", detail: "announced=\(message.size) effective=\(chunkSizeC)")
+                let raw = message.payload.map { String(format: "%02X", $0) }.joined()
+                logConnectDiagnostic("chunk size", detail: "announced=\(message.size) effective=\(chunkSizeC) raw=\(raw)")
             case let message as RTMPWindowAcknowledgementSizeMessage:
                 windowSizeC = Int64(message.size)
             case let message as RTMPSetPeerBandwidthMessage:
@@ -1110,7 +1114,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     log(.trace, "No responder", detail: "cmd=\(message.commandName) txn=\(message.transactionId)")
                     switch message.commandName {
                     case "close":
-                        try? await close()
+                        try? await close(reason: "serverClose")
                     default:
                         break
                     }
