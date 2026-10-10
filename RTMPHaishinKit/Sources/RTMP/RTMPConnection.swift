@@ -773,10 +773,15 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     }
 
     /// Closes the connection from the server.
+    /// `NetworkConnection` 協定要求的無參數入口；關閉原因固定標為 `external`。
+    public func close() async throws {
+        try await close(reason: "external")
+    }
+
     /// 關閉連線。`reason` 會寫進日誌，用來分辨是誰要求關閉：
     /// `external`＝呼叫端主動、`serverClose`＝伺服器送 close 命令、
     /// `stageTimeout`／`recvLoop*`／`protocolError*`＝內部偵測到問題。
-    public func close(reason: String = "external") async throws {
+    public func close(reason: String) async throws {
         guard state != .uninitialized else {
             throw Error.invalidState
         }
