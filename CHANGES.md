@@ -2,7 +2,6 @@
 
 ## 2026.10.11 08:54 開發索引：近期改動改為可展開檢視 diff
 
-
 **檔案**：
 
 - `Tools/changelog/devindex.py`
@@ -62,7 +61,6 @@
 
 ## 2026.10.07 01:34 RTMP 握手分階段逾時（P1）
 
-
 **檔案**：
 
 - `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
@@ -86,7 +84,6 @@ etwork.framework）。
 ---
 
 ## 2026.10.07 01:07 新增開發索引（Tools/changelog 套件 + dev_index.py）
-
 
 **檔案**：
 
@@ -114,7 +111,6 @@ py_compile；Playwright 實測 /development 3668 符號、搜尋、鎖定套件�
 ---
 
 ## 2026.10.07 00:55 DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
-
 
 **檔案**：
 
@@ -149,14 +145,12 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 ## 2026.10.06 22:49 補齊影片診斷事件與可用狀態文件
 
-
 - 將 VideoPipelineEvent 的 22 個 case 與 Availability 的 3 個 case 分別宣告，逐項補上中文觸發條件及限制。
 - 保留所有 case 名稱與 rawValue；新增 DocC 型別連結與註釋關聯規則。
 
 ---
 
 ## 2026.10.06 22:44 補齊影片管線診斷欄位文件
-
 
 - 為 VideoPipelineSnapshot 與相關佇列、事件快照補上中文欄位、單位、nil 與生命週期說明。
 - 新增 DocC 階段對照及取得範例，區分 Mixer、編碼、RTMP 入列與 socket 完成。
@@ -165,7 +159,6 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 ---
 
 ## 2026.10.06 22:39 改善 API 文件首頁與核心診斷中文說明
-
 
 - 首頁改為響應式雙模組卡片，顯示 checkout SHA、ref、標籤、UTC 時間與 CI 連結。
 - 發布前檢查模組輸出，產生 build-info.json 並保留 revision.txt。
@@ -178,7 +171,6 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 ## 2026.10.06 22:03 DocC 保留版本與失敗建置證據
 
-
 - 獨立上傳 revision、manifest、解析前後鎖定檔、工具鏈及模組建置日誌。
 - 失敗仍嘗試上傳診斷，pipefail 保留失敗狀態；僅成功建置可部署 Pages。
 - 加入 Package.resolved 的文件建置觸發條件。首次 CI 實跑仍待確認。
@@ -186,7 +178,6 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 ---
 
 ## 2026.10.06 21:52 傳送完成計數與文件入口
-
 
 - 修正 totalBytesOut 只累計本機無錯誤完成批次；失敗時先關閉，不再續送下一批。
 - 新增 RTMPConnection.transportDiagnostics() 公開快照與連線世代隔離。
@@ -200,7 +191,6 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 詳見 [傳送診斷](Docs/RTMP_TRANSPORT_DIAGNOSTICS.md)。
 
 ## 2026.10.05 22:01 自動產生 kHaishinKitRevision（SwiftPM build tool plugin）
-
 
 **檔案**：
 
@@ -224,7 +214,6 @@ dump-package 通過；Windows 實編 RevisionTool 輸出與 HEAD 相符；macOS 
 ---
 
 ## 2026.10.05 21:37 新增 CHANGES.md 管理工具 change_log.py（網頁 GUI + CLI）
-
 
 **檔案**：
 
