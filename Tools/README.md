@@ -30,7 +30,11 @@ python Tools/dev_index.py --port 8712 --no-browser
   actor／extension／typealias／property，含多行簽名與相鄰 `///` 註釋），可點進
   `file:line`；搜尋符號名稱。
 - **文件**：列出所有 `.md`。
-- **近期改動／版本**：HEAD、未提交變更、最近 20 筆 commit 與其檔案、`Package.resolved`。
+- **近期改動／版本**：HEAD、未提交變更（可點「檢視工作區差異」看 `git diff HEAD`）、
+  最近 20 筆 commit（每筆為可展開卡片）與其檔案、`Package.resolved`。
+- **差異檢視**：點提交標題展開該次提交的 patch；點檔名只取該檔的差異（lazy 載入、
+  `+`／`-` 綠紅上色＋ Swift 語法上色、過大截斷）。API：`GET /development/diff?repo=&hash=[&path=]`，
+  工作區差異用 `worktree=1`。
 - **檔案檢視**：行號、跳行、目標行高亮、Swift 語法上色；`.md` 預設排版檢視可切回原始碼。
 - 同一頁面亦可由變更歷史伺服器的 `/development` 進入（`change_log.py` 啟動後，標題列
   有「開發索引」連結）。

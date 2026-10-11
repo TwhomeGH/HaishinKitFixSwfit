@@ -177,6 +177,62 @@ def _locked_packages():
             for p in pins]
 
 
+# ── 近期改動與差異 ────────────────────────────────────────────
+# 提交欄位以 ASCII 控制字元分隔，避免標題含空白／符號時解析歧義。
+_COMMIT_RS = "\x1e"   # 每筆提交的開頭（record separator）
+_COMMIT_US = "\x1f"   # hash／時間／標題之間（unit separator）
+_REV_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
+MAX_DIFF = 400_000    # 單次差異回應上限（字元）
+
+
+def _parse_commits(raw):
+    """把 ``git log --format=%x1e… --name-only`` 解析成結構化提交清單。"""
+    commits = []
+    for chunk in raw.split(_COMMIT_RS):
+        chunk = chunk.strip("\n")
+        if not chunk:
+            continue
+        lines = chunk.split("\n")
+        parts = lines[0].split(_COMMIT_US)
+        if len(parts) < 3:
+            continue
+        commits.append({
+            "hash": parts[0], "date": parts[1], "subject": parts[2],
+            "files": [ln.strip() for ln in lines[1:] if ln.strip()],
+        })
+    return commits
+
+
+def _safe_pathspec(name):
+    """diff 用的路徑：擋絕對路徑、``..``、反斜線與開頭 ``-``（避免被當成 Git 選項）。"""
+    name = (name or "").strip()
+    if not name or name.startswith(("-", "/", "\\")) or "\\" in name:
+        raise ValueError("不允許的路徑")
+    parts = [p for p in name.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        raise ValueError("不允許的路徑")
+    return "/".join(parts)
+
+
+def diff(repo, rev=None, path=None, worktree=False):
+    """回傳某次提交（或工作區 ``git diff HEAD``）的差異文字；過大時截斷並標記。"""
+    root = roots().get(repo)
+    if root is None:
+        raise ValueError("未知來源")
+    if worktree or not rev:
+        args = ["diff", "--no-color", "HEAD"]
+    else:
+        if not _REV_RE.match(rev):
+            raise ValueError("無效的提交")
+        args = ["show", "--no-color", "--format=medium", rev]
+    if path:
+        args += ["--", _safe_pathspec(path)]
+    text = git(root, *args)
+    truncated = len(text) > MAX_DIFF
+    return {"diff": text[:MAX_DIFF] if truncated else text,
+            "truncated": truncated, "empty": not text.strip()}
+
+
 def snapshot():
     """即時取得版本、近期提交、符號與文件；不把 Git 修改檔案推測成新增功能。"""
     data = {"features": validate(), "repos": [], "symbols": [], "documents": []}
@@ -185,7 +241,9 @@ def snapshot():
             "name": repo,
             "head": git(root, "rev-parse", "HEAD").strip(),
             "changes": git(root, "status", "--short"),
-            "commits": git(root, "log", "-20", "--date=iso-strict", "--format=%h %ad %s", "--name-only"),
+            "commits": _parse_commits(git(
+                root, "log", "-20", "--date=iso-strict",
+                "--format=%x1e%h%x1f%ad%x1f%s", "--name-only")),
         })
         for name in files(root):
             try:
@@ -232,6 +290,14 @@ def route(path, query):
             line_arg = values.get("line", [""])[0]
             line = int(line_arg) if line_arg.isdigit() else 0
             return 200, _file_page(repo, name, line), "text/html; charset=utf-8"
+        if path == "/development/diff":
+            values = parse_qs(query)
+            repo = values.get("repo", ["haishinkit"])[0]
+            rev = values.get("hash", [""])[0]
+            name = values.get("path", [""])[0]
+            worktree = values.get("worktree", ["0"])[0] in ("1", "true", "yes")
+            return 200, json.dumps(diff(repo, rev, name, worktree), ensure_ascii=False), \
+                "application/json; charset=utf-8"
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         return 400, json.dumps({"error": str(error)}, ensure_ascii=False), "application/json; charset=utf-8"
     return 404, "找不到頁面", "text/plain; charset=utf-8"

@@ -16,22 +16,6 @@
 }
 #src .no:hover { color: var(--accent) }
 
-/* 語法上色：深色預設，淺色主題再覆寫。 */
-.tok-k { color: #c586c0 } /* 關鍵字 */
-.tok-t { color: #4ec9b0 } /* 型別 */
-.tok-f { color: #dcdcaa } /* 函式 */
-.tok-s { color: #ce9178 } /* 字串 */
-.tok-c { color: #6a9955 } /* 註釋 */
-.tok-n { color: #b5cea8 } /* 數字 */
-.tok-a { color: #d7ba7d } /* 屬性／前置 */
-:root[data-theme="light"] .tok-k { color: #af00db }
-:root[data-theme="light"] .tok-t { color: #267f99 }
-:root[data-theme="light"] .tok-f { color: #795e26 }
-:root[data-theme="light"] .tok-s { color: #a31515 }
-:root[data-theme="light"] .tok-c { color: #008000 }
-:root[data-theme="light"] .tok-n { color: #098658 }
-:root[data-theme="light"] .tok-a { color: #795e26 }
-
 @media (max-width: 640px) { .appbar #name { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap } }
 
 /* Markdown 排版檢視 */

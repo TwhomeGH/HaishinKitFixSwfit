@@ -28,6 +28,22 @@ pre.code { background: var(--code); padding: 12px 14px; border-radius: 10px; ove
 .muted { color: var(--mut) }
 small { color: var(--mut) }
 
+/* 語法上色（檔案檢視、差異檢視共用）：深色預設，淺色主題再覆寫。 */
+.tok-k { color: #c586c0 } /* 關鍵字 */
+.tok-t { color: #4ec9b0 } /* 型別 */
+.tok-f { color: #dcdcaa } /* 函式 */
+.tok-s { color: #ce9178 } /* 字串 */
+.tok-c { color: #6a9955 } /* 註釋 */
+.tok-n { color: #b5cea8 } /* 數字 */
+.tok-a { color: #d7ba7d } /* 屬性／前置 */
+:root[data-theme="light"] .tok-k { color: #af00db }
+:root[data-theme="light"] .tok-t { color: #267f99 }
+:root[data-theme="light"] .tok-f { color: #795e26 }
+:root[data-theme="light"] .tok-s { color: #a31515 }
+:root[data-theme="light"] .tok-c { color: #008000 }
+:root[data-theme="light"] .tok-n { color: #098658 }
+:root[data-theme="light"] .tok-a { color: #795e26 }
+
 input, select, textarea, button { font: inherit; color: var(--fg) }
 input, select, textarea {
   padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;

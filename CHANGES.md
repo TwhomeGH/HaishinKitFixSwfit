@@ -1,5 +1,35 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 73. 開發索引：近期改動改為可展開檢視 diff
+
+**時間**：2026/10/11 08:54:55
+
+**檔案**：
+
+- `Tools/changelog/devindex.py`
+- `Tools/changelog/assets/dev.js`
+- `Tools/changelog/assets/dev.css`
+- `Tools/changelog/assets/dev.html`
+- `Tools/changelog/assets/theme.css`
+- `Tools/changelog/assets/file.css`
+- `Tools/README.md`
+
+### 73a. 動機
+
+「近期改動」分頁原本只把 `git log -20 --name-only` 的原始字串塞進一個 `<pre>`，只能看到改了哪些檔名，看不到差異，也無法點選。
+
+### 73b. 內容
+
+- 後端：`commits` 由原始字串改為結構化 `[{hash,date,subject,files}]`（`%x1e`／`%x1f` 分隔，避免標題含符號時解析歧義）；新增 `GET /development/diff?repo=&hash=[&path=]`（`worktree=1` 看 `git diff HEAD`），路徑擋絕對／`..`／開頭 `-`、rev 限 hex、回應上限 400KB 截斷。
+- 前端：每筆提交為可展開卡片（hash＋短時間一列、標題獨立換行一列）；點標題 lazy 載入整段 patch、點檔名只取該檔差異；新增「檢視工作區差異」鈕；diff 逐行語法上色並以 `+`／`-` 綠紅底色呈現。
+- 共用：`.tok-*` 語法色由 `file.css` 移到 `theme.css`（避免重複），`dev.html` 載入 `highlight.js`。
+
+### 73c. 驗證
+
+本機臨時伺服器＋瀏覽器端到端：20 張卡片、UTF-8 標題、展開／收合、單檔與工作區 diff、語法上色 token 與版面皆確認；`node --check`、`python -m py_compile` 通過。
+
+---
+
 ## 2026.10.07 04:14 修正重複 drain 覆蓋等待者造成 continuation 洩漏
 
 - 完整 CI 日誌確認 waiting S0S1 已正常 requestTimedOut；失敗來自伺服器收包前置條件。

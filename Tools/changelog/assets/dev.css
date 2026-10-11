@@ -35,3 +35,36 @@ pre.blob { background: var(--code); border: 1px solid var(--line); border-radius
   color: var(--fg); font-size: 12.5px; white-space: pre-wrap;
   word-break: break-word; overflow-x: auto;
 }
+
+/* 近期改動：提交卡片與差異檢視。 */
+.commits { display: flex; flex-direction: column; gap: 6px }
+.commit { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg) }
+.commit-head {
+  display: flex; flex-direction: column; gap: 3px; align-items: stretch; width: 100%;
+  text-align: left; background: transparent; border: 0; border-radius: 0; padding: 8px 12px;
+}
+.commit-head:hover { background: var(--line2) }
+.commit-top { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap }
+.commit-head .hash { color: var(--accent); font-size: 12.5px; background: none; padding: 0 }
+.commit-head .when { color: var(--mut); font-size: 12px; white-space: nowrap }
+.commit-head .subject { font-weight: 600; white-space: normal; overflow-wrap: anywhere }
+.commit-files { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 7px 12px; border-top: 1px solid var(--line2) }
+.commit-files a.cfile { font-size: 12px; color: var(--mut) }
+.commit-files a.cfile:hover { color: var(--accent) }
+.wt-wrap { margin: 6px 0 2px }
+.commit .diff, .wt-wrap .diff { padding: 8px 12px 10px }
+
+/* 統一分歧（unified diff）：等寬、可橫向捲動，+／- 綠紅底色。 */
+.dpre {
+  margin: 0; background: var(--code); border: 1px solid var(--line); border-radius: 10px;
+  overflow: auto; padding: 8px 0; white-space: pre;
+  font: 12.5px/1.55 ui-monospace, Consolas, "Courier New", monospace;
+}
+.dline { display: block; padding: 0 12px }
+.dmark { display: inline-block; width: 1.3em; color: var(--mut); user-select: none }
+.d-add { background: rgba(16, 185, 129, .14) }
+.d-del { background: rgba(239, 68, 68, .13) }
+.d-add .dmark { color: #059669 } .d-del .dmark { color: #dc2626 }
+.d-hunk { color: #8b5cf6; background: rgba(139, 92, 246, .08) }
+.d-file { color: var(--mut); font-weight: 600 }
+.d-meta { color: var(--mut) }
