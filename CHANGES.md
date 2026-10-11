@@ -20,7 +20,9 @@
 
 ### 73b. 內容
 
-- 後端：`commits` 由原始字串改為結構化 `[{hash,date,subject,files}]`（`%x1e`／`%x1f` 分隔，避免標題含符號時解析歧義）；新增 `GET /development/diff?repo=&hash=[&path=]`（`worktree=1` 看 `git diff HEAD`），路徑擋絕對／`..`／開頭 `-`、rev 限 hex、回應上限 400KB 截斷。
+- 後端：`commits` 由原始字串改為結構化 `[{hash,date,subject,files}]`（`%x1e`／`%x1f` 分隔，避免標題含符號時解析歧義）；
+- 新增 `GET /development/diff?repo=&hash=[&path=]`（`worktree=1` 看 `git diff HEAD`）
+- 路徑擋絕對／`..`／開頭 `-`、rev 限 hex、回應上限 400KB 截斷。
 - 前端：每筆提交為可展開卡片（hash＋短時間一列、標題獨立換行一列）；點標題 lazy 載入整段 patch、點檔名只取該檔差異；新增「檢視工作區差異」鈕；diff 逐行語法上色並以 `+`／`-` 綠紅底色呈現。
 - 共用：`.tok-*` 語法色由 `file.css` 移到 `theme.css`（避免重複），`dev.html` 載入 `highlight.js`。
 
