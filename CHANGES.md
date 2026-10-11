@@ -1,8 +1,7 @@
 # HaishinKitFixSwfit — 改動說明
 
-## 73. 開發索引：近期改動改為可展開檢視 diff
+## 2026.10.11 08:54 開發索引：近期改動改為可展開檢視 diff
 
-**時間**：2026/10/11 08:54:55
 
 **檔案**：
 
@@ -14,11 +13,11 @@
 - `Tools/changelog/assets/file.css`
 - `Tools/README.md`
 
-### 73a. 動機
+### 動機
 
 「近期改動」分頁原本只把 `git log -20 --name-only` 的原始字串塞進一個 `<pre>`，只能看到改了哪些檔名，看不到差異，也無法點選。
 
-### 73b. 內容
+### 內容
 
 - 後端：`commits` 由原始字串改為結構化 `[{hash,date,subject,files}]`（`%x1e`／`%x1f` 分隔，避免標題含符號時解析歧義）；
 - 新增 `GET /development/diff?repo=&hash=[&path=]`（`worktree=1` 看 `git diff HEAD`）
@@ -26,7 +25,7 @@
 - 前端：每筆提交為可展開卡片（hash＋短時間一列、標題獨立換行一列）；點標題 lazy 載入整段 patch、點檔名只取該檔差異；新增「檢視工作區差異」鈕；diff 逐行語法上色並以 `+`／`-` 綠紅底色呈現。
 - 共用：`.tok-*` 語法色由 `file.css` 移到 `theme.css`（避免重複），`dev.html` 載入 `highlight.js`。
 
-### 73c. 驗證
+### 驗證
 
 本機臨時伺服器＋瀏覽器端到端：20 張卡片、UTF-8 標題、展開／收合、單檔與工作區 diff、語法上色 token 與版面皆確認；`node --check`、`python -m py_compile` 通過。
 
@@ -61,9 +60,8 @@
 
 ---
 
-## 72. RTMP 握手分階段逾時（P1）
+## 2026.10.07 01:34 RTMP 握手分階段逾時（P1）
 
-**時間**：2026/10/07 01:34:23
 
 **檔案**：
 
@@ -71,25 +69,24 @@
 - `RTMPHaishinKit/Tests/RTMP/RTMPConnectionHandshakeTimeoutTests.swift`
 - `Docs/TODO.md`
 
-### 72a. 動機
+### 動機
 
 CHANGES #56a 只有整體 connect 逾時，無法區分卡在哪一階段、錯誤也無階段名，對診斷與調參不夠精確。
 
-### 72b. 內容
+### 內容
 
 RTMPConnection 改為依狀態分階段逾時：等 S0S1／等 S2 用 handshakeTimeout（預設 10s），等 connect 回應用 timeout；每次狀態前進以遞增 token 重裝，逾時訊息與診斷帶 sta
 ge 名（always）；close() 使計時器失效。
 
-### 72c. 驗證
+### 驗證
 
 新增 RTMPConnectionHandshakeTimeoutTests（NWListener 卡在 S0S1／S2，斷言逾時時間與階段名）；swiftc -parse 通過；macOS／iOS 實機待驗（Windows 無法跑 N
 etwork.framework）。
 
 ---
 
-## 71. 新增開發索引（Tools/changelog 套件 + dev_index.py）
+## 2026.10.07 01:07 新增開發索引（Tools/changelog 套件 + dev_index.py）
 
-**時間**：2026/10/07 01:07:29
 
 **檔案**：
 
@@ -100,25 +97,24 @@ etwork.framework）。
 - `Tools/change_log.py`
 - `Tools/README.md`
 
-### 71a. 動機
+### 動機
 
 變更歷史之外，需要在本機追蹤近期新增 API 與快速查代碼；參考並移植 ReplyKit 的 changelog 模組設計。
 
-### 71b. 內容
+### 內容
 
 新增 `Tools/changelog`（devindex 掃描 Swift 宣告含多行簽名與 `///`、文件、近 20 筆 commit、
 `Package.resolved`；assets 前端）與 `Tools/dev_index.py`（預設 8711）；`change_log.py` 於
 `/development` 與 `/assets/*` 轉交，標題列加連結。
 
-### 71c. 驗證
+### 驗證
 
 py_compile；Playwright 實測 /development 3668 符號、搜尋、鎖定套件、檔案檢視（1278 行 + Swift 上色）、CHANGES.md 排版檢視；console 0 error。
 
 ---
 
-## 70. DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
+## 2026.10.07 00:55 DocC：納入 5 個模組、公開文件遷入 catalog 並中文化
 
-**時間**：2026/10/07 00:55:19
 
 **檔案**：
 
@@ -129,40 +125,38 @@ py_compile；Playwright 實測 /development 3668 符號、搜尋、鎖定套件�
 - `RTMPHaishinKit/Sources/Docs.docc/`
 - `Docs/README.md`
 
-### 70a. 動機
+### 動機
 
 DocC 站台原本只建 2 個模組，公開文件又散在 repo 根 Docs/、未進站台。
 
-### 70b. 內容
+### 內容
 
 DocC 建置擴為 5 模組；5 個 index.md 中文化；23 篇公開面向文件自 Docs/ 遷入各模組 .docc 並以 <doc:> 關聯。
 
-### 70c. 關聯
+### 關聯
 
 同模組用 <doc:>；跨模組或目標仍在 Docs 者用 GitHub URL。合併 VIDEO_PIPELINE_API 入 VideoPipelineDiagnostics。
 
-### 70d. 修正
+### 修正
 
 修 2 處過時範例：SRT 發布移除未定義的 audioPlayer；RTC Session 的 SessionBuilderFactory→StreamSessionBuilderFactory。
 
-### 70e. 驗證
+### 驗證
 
 test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；CI docc job 待實機驗證。
 
 ---
 
-## 69. 補齊影片診斷事件與可用狀態文件
+## 2026.10.06 22:49 補齊影片診斷事件與可用狀態文件
 
-**時間**：2026/10/06 22:49:00
 
 - 將 VideoPipelineEvent 的 22 個 case 與 Availability 的 3 個 case 分別宣告，逐項補上中文觸發條件及限制。
 - 保留所有 case 名稱與 rawValue；新增 DocC 型別連結與註釋關聯規則。
 
 ---
 
-## 68. 補齊影片管線診斷欄位文件
+## 2026.10.06 22:44 補齊影片管線診斷欄位文件
 
-**時間**：2026/10/06 22:44:00
 
 - 為 VideoPipelineSnapshot 與相關佇列、事件快照補上中文欄位、單位、nil 與生命週期說明。
 - 新增 DocC 階段對照及取得範例，區分 Mixer、編碼、RTMP 入列與 socket 完成。
@@ -170,9 +164,8 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 ---
 
-## 67. 改善 API 文件首頁與核心診斷中文說明
+## 2026.10.06 22:39 改善 API 文件首頁與核心診斷中文說明
 
-**時間**：2026/10/06 22:39:00
 
 - 首頁改為響應式雙模組卡片，顯示 checkout SHA、ref、標籤、UTC 時間與 CI 連結。
 - 發布前檢查模組輸出，產生 build-info.json 並保留 revision.txt。
@@ -183,9 +176,8 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 ---
 
-## 66. DocC 保留版本與失敗建置證據
+## 2026.10.06 22:03 DocC 保留版本與失敗建置證據
 
-**時間**：2026/10/06 22:03:00
 
 - 獨立上傳 revision、manifest、解析前後鎖定檔、工具鏈及模組建置日誌。
 - 失敗仍嘗試上傳診斷，pipefail 保留失敗狀態；僅成功建置可部署 Pages。
@@ -193,9 +185,8 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 ---
 
-## 65. 傳送完成計數與文件入口
+## 2026.10.06 21:52 傳送完成計數與文件入口
 
-**時間**：2026/10/06 21:52:00
 
 - 修正 totalBytesOut 只累計本機無錯誤完成批次；失敗時先關閉，不再續送下一批。
 - 新增 RTMPConnection.transportDiagnostics() 公開快照與連線世代隔離。
@@ -208,9 +199,8 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 
 詳見 [傳送診斷](Docs/RTMP_TRANSPORT_DIAGNOSTICS.md)。
 
-## 64. 自動產生 kHaishinKitRevision（SwiftPM build tool plugin）
+## 2026.10.05 22:01 自動產生 kHaishinKitRevision（SwiftPM build tool plugin）
 
-**時間**：2026/10/05 22:01:46
 
 **檔案**：
 
@@ -219,23 +209,22 @@ test_docc_home.py、docc.yml YAML、全部 index 與移入檔 markdownlint 0；C
 - `Package.swift`
 - `HaishinKit/Sources/Util/Constants.swift`
 
-### 64a. 動機
+### 動機
 
 原本是手動常數，會與實際 HEAD 漂移（App log 曾顯示舊值）；Docs 宣稱的 CI 自動流程並不存在。
 
-### 64b. 實作
+### 實作
 
 SwiftPM build tool plugin：RevisionTool 跑 git rev-parse --short HEAD，HaishinKitRevisionPlugin 產生常數並掛到 HaishinKit target。
 
-### 64c. 驗證
+### 驗證
 
 dump-package 通過；Windows 實編 RevisionTool 輸出與 HEAD 相符；macOS build 待實機。
 
 ---
 
-## 63. 新增 CHANGES.md 管理工具 change_log.py（網頁 GUI + CLI）
+## 2026.10.05 21:37 新增 CHANGES.md 管理工具 change_log.py（網頁 GUI + CLI）
 
-**時間**：2026/10/05 21:37:01
 
 **檔案**：
 
@@ -243,11 +232,11 @@ dump-package 通過；Windows 實編 RevisionTool 輸出與 HEAD 相符；macOS 
 - `Tools/change_log.cmd`
 - `Tools/README.md`
 
-### 63a. 動機
+### 動機
 
 CHANGES.md 已 60+ 條、手改易出格式錯；需要可搜尋/新增/編輯/刪除的本機工具，且能在 Windows 上維護。
 
-### 63b. 實作
+### 實作
 
 - 零依賴 Python；解析 `## 編號.` 條目（圍籬 / HTML 註解感知）。
 - 自動取下一編號；可選 `**時間**`（預設當前系統時間）。
@@ -256,13 +245,13 @@ CHANGES.md 已 60+ 條、手改易出格式錯；需要可搜尋/新增/編輯/�
 - CLI：`serve` / `add` / `list` / `show`。
 - 存檔以獨立 `/api/lint` 非阻塞跑 markdownlint（修 MD032、報 MD018）。
 
-### 63c. 驗證
+### 驗證
 
 Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms（原本同步 markdownlint 約 1.65s）。
 
 ---
 
-## 62. 測試審計：抽 MixClockAdvance 純決策、補 RTMPTimestamp 缺漏、刪除過時的 verify-ts
+## 2026.10.05 19:45 測試審計：抽 MixClockAdvance 純決策、補 RTMPTimestamp 缺漏、刪除過時的 verify-ts
 
 **檔案**：`HaishinKit/Sources/Mixer/MixClockAdvance.swift`（新）、
 `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`、
@@ -270,7 +259,7 @@ Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms�
 `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`、
 `.cortexkit/verify-mixer-clock.swift`（改寫）、`.cortexkit/verify-ts.swift`（刪除）
 
-### 62a. 診斷（逐一比對 XCTest 與 `.cortexkit/verify-*.swift`）
+### 診斷（逐一比對 XCTest 與 `.cortexkit/verify-*.swift`）
 
 - `verify-ts.swift` 是**過時 mirror**：只重寫了舊的 preferredDelta 邏輯，缺真碼
   的 drift 修正（tolerance 80ms / max correction 5ms / ratio 0.1），案例會過但
@@ -281,7 +270,7 @@ Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms�
 - `RTMPTimestampTests` 缺 `allowJump` 分支（真碼 `RTMPTimestamp.swift:61-62` 過去
   沒有任何測試傳過 `allowJump`）、缺 48k AAC preferredDelta 的 21/21/22 節奏。
 
-### 62b. 修正
+### 修正
 
 - 新增 `MixClockAdvance.shouldAdvance(track:mainTrack:mainLastOutputPosition:position:)`
   純決策（Foundation-only）；`AudioMixerByMultiTrack.track(_:didOutput:)` 改呼叫
@@ -294,14 +283,14 @@ Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms�
 - `.cortexkit/verify-mixer-clock.swift` 改寫成編譯**真實** `MixClockAdvance.swift`
   （不再是 mirror）。
 
-### 62c. 驗證
+### 驗證
 
 - `swiftc` 實編 `verify-mixer-clock` 全過。
 - 全部改動 `swiftc -parse` 通過；macOS `swift test` 待實機。
 
 ---
 
-## 61. 修正 RTMP 重連：S2 之後同段資料被丟棄導致 connect 永不 resolve
+## 2026.10.05 19:31 修正 RTMP 重連：S2 之後同段資料被丟棄導致 connect 永不 resolve
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPHandshake.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
@@ -310,7 +299,7 @@ Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms�
 `.cortexkit/verify-handshake.swift`（新）、
 `HaishinKit/Sources/Util/Constants.swift`
 
-### 61a. 診斷
+### 診斷
 
 重連 log：TCP 與 RTMP 握手都完成（`handshakeDone`），之後閒置約 4 秒伺服器才
 關閉，本機合成 `requestFailed(response: NetConnection.Connect.Failed error: )`
@@ -325,7 +314,7 @@ Playwright 實測載入/搜尋/新增/編輯/刪除/lint 全通過；存檔 5ms�
 createStream/publish，數秒後關閉連線，recv loop EOF → `close()` 對 pending
 operation 回填**合成的** Connect.Failed，病因被掩蓋。
 
-### 61b. 修正
+### 修正
 
 - `RTMPHandshake` 收斂成單一權威消費點：`takeTrailing()` 一次回傳並移除「S2
   之後」的 RTMP 位元組；`c2packet()` 不再有移除副作用；新增 `handshakeSize`。
@@ -338,7 +327,7 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
   （`.socketErrorOccurred(NWError / .endOfStream)`），不再合成空白 Connect.Failed。
 - `kHaishinKitRevision` 更新為 `d1af6c54`（原 `3481fce` 與 HEAD 不符，log 會誤導）。
 
-### 61c. 驗證
+### 驗證
 
 - `.cortexkit/verify-handshake.swift`（swiftc，非 Apple 平台）：全數通過，含
   「S0S1 + S2 + trailing 同段」與「跨 read」「逐 byte」等回歸。
@@ -347,21 +336,21 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
 
 ---
 
-## 60. 更新過時的 OutgoingStream buffer count 測試 + SRT 邊界夾限 + CI 日誌 ANSI
+## 2026.09.29 23:16 更新過時的 OutgoingStream buffer count 測試 + SRT 邊界夾限 + CI 日誌 ANSI
 
 **檔案**：`HaishinKit/Tests/Stream/OutgoingStreamTests.swift`、
 `HaishinKit/Sources/Stream/OutgoingStream.swift`、
 `SRTHaishinKit/Sources/SRT/SRTStream.swift`、
 `.github/workflows/swift-tests.yml`
 
-### 60a. 診斷
+### 診斷
 
 `computeVideoInputBufferCountsLocked` 早先是 `max(1, min(30, …))`，`OutgoingStreamTests`
 在 `73231cd0` 依此寫下「夾在 [1, 30]」。`24c0e34d` 把自動模式改成純估量
 （`max(0, …)`、不再夾限），測試沒同步更新 → HaishinKit iOS 測試紅燈
 （8x8 → 163840、100000×100000 → 0）。亦即**程式是刻意改的、測試過時**。
 
-### 60b. 修正
+### 修正
 
 - 測試改為驗證純估量語意：1920x1080 → 5、1280x720 → 11、8x8 → 163840、
   100000×100000 → 0（移除 `[1, 30]` 假設）。
@@ -369,7 +358,7 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
 - 唯一需要有效容量的消費端是 `SRTStream`（`.bufferingNewest`）：改在該邊界
   `max(1, outgoing.videoInputBufferCounts)` 自我夾限（`0` 會丟棄所有視訊影格）。
 
-### 60c. CI：避免 ANSI 色碼污染日誌摘要
+### CI：避免 ANSI 色碼污染日誌摘要
 
 `colorize-test-log.sh` 原本在 `tee` **之前**，把 ANSI 色碼一併寫進落盤日誌，於是
 `failures.md`／Step Summary 內的 `\033[31m` 在不渲染 ANSI 的地方顯示成 `�[31m`
@@ -378,7 +367,7 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
 
 ---
 
-## 59. 修正 RTMP video composition time 在 A/V 補償下變成負值（無畫面）
+## 2026.09.29 23:09 修正 RTMP video composition time 在 A/V 補償下變成負值（無畫面）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPVideoCompositionTime.swift`（新）、
@@ -386,7 +375,7 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
 `RTMPHaishinKit/Tests/RTMP/RTMPVideoCompositionTimeTests.swift`（新）、
 `Docs/RTMP_COMPOSITION_TIME.md`（新）、`.cortexkit/verify-cts.swift`
 
-### 59a. 診斷
+### 診斷
 
 串流在 wire 上每個 video frame 的 FLV composition time（CTS）都是 **−134/−135ms**，
 但 H.264 以 IPPP（`has_b_frames == 0`）輸出，CTS 本應為 0。VLC/ffmpeg 持續噴
@@ -401,7 +390,7 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
 `CTS = PTS − (PTS + comp) = −comp`。且補償在此公式下自我抵銷
 （`wire PTS = (PTS+comp) + (−comp) = PTS`），呈現時間沒有真正位移。
 
-### 59b. 修正
+### 修正
 
 把 CTS 的計算抽成純函式
 `RTMPVideoCompositionTime.offset(hasValidDecodeTimeStamp:presentationTime:decodeTime:ctsOffset:)`，
@@ -410,7 +399,7 @@ operation 回填**合成的** Connect.Failed，病因被掩蓋。
 A/V 補償只作用在 wire DTS/PTS，不再混入 CTS。修正後補償也才真正讓
 `wire PTS = sourcePTS + comp` 生效。
 
-### 59c. 效果 / 驗證
+### 效果 / 驗證
 
 - 單元測試 `RTMPVideoCompositionTimeTests`（Swift Testing）：無重排恆為 0（含來源
   PTS/DTS 分歧的情況）、有重排為 `PTS−DTS+offset`、負值 clamp 0、掃描網格恆非負。
@@ -422,7 +411,7 @@ A/V 補償只作用在 wire DTS/PTS，不再混入 CTS。修正後補償也才�
 
 ---
 
-## 58. CI：新增 Thread Sanitizer job
+## 2026.09.17 18:13 CI：新增 Thread Sanitizer job
 
 **檔案**：`.github/workflows/swift-tests.yml`
 
@@ -435,7 +424,7 @@ A/V 補償只作用在 wire DTS/PTS，不再混入 CTS。修正後補償也才�
 
 ---
 
-## 57. OutgoingStream 執行緒安全 + keepalive 純型別化與測試
+## 2026.09.17 18:08 OutgoingStream 執行緒安全 + keepalive 純型別化與測試
 
 **檔案**：`HaishinKit/Sources/Stream/OutgoingStream.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPKeepAlive.swift`（新）、
@@ -444,7 +433,7 @@ A/V 補償只作用在 wire DTS/PTS，不再混入 CTS。修正後補償也才�
 `RTMPHaishinKit/Tests/RTMP/RTMPKeepAliveTests.swift`（新）、
 `.cortexkit/verify-keepalive.swift`（新）
 
-### 57a. OutgoingStream 加鎖（消除 data race）
+### OutgoingStream 加鎖（消除 data race）
 
 **診斷**：`OutgoingStream` 是 `@unchecked Sendable` 但**沒有任何鎖**，可變狀態被擷取 /
 mixer 執行緒（`append`）與 stream actor（`videoSettings` / `setVideoInputBufferCounts`
@@ -458,7 +447,7 @@ check-then-act 惰性建立可產生重複 stream。`VideoCodec` 本身也無鎖
 **測試**：`OutgoingStreamTests`（自動計算、覆寫/還原、併發存取 smoke；Apple 端建議
 配 Thread Sanitizer）。
 
-### 57b. keepalive 抽成純型別 `RTMPKeepAlive` + 測試
+### keepalive 抽成純型別 `RTMPKeepAlive` + 測試
 
 **修正**：把 #56b 的 keepalive 狀態機從 `RTMPConnection` 抽成 Foundation-only 的
 `RTMPKeepAlive`（`tick(now:inboundBytes:) -> Decision`、`onPong()`、`reset(now:)`），
@@ -471,7 +460,7 @@ check-then-act 惰性建立可產生重複 stream。`VideoCodec` 本身也無鎖
 
 ---
 
-## 56. 連線診斷強化：connect/handshake 逾時、keepalive ping、onLog always 通道
+## 2026.09.17 18:00 連線診斷強化：connect/handshake 逾時、keepalive ping、onLog always 通道
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`、
@@ -481,7 +470,7 @@ check-then-act 惰性建立可產生重複 stream。`VideoCodec` 本身也無鎖
 `SRTHaishinKit/Sources/SRT/SRTStream.swift`、
 `RTCHaishinKit/Sources/RTC/RTCStream.swift`
 
-### 56a. connect/handshake 整體逾時（`timeout` 終於生效）
+### connect/handshake 整體逾時（`timeout` 終於生效）
 
 **診斷**：`RTMPSocket.connect` 的 15s timeout 只保護 TCP-connect 的 continuation；
 `.ready` 時就 resume+nil，timer 立刻返回。之後等 S0S1/S2 的 RTMP 握手、以及 connect
@@ -494,7 +483,7 @@ command 的 `_result` **完全沒有逾時**——server 若接受 TCP 卻卡住
 `close()`（走既有重連路徑）。用 `connectGeneration` token 防止舊 attempt 的計時器拆掉
 新 attempt。
 
-### 56b. Keepalive ping/pong（NAT 60s idle + 閒置死線偵測）
+### Keepalive ping/pong（NAT 60s idle + 閒置死線偵測）
 
 **診斷**：idle 的 TCP flow 可能被 NAT/carrier 在 ~60s 回收；純 video VFR 靜止 + 無持續
 音軌時，客戶端可能數十秒不送任何位元組。原本也沒有任何 client 主動探測。
@@ -507,7 +496,7 @@ command 的 `_result` **完全沒有逾時**——server 若接受 TCP 卻卡住
 CHANGES #55c 的 queue-based watchdog 互補：idle 時佇列為空、watchdog 不計，
 改由 pong 判定；active stall 仍由 watchdog 判定。
 
-### 56c. onLog `always` 通道（production `.warn` 仍拿得到斷線劇本）
+### onLog `always` 通道（production `.warn` 仍拿得到斷線劇本）
 
 **診斷**：`minimumLogLevel` 同時 gate 了 trace/debug 火管與連線生命週期/故障事件。
 production 用 `.warn` 時，`State:`、`TCP connecting/connected`、`S0S1`、
@@ -520,7 +509,7 @@ socket→connection 的轉送都改為 `always || severity >= minimumLogLevel`�
 guard、send drop、publish 啟停）。per-chunk/per-frame 的 trace/debug 仍受
 `minimumLogLevel` 控制。
 
-### 56d. `videoInputBufferCounts` 自動計算
+### `videoInputBufferCounts` 自動計算
 
 **診斷**：AsyncStream 的 bufferingPolicy 在建立時固定；`videoInputStream` 又被快取，
 因此 `videoSettings` setter 對已存在 stream 的重算是無效的（註解誤導）。且 SRT/RTC 從不
@@ -533,14 +522,14 @@ guard、send drop、publish 啟停）。per-chunk/per-frame 的 trace/debug 仍�
 
 ---
 
-## 55. ABR actor 重入競態、靜態畫面壅塞誤判、watchdog 誤殺閒置來源
+## 2026.09.17 05:21 ABR actor 重入競態、靜態畫面壅塞誤判、watchdog 誤殺閒置來源
 
 **檔案**：`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、
 `HaishinKit/Sources/Network/NetworkMonitor.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
 `HaishinKit/Tests/Stream/StreamBitRateStrategyTests.swift`
 
-### 55a. `StreamVideoAdaptiveBitRateStrategy` actor reentrancy
+### `StreamVideoAdaptiveBitRateStrategy` actor reentrancy
 
 **問題**：`adjustBitrate` 在自己的計數器讀寫之間夾著 `await`（`stream.videoSettings`
 /`audioSettings`/`setVideoSettings`）。`stream` 是另一個 actor，這些 await 是
@@ -558,7 +547,7 @@ settings、呼叫 `decide`、再 `await setVideoSettings`。同一事件不可�
 
 **測試**：新增「同一壅塞事件併發只套用一次」案例（共 8 案例）。
 
-### 55b. NetworkMonitor backlog 門檻加絕對下限
+### NetworkMonitor backlog 門檻加絕對下限
 
 **問題**：backlog 秒數以**實測排空速率**為分母。靜態 / VFR 來源合法地幾乎不產出時，
 速率塌到只剩音訊（~16 KB/s），0.75s 只等於 ~12 KB；而 `queueBytesOut` 也包含 peek
@@ -571,7 +560,7 @@ backlog」→ 健康鏈路被誤判壅塞、砍碼率並把 `provenCeiling`/`res
 一併受此下限約束。低於下限的佇列最多只是一個 send round trip，不可能造成有意義延遲。
 （低速率下 128 KB = 1s，仍遠優於舊的 512 KB = 4.2s。）
 
-### 55c. Liveness watchdog 不再誤殺閒置來源
+### Liveness watchdog 不再誤殺閒置來源
 
 **問題**：watchdog 假設「audio 永不 shed，正常推流 bytes-out 必持續前進」。這個假設在
 **沒有持續輸出音軌的 VFR 螢幕擷取（純 video / 只掛 .audioApp）且畫面全靜止**時不成立：
@@ -584,7 +573,7 @@ force close socket → 重連，健康鏈路被斷開。
 
 ---
 
-## 54. NetworkMonitor 佇列壅塞門檻改為 backlog 時間正規化
+## 2026.09.12 04:26 NetworkMonitor 佇列壅塞門檻改為 backlog 時間正規化
 
 **檔案**：`HaishinKit/Sources/Network/NetworkMonitor.swift`
 
@@ -605,7 +594,7 @@ force close socket → 重連，健康鏈路被斷開。
 
 ---
 
-## 53. StreamVideoAdaptiveBitRateStrategy 降速後永久釘死的修正
+## 2026.09.12 04:26 StreamVideoAdaptiveBitRateStrategy 降速後永久釘死的修正
 
 **檔案**：`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、
 `HaishinKit/Tests/Stream/StreamBitRateStrategyTests.swift`（新增）
@@ -637,7 +626,7 @@ force close socket → 重連，健康鏈路被斷開。
 
 ---
 
-## 52. 音訊管線診斷 API + 混音對齊/聲道修正
+## 2026.09.11 05:01 音訊管線診斷 API + 混音對齊/聲道修正
 
 **檔案**：`HaishinKit/Sources/Mixer/AudioPipelineDiagnostics.swift`（新增）、
 `AudioRingBuffer.swift`、`AudioMixerTrack.swift`、`AudioMixerByMultiTrack.swift`、
@@ -669,7 +658,7 @@ force close socket → 重連，健康鏈路被斷開。
 
 ---
 
-## 51. RTMP audio wire timestamp 改為 drift-aware preferred delta
+## 2026.09.09 08:21 RTMP audio wire timestamp 改為 drift-aware preferred delta
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
@@ -771,7 +760,7 @@ gap / drift 是真實同步資訊，可能被抹平，造成 A/V offset 被錯�
 
 ---
 
-## 50. AAC compressed audio timestamp 不再信任 packet description cadence
+## 2026.09.07 22:21 AAC compressed audio timestamp 不再信任 packet description cadence
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、
 `Docs/CHANGELOG_RTMP_SOCKET.md`
@@ -802,7 +791,7 @@ payload 被 `20/36/37ms` wire cadence 排程成斷續音訊或累積 A/V 偏差�
 
 ---
 
-## 49. Audio session 恢復改為狀態感知 + 串接 restartAudioEncoding
+## 2026.09.07 21:33 Audio session 恢復改為狀態感知 + 串接 restartAudioEncoding
 
 **檔案**：`HaishinKit/Sources/Mixer/MediaMixer.swift`、
 `Docs/MEDIA_MIXER.md`、`Docs/RTMP_RECOVERY_LIFECYCLE.md`
@@ -849,7 +838,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
 
 ---
 
-## 48. 新增明確的編碼恢復 API（供 ReplayKit pause/resume 使用）
+## 2026.09.04 01:21 新增明確的編碼恢復 API（供 ReplayKit pause/resume 使用）
 
 **檔案**：`HaishinKit/Sources/Stream/StreamConvertible.swift`、
 `HaishinKit/Sources/Codec/AudioCodecSettings.swift`、
@@ -887,7 +876,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
 
 ---
 
-## 47. 降低 onLog hot path 成本並補上 RTMP queue 保護上限
+## 2026.09.01 20:57 降低 onLog hot path 成本並補上 RTMP queue 保護上限
 
 **檔案**：`HaishinKit/Sources/Util/Constants.swift`、
 `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、
@@ -923,7 +912,7 @@ audio encoding recovery API，降低「capture 看似恢復但 RTMP 音訊仍無
 
 ---
 
-## 46. 修正 RTMP onMetaData 發送時序（避免 HTTP-FLV 顯示 `1/1000` fps）
+## 2026.09.01 09:35 修正 RTMP onMetaData 發送時序（避免 HTTP-FLV 顯示 `1/1000` fps）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -958,7 +947,7 @@ width/height/framerate。
 
 ---
 
-## 45. Error propagation: `connectionLost(Error?)` 保留底層錯誤原文
+## 2026.08.27 23:59 Error propagation: `connectionLost(Error?)` 保留底層錯誤原文
 
 **檔案**：`RTMPStream.swift`、`RTMPSocket.swift`、`RTMPConnection.swift`
 
@@ -980,7 +969,7 @@ width/height/framerate。
 
 ---
 
-## 44. `deleteStream()` 清理 pending continuation（修復重連後 `invalidState`）
+## 2026.08.27 23:23 `deleteStream()` 清理 pending continuation（修復重連後 `invalidState`）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1003,7 +992,7 @@ width/height/framerate。
 
 ---
 
-## 43. `packetDuration` nil 防禦 fallback（wire 永不退回 source-time）
+## 2026.08.24 19:27 `packetDuration` nil 防禦 fallback（wire 永不退回 source-time）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1020,7 +1009,7 @@ source-time cadence → 斷續音。
 **效果**：就算 runtime 格式異常，wire 也依封包 duration 前進（23/24ms @44100），
 斷續音來源消失。
 
-## 42. A/V offset 自動測量補償（video wire 對齊 audio）
+## 2026.08.24 18:35 A/V offset 自動測量補償（video wire 對齊 audio）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1042,7 +1031,7 @@ source-time cadence → 斷續音。
 video wire 與 audio wire 對齊，玩家不再觸發 A/V 修正 → 斷序/短暫無聲消失。
 代價：補償生效時 video wire 一次跳 ~0.28s（啟動期一次性跳動）。
 
-## 41. 管線重啟防重入保險（避免誤判連發/重複建管線）
+## 2026.08.24 18:06 管線重啟防重入保險（避免誤判連發/重複建管線）
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1056,7 +1045,7 @@ video+audio 兩個 codec），若重入可能重複建 publish tasks、或丟幀
 
 **效果**：就算誤判，也只重啟一次，不會疊加。
 
-## 40. `publish throughput` log 節流為每 10 秒一筆
+## 2026.08.24 17:07 `publish throughput` log 節流為每 10 秒一筆
 
 **檔案**：`RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1068,7 +1057,7 @@ video+audio 兩個 codec），若重入可能重複建 publish tasks、或丟幀
 每次 status 結尾重置，印的是最後 1 秒快照，仍足以監測 avOffset 是否漂移。
 stall 偵測/bitrate 策略仍維持 1Hz（不受影響，只 throttle log 輸出）。
 
-## 39. logger 多 handler 並存 + 輸出轉送到 connection.onLog（不需 Xcode 看內部日誌）
+## 2026.08.23 17:02 logger 多 handler 並存 + 輸出轉送到 connection.onLog（不需 Xcode 看內部日誌）
 
 **檔案**：`HaishinKit/Sources/Util/Constants.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`、`RTMPLogEvent.swift`
 
@@ -1112,7 +1101,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 `minimumLogLevel`（預設過濾 trace/debug）照常生效。connect 後會先印一條
 `HaishinKit.logger forwarding to onLog is active` 確認轉送入口。
 
-## 37. 路由感知自動 AEC：耳機無回音時自動停用
+## 2026.08.23 01:23 路由感知自動 AEC：耳機無回音時自動停用
 
 **檔案**: `HaishinKit/Sources/Mixer/AudioMixerByMultiTrack.swift`
 
@@ -1133,7 +1122,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 **效果**：戴耳機推流 → 0 AEC 成本 + 0 artifacts；喇叭外放 → 才負擔 AEC 成本。
 串流中途拔插耳機即時反應，無需重啟。
 
-## 36. 修正 AEC 過度自適應造成的電磁音（爆音/斷層）
+## 2026.08.23 01:23 修正 AEC 過度自適應造成的電磁音（爆音/斷層）
 
 **檔案**: `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift`
 
@@ -1154,7 +1143,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 **效果**：合成驗證仍達 17.9dB 回音衰減、人聲保留、無新增不連續。收斂速度略降
 （前 ~1s 回音衰減較少，之後穩定）。
 
-## 35. 修正 packetDuration nil 時 audio wire 退回 source-time cadence
+## 2026.08.22 22:28 修正 packetDuration nil 時 audio wire 退回 source-time cadence
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -1181,7 +1170,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 
 ---
 
-## 34. 新增雙軌物理回音消除（簡易 NLMS AEC）
+## 2026.08.22 10:33 新增雙軌物理回音消除（簡易 NLMS AEC）
 
 **檔案**:
 
@@ -1222,7 +1211,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 
 ---
 
-## 33. 修正 ReplayKit 多軌音訊跨軌對齊（回音 / 撕裂）
+## 2026.08.22 09:22 修正 ReplayKit 多軌音訊跨軌對齊（回音 / 撕裂）
 
 **檔案**:
 
@@ -1262,7 +1251,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 
 ---
 
-## 32. 修正 AAC 音訊 RTMP timestamp cadence 抖動
+## 2026.08.06 20:09 修正 AAC 音訊 RTMP timestamp cadence 抖動
 
 **檔案**: `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`, `RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`
 
@@ -1291,7 +1280,7 @@ RTMPConnection 已有一套 `onLog` 管線（app 可 `setOnLog` 送伺服器）�
 
 ---
 
-## 1. VBR (Variable BitRate) 支援修正與 Bug 修復
+## 2026.06.19 03:18 VBR (Variable BitRate) 支援修正與 Bug 修復
 
 **檔案**: `Sources/Codec/VTSessionOptionKey.swift` `Sources/Codec/VideoCodecSettings.swift`
 
@@ -1365,7 +1354,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 2. 新增 VBV (Video Buffering Verifier) 參數
+## 2026.06.19 03:18 新增 VBV (Video Buffering Verifier) 參數
 
 **檔案**: `Sources/Codec/VTSessionOptionKey.swift` `Sources/Codec/VideoCodecSettings.swift`
 
@@ -1382,7 +1371,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 3. 新增 Quality Mode 位元率控制
+## 2026.06.19 03:18 新增 Quality Mode 位元率控制
 
 **檔案**: `Sources/Codec/VideoCodecSettings.swift`
 
@@ -1392,30 +1381,30 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 4. Adaptive BitRate 策略重寫
+## 2026.06.19 03:18 Adaptive BitRate 策略重寫
 
 **檔案**: `Sources/Stream/StreamBitRateStrategy.swift`
 
-### 4.1 恢復速度加快
+### 恢復速度加快
 
 - `statusCountsThreshold` 從 **15** 降為 **5** → 只要 5 秒健康就開始回升
 - 每次增量從 `mamimumVideoBitRate / 10` 改為 `/ 5` → 每次回升 **20%**
 
-### 4.2 Zero-Byte 時也降 Bitrate
+### Zero-Byte 時也降 Bitrate
 
 原本 bug：`currentBytesOutPerSecond == 0` 時只降 framerate 不降 bitrate
 修正後：每次 zero-byte 事件將 bitrate **砍半**
 
-### 4.3 加入降速冷卻
+### 加入降速冷卻
 
 - `insufficientBWCooldown = 3`：觸發 `publishInsufficientBWOccured` 後，至少要等 3 個 `.status` 事件才能再次降速
 - 防止連續擁塞事件把 bitrate 反覆打到地板
 
-### 4.4 Reset 時一併歸零 frameInterval
+### Reset 時一併歸零 frameInterval
 
 原本 `reset` 只恢復 bitrate 沒恢復 frameInterval，修正後一併歸零。
 
-### 4.5 移除 zeroBytesOutPerSecondCounts 與 frameInterval 干預
+### 移除 zeroBytesOutPerSecondCounts 與 frameInterval 干預
 
 **問題**：`publishInsufficientBWOccured` 路徑中，`zeroBytesOutPerSecondCounts` 只增不減，用來逐步降低 frameInterval（30fps → 10fps → 5fps 鋸齒狀循環）
 
@@ -1436,23 +1425,23 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 5. NetworkMonitor 佇列擁塞檢測強化
+## 2026.06.19 03:18 NetworkMonitor 佇列擁塞檢測強化
 
 **檔案**: `Sources/Network/NetworkMonitor.swift`
 
-### 5.1 新增絕對佇列大小閾值
+### 新增絕對佇列大小閾值
 
 - `maxQueueBytesThreshold`（預設 **512 KB**）：當 `queueBytesOut` 超過此值且持續 **2 次**採樣，觸發 `publishInsufficientBWOccured`
 - 解決原廠只檢查「佇列是否連續遞增」的盲點：若佇列卡在超高水位但不再成長，原本永遠不會觸發擁塞
 
-### 5.2 方向檢測放寬
+### 方向檢測放寬
 
 原本只有 `total == measureInterval - 1`（即 3 次全部遞增）才觸發
 修正改為 `measureInterval - 1 <= total`（2 次以上遞增即觸發），對波動更敏感
 
 ---
 
-## 6. RTMPSocket 佇列統計安全
+## 2026.06.19 03:18 RTMPSocket 佇列統計安全
 
 **檔案**: `Sources/Network/RTMPSocket.swift`（無修改，經審查確認安全）
 
@@ -1460,7 +1449,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 7. 移除 Logboard 外部依賴，改用 OSLog
+## 2026.06.19 03:46 移除 Logboard 外部依賴，改用 OSLog
 
 **檔案**: `Package.swift` + 所有 `Constants.swift` + 移除 `import Logboard`
 
@@ -1471,7 +1460,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 改動檔案總覽
+## 2026.06.19 03:18 改動檔案總覽
 
 | 檔案 | 修改類型 |
 | --- | --- |
@@ -1487,7 +1476,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 8. Port: 截斷 RTMP User Control 訊息防 Crash
+## 2026.06.19 05:38 Port: 截斷 RTMP User Control 訊息防 Crash
 
 **對應上游 PR**: [#1922](https://github.com/HaishinKit/HaishinKit.swift/pull/1922)
 
@@ -1505,7 +1494,7 @@ VBR 模式下 encoder 為了畫質可瞬間暴衝遠超過 `bitRate`。若缺乏
 
 ---
 
-## 9. 修復 RTMP Chunk `.two` Header 寫入範圍錯誤
+## 2026.06.19 05:38 修復 RTMP Chunk `.two` Header 寫入範圍錯誤
 
 **檔案**: `Sources/RTMP/RTMPChunk.swift:305`
 
@@ -1522,7 +1511,7 @@ data.replaceSubrange(position..<position + 3, with: message.timestamp.bigEndian.
 
 ---
 
-## 10. E-RTMP 參數改為不預設送出
+## 2026.06.19 21:26 E-RTMP 參數改為不預設送出
 
 **檔案**: `Sources/RTMP/RTMPConnection.swift:261-263`
 
@@ -1539,9 +1528,9 @@ connect command 中只有非 nil 時才加入。避免不支援 Enhanced RTMP �
 
 ---
 
-## 11. 底層設計問題修復
+## 2026.06.19 22:00 底層設計問題修復
 
-### 11.1 `maxKeyFrameIntervalDuration` 無法動態更新
+### `maxKeyFrameIntervalDuration` 無法動態更新
 
 **檔案**: `Sources/Codec/VideoCodecSettings.swift`
 
@@ -1558,7 +1547,7 @@ connect command 中只有非 nil 時才加入。避免不支援 Enhanced RTMP �
 - 從 `invalidateSession()` 中移除 `maxKeyFrameIntervalDuration`
 - 在 `apply()` 中加入 `VTSessionSetProperty` 直接對執行中的 session 下指令（VideoToolbox 支援 runtime 更改此屬性）
 
-### 11.2 `videoInputBufferCounts` 預設 unbounded + computed property 設計缺陷
+### `videoInputBufferCounts` 預設 unbounded + computed property 設計缺陷
 
 **檔案**: `Sources/Stream/OutgoingStream.swift`
 
@@ -1590,7 +1579,7 @@ package var videoInputStream: AsyncStream<CMSampleBuffer> {
 - 預設值改為 `5`，使用 `.bufferingNewest(5)`，避免 unbounded 累積
 - `setVideoInputBufferCounts` 仍應在 publish 前呼叫
 
-### 11.3 `CMVideoFormatDescription.configurationBox` 無 fallback
+### `CMVideoFormatDescription.configurationBox` 無 fallback
 
 **檔案**: `Sources/Extension/CMVideoFormatDescription+Extension.swift`（兩個 module 各有一個）
 
@@ -1610,7 +1599,7 @@ package var videoInputStream: AsyncStream<CMSampleBuffer> {
 - 手動組合 `AVCDecoderConfigurationRecord`，透過其 `data` getter 產生正確的 avcC box
 - HEVC 路徑暫回 nil（待補）
 
-### 11.4 `makeFormatDescription()` 陣列越界 crash
+### `makeFormatDescription()` 陣列越界 crash
 
 **檔案**:
 
@@ -1628,7 +1617,7 @@ return pictureParameterSets[0].withUnsafeBytes { ... }
 
 修法：在索引前 `guard !array.isEmpty`。
 
-### 11.5 隱患觀察：Pipeline 跨多層 AsyncStream，每層獨立 buffer
+### 隱患觀察：Pipeline 跨多層 AsyncStream，每層獨立 buffer
 
 完整視訊路徑 chain：
 
@@ -1656,7 +1645,7 @@ MediaMixer.append() → VideoCaptureUnit → VideoMixer
 
 ---
 
-## 12. 支援語音通話（Voice Chat）與直播共存
+## 2026.06.19 23:22 支援語音通話（Voice Chat）與直播共存
 
 > [!WARNING]
 > 此功能可能已移除：`AudioRouteManager` 與 `MediaMixer.setVoiceChatEnabled()` 已於第 18 條移除，本條目僅保留歷史脈絡。
@@ -1710,7 +1699,7 @@ mixer.setVoiceChatEnabled(false)
 
 ---
 
-## 改動檔案總覽（追加）
+## 2026.06.19 22:00 改動檔案總覽（追加）
 
 | 檔案 | 修改類型 |
 | --- | --- |
@@ -1737,11 +1726,11 @@ mixer.setVoiceChatEnabled(false)
 
 ---
 
-## 13. AudioRouteManager 修復與完善
+## 2026.06.20 00:52 AudioRouteManager 修復與完善
 
 **檔案**: `Sources/Mixer/AudioRouteManager.swift`
 
-### 13.1 `String.hasExtension` 編譯錯誤誤修復
+### `String.hasExtension` 編譯錯誤誤修復
 
 ```swift
 // ❌ String 無 hasExtension method
@@ -1751,17 +1740,17 @@ if Bundle.main.bundlePath.hasExtension("appex") { ... }
 if (Bundle.main.bundlePath as NSString).pathExtension == "appex" { ... }
 ```
 
-### 13.2 AVAudioSession Category 選項衝突修復
+### AVAudioSession Category 選項衝突修復
 
 `.voiceChat` mode 與 `[.defaultToSpeaker, .allowAirPlay]` 組合會導致錯誤。
 修正為最小相容組合：`[.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP]`
 
-### 13.3 App Extension 崩潰防護
+### App Extension 崩潰防護
 
 Extension (`.appex` bundle) 無法呼叫 `setCategory()` / `setActive()`，會直接 crash。
 加入早期返回，Extension 模式下跳過所有 audio session 操作。
 
-### 13.4 `deactivate()` 音頻會話正確清理
+### `deactivate()` 音頻會話正確清理
 
 原本：直接改 category 再 `setActive(true)`，且 `try?` 吞錯
 修正：
@@ -1772,13 +1761,13 @@ try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])  
 try? session.setActive(true)  // 重新啟用 app 自己的會話
 ```
 
-### 13.5 `activate()` 重啟時清理舊狀態
+### `activate()` 重啟時清理舊狀態
 
 重複啟用時會殘留舊 tap、engine running 狀態。開頭加入 `stopEngine()` 確保乾淨重啟。
 
 ---
 
-## 14. 關鍵修復：AVAudioTime PTS 損壞導致音視頻不同步
+## 2026.06.20 00:52 關鍵修復：AVAudioTime PTS 損壞導致音視頻不同步
 
 **檔案**: `Sources/Mixer/AudioRouteManager.swift:43`
 
@@ -1813,7 +1802,7 @@ await mixer.append(buffer, when: time)
 
 ---
 
-## 15. 關鍵修復：Keyframe Interval 底層約束不足
+## 2026.06.20 01:29 關鍵修復：Keyframe Interval 底層約束不足
 
 **檔案**:
 
@@ -1847,7 +1836,7 @@ await mixer.append(buffer, when: time)
 
 ---
 
-## 16. 性能修復：Video Input Buffer 改為有界佇列
+## 2026.06.20 01:29 性能修復：Video Input Buffer 改為有界佇列
 
 **檔案**:
 
@@ -1877,13 +1866,13 @@ await mixer.append(buffer, when: time)
 - 不再支援 video input unbounded queue。
 - 音訊 queue 未在本次改動中改為 bounded，避免語音通話或直播音訊被主動丟 sample。
 
-## 17. RTMP 底層 Socket缺陷/性能問題
+## 2026.06.20 08:42 RTMP 底層 Socket缺陷/性能問題
 
 [**改動說明 CHANGES**](./Docs/CHANGELOG_RTMP_SOCKET.md)
 
 ---
 
-## 18. 移除無效的 AudioRouteManager / Voice Chat 功能
+## 2026.06.20 21:11 移除無效的 AudioRouteManager / Voice Chat 功能
 
 **檔案**:
 
@@ -1911,7 +1900,7 @@ await mixer.append(buffer, when: time)
 
 ---
 
-## 19. VideoCaptureUnit AsyncStream 改為有界佇列
+## 2026.06.20 21:11 VideoCaptureUnit AsyncStream 改為有界佇列
 
 **檔案**: `Sources/Mixer/VideoCaptureUnit.swift`
 
@@ -1926,7 +1915,7 @@ await mixer.append(buffer, when: time)
 
 ---
 
-## 20. 修復 RTMP `createStream` 回應被忽略導致推流管線未建立
+## 2026.06.29 10:07 修復 RTMP `createStream` 回應被忽略導致推流管線未建立
 
 **檔案**:
 
@@ -1971,7 +1960,7 @@ case .handshakeDone, .connected:
 
 ---
 
-## 21. 修復推流中途 `videoFrame = 0` 的編碼輸出停滯
+## 2026.06.29 10:45 修復推流中途 `videoFrame = 0` 的編碼輸出停滯
 
 **檔案**:
 
@@ -2003,7 +1992,7 @@ videoFrames=0 videoBytes=0
 
 ---
 
-## 22. 改善 RTMP Socket 發送效能與佇列統計
+## 2026.06.29 10:45 改善 RTMP Socket 發送效能與佇列統計
 
 **檔案**:
 
@@ -2037,7 +2026,7 @@ RTMP message 會被切成多個 chunk。原本 socket 層逐 chunk enqueue，導
 
 ---
 
-## 15. createStream 重試與錯誤傳播機制
+## 2026.06.20 01:29 createStream 重試與錯誤傳播機制
 
 **檔案**: `Sources/RTMP/RTMPStream.swift`, `Sources/RTMP/RTMPConnection.swift`
 
@@ -2070,7 +2059,7 @@ RTMP message 會被切成多個 chunk。原本 socket 層逐 chunk enqueue，導
 
 ---
 
-## 23. StreamVideoAdaptiveBitRateStrategy 自動推導 VBV 約束
+## 2026.07.07 02:54 StreamVideoAdaptiveBitRateStrategy 自動推導 VBV 約束
 
 **檔案**: `Sources/Stream/StreamBitRateStrategy.swift`
 
@@ -2096,7 +2085,7 @@ VBR 模式下 encoder 在複雜場景可能瞬間噴出遠高於目標 `bitRate`
 
 ---
 
-## 24. 改進斷線後無法重連的防護與可觀測性
+## 2026.07.07 03:17 改進斷線後無法重連的防護與可觀測性
 
 **檔案**: `Sources/Stream/StreamReadyState.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 
@@ -2138,7 +2127,7 @@ if 2 == videoStallCount {
 
 ---
 
-## 25. RTMPSocket 發送路徑重寫——消除雙層 AsyncStream + Write-Combining
+## 2026.07.07 03:17 RTMPSocket 發送路徑重寫——消除雙層 AsyncStream + Write-Combining
 
 **檔案**: `Sources/RTMP/RTMPSocket.swift`
 
@@ -2216,7 +2205,7 @@ private func didSend(_ data: Data, error: Error?) {
 
 ---
 
-## 26. HEVC Profile 自動降階（Fallback）機制
+## 2026.07.15 02:09 HEVC Profile 自動降階（Fallback）機制
 
 **檔案**:
 
@@ -2258,7 +2247,7 @@ let chain = VideoCodecSettings.hevcFallbackChain(for: "HEVC_Main10_AutoLevel")
 
 ---
 
-## 27. E-RTMP HEVC 修復：HEVC Sequence Header 無法送出
+## 2026.07.15 02:09 E-RTMP HEVC 修復：HEVC Sequence Header 無法送出
 
 **檔案**:
 
@@ -2357,7 +2346,7 @@ public static let frameInterval60 = (1 / 60) - 0.001
 
 ---
 
-## 28. Server Codec Capability 偵測與自動降級
+## 2026.07.15 13:07 Server Codec Capability 偵測與自動降級
 
 **檔案**:
 
@@ -2416,7 +2405,7 @@ if let conn = rtmpConnection {
 
 ---
 
-## 29. HE-AAC v1/v2 支援與自動降級
+## 2026.07.18 02:01 HE-AAC v1/v2 支援與自動降級
 
 **檔案**:
 
@@ -2483,7 +2472,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 ---
 
-## 30. VIDEO/AUDIO 管線傳遞設計修正
+## 2026.07.21 17:43 VIDEO/AUDIO 管線傳遞設計修正
 
 詳細設計與架構說明請見 [Docs/OUTGOING_PIPELINE_REDESIGN.md#9-管線傳遞設計修正2026-07-月](Docs/OUTGOING_PIPELINE_REDESIGN.md#9-管線傳遞設計修正2026-07-月)。
 
@@ -2508,7 +2497,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 - `checkFrameRate()` 自鎖修復 — throttled 時不再觸發降頻
 - `MediaMixerOutputBridge.finish()` 同步化 — 避免 pipeline restart 時 DispatchQueue 非同步造成 continuation race → 12 秒卡死
 
-## 32. adaptiveFrameThrottle 重新設計（drop-ratio 閘控）
+## 2026.08.06 20:09 adaptiveFrameThrottle 重新設計（drop-ratio 閘控）
 
 **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`, `HaishinKit/Sources/Codec/VideoCodecSettings.swift`
 
@@ -2550,7 +2539,7 @@ HE-AAC v1/v2 在 RTMP 中使用與 AAC 相同的 CodecID (10)，差異僅在 Aud
 
 **預設保持 `false`** — 實驗性功能，用戶可透過 `setReconnectEnabled` 或建構子啟用。
 
-## 31. adaptiveFrameThrottle 重新設計（漸進式 throttle）
+## 2026.07.29 01:08 adaptiveFrameThrottle 重新設計（漸進式 throttle）
 
 **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`
 
@@ -2648,7 +2637,7 @@ threshold = ceil(expectedFrameRate / 12)
 
 ---
 
-## 30. 音訊管線恢復：AVAudioSession 路由變更監聽 + Audio Stall 偵測
+## 2026.07.21 17:43 音訊管線恢復：AVAudioSession 路由變更監聽 + Audio Stall 偵測
 
 **檔案**: `HaishinKit/Sources/Mixer/MediaMixer.swift`, `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
 

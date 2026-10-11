@@ -1,0 +1,7 @@
+[tool.changelog]
+title = "HaishinKitFixSwfit — 改動說明"
+history = "CHANGES.md"
+
+[[tool.changelog.sources]]
+name = "haishinkit"
+path = "."

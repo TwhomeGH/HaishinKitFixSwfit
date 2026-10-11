@@ -57,3 +57,10 @@ Or in Xcode: **File → Add Package Dependencies...** → enter `https://github.
 ## 📜 License
 
 BSD-3-Clause
+
+
+## 變更歷史與開發索引
+
+- **變更歷史**：本 fork 的紀錄在 [`CHANGES.md`](./CHANGES.md)（即資料來源）。
+- **開發索引（本機唯讀）**：先 `pip install changelogkit`，再於 repo 根目錄執行 `changelogkit serve`，開 `http://127.0.0.1:8710/` 的「開發索引」分頁（API 宣告／文件／近期改動）。
+- 舊的 vendored 工具（`Tools/`）已移除；如需回溯，見 git tag **`legacy-changelog-tool`**。
