@@ -315,12 +315,30 @@ final actor RTMPSocket {
         return stream
     }
 
-    func drain() async {
+    /// 等待送出佇列排空。**有界**：連線若已死透（例如 App 被暫停後 socket 被
+    /// 系統拆掉），最後一次的送出完成可能永遠不會回報（`didSendChunk` 不觸發），
+    /// 而唯一會釋放等待者的 `close()` 又排在 `RTMPConnection.close()` 的
+    /// `drain()` **之後** → 兩者互等、永久卡死，連線 close 走不到
+    /// `state = .disconnected`，上層停止流程也跟著卡住。
+    /// 逾時後自行釋放等待者，讓 close() 得以繼續收尾。
+    func drain(timeout: UInt64 = 2) async {
         guard connected else { return }
         guard !sendQueue.isEmpty || isSending else { return }
+        let deadline = timeout * 1_000_000_000
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             drainWaiters.append(c)
+            Task {
+                try? await Task.sleep(nanoseconds: deadline)
+                await self.forceDrainTimeout()
+            }
         }
+    }
+
+    /// 送出排空逾時：記錄並釋放等待者，避免死連線讓 close() 卡住。
+    private func forceDrainTimeout() {
+        guard 0 < drainWaiters.count else { return }
+        onLog?(.init(level: .warn, message: "Socket drain timed out; proceeding to close", detail: "queuedBytes=\(sendQueue.totalBytes) isSending=\(isSending)", always: true))
+        drainWaiters.finish()
     }
 
     func close(_ error: NWError? = nil) {

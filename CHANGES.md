@@ -1,5 +1,23 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.12 10:18 修正 RTMP 關閉死鎖：drain() 改為有界等待
+
+**檔案**：
+
+- `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
+- `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
+
+### 動機
+
+ScreenCaptureKit 推流在「App 進背景再回來（無 PiP 保活）」後，手動停止會卡在「正在停止」永不復原。實機日誌顯示停止流程卡在 `rtmp.close.begin`，且先前連線已因 `recvLoopEnded` 嘗試關閉、卻沒有走到 `state = disconnected`。
+
+### 內容
+
+- **根因**：`RTMPConnection.close()` 的 `await socket?.drain()` 會一直等 `drainWaiters.finish()`，而唯一的釋放者是排在它**之後**的 `socket?.close()`。連線若已死透（暫停後 socket 被系統拆掉），最後一次送出完成不會回報、`didSendChunk` 不觸發 → `drain()` 與 `close()` 互等，永久卡死，連線關不掉、上層停止也跟著卡住。
+- **修正**：`RTMPSocket.drain()` 改為**有界**（預設 2 秒）——逾時後自行釋放等待者並記錄 `Socket drain timed out`，讓 `close()` 得以繼續收尾。
+- **診斷**：`RTMPConnection.close()`、`RTMPStream.close()` / `deleteStream()` / `finishOutputConsumer()` 加入步驟日誌（`Close step:` / `Stream.close step:` / `deleteStream step:` / `finishOutputConsumer step:`），下次若仍卡住可直接看出卡在哪一個 await。
+
 ## 2026.10.11 08:54 開發索引：近期改動改為可展開檢視 diff
 
 **檔案**：

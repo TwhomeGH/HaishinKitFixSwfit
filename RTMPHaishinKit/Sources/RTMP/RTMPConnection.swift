@@ -803,15 +803,20 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 _ = try? await stream.close()
             }
         }
+        log(.info, "Close step: streams closed", always: true)
         // 作廢輸出 epoch：finish 佇列，讓 consumer 的 for-await 迴圈能排空後退出。
         outputQueue.invalidate()
         // 等待 output consumer 把緩衝資料（FCUnpublish / deleteStream / 尾幀）
         // 全部送進 socket send queue，再 drain + close。若不 await，consumer 可能
         // 在 socket 關閉後才 flush → 最終訊息/尾幀被丟掉。
         await outputConsumerTask?.value
+        log(.info, "Close step: output consumer drained", always: true)
         await socket?.drain()
+        log(.info, "Close step: socket drained", always: true)
         await socket?.close()
+        log(.info, "Close step: socket closed", always: true)
         await networkMonitor?.stopRunning()
+        log(.info, "Close step: network monitor stopped", always: true)
 
         // 先記下狀態與底層錯誤：state 會在下面被改掉，recv error 則用來分辨
         // 「伺服器拒絕 / 正常關閉」與「連線在握手/connect 途中被底層中斷」。

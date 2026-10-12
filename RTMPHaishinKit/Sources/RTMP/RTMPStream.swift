@@ -559,9 +559,12 @@ public actor RTMPStream {
         guard readyState == .playing || readyState == .publishing else {
             throw Error.invalidState
         }
+        await connection?.log(.info, "Stream.close step: begin readyState=\(readyState)", always: true)
         lastPublishName = nil
         stopPublishTasks()
+        await connection?.log(.info, "Stream.close step: publish tasks stopped", always: true)
         outgoing.stopRunning()
+        await connection?.log(.info, "Stream.close step: outgoing stopped, arming continuation", always: true)
         return try await withCheckedThrowingContinuation { continutation in
             self.continuation?.resume(throwing: Error.invalidState)
             self.continuation = continutation
@@ -804,11 +807,14 @@ public actor RTMPStream {
         // 不要求 fcPublishName：重連 teardown 時也要停止管線，
         // 且不能清除 lastPublishName（resumePublishing 需要它）。
         // 依序停：publish task group → 編碼器 → 排空並作廢 output consumer。
+        await connection?.log(.info, "deleteStream step: begin", always: true)
         stopPublishTasks()
         outgoing.stopRunning()
+        await connection?.log(.info, "deleteStream step: pipeline stopped", always: true)
         // 正常停止保留已入列尾幀；若傳輸已壞，connection 的世代檢查會拒絕它們。
         // 排空完成才作廢此 consumer，後續重連不可沿用任何舊輸出工作。
         await finishOutputConsumer()
+        await connection?.log(.info, "deleteStream step: output consumer finished", always: true)
         // 清理 publish/play 等待中的 pending continuation，
         // 讓 withCheckedThrowingContinuation 正常結束（避免 task 洩漏 + 重連後 invalidState）。
         // 傳遞底層錯誤（如 ENOSR），不只丟 .invalidState。
@@ -993,7 +999,9 @@ public actor RTMPStream {
         let generation = outputGeneration
         let task = outputConsumerTask
         outputQueue.finish()
+        await connection?.log(.info, "finishOutputConsumer step: awaiting consumer", always: true)
         await task?.value
+        await connection?.log(.info, "finishOutputConsumer step: consumer finished", always: true)
         guard generation == outputGeneration else { return }
         stopOutputConsumer()
     }
