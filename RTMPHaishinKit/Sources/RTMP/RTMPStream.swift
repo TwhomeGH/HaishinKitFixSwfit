@@ -522,6 +522,7 @@ public actor RTMPStream {
             metadataIncludesVideo = false
             outgoing.startRunning()
             readyState = .publishing
+            await connection?.beginStartupDiagnostics()
             let response = try await withCheckedThrowingContinuation { continuation in
                 expectedResponse = Code.publishStart
                 self.continuation?.resume(throwing: Error.invalidState)

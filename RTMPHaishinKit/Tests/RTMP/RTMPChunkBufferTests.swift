@@ -151,3 +151,29 @@ import Testing
         #expect(message.arguments.last as? String == "extra")
     }
 }
+
+/// 四位元組控制訊息可能使用 Data 的 inline 儲存；解碼不得依賴已失效指標。
+@Suite struct RTMPChunkSizeDecodingTests {
+    @Test(arguments: [false, true]) func controlPayloadSurvivesFragmentation(fragmented: Bool) throws {
+        let wire = Data([2, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 0, 16, 0])
+        let buffer = RTMPChunkBuffer()
+        let header = RTMPChunkMessageHeader()
+        var result: UInt32?
+        let parts = fragmented ? wire.map { Data([$0]) } : [wire]
+        for part in parts {
+            buffer.put(part)
+            let position = buffer.position
+            do {
+                let (type, _) = try buffer.getBasicHeader()
+                try buffer.getMessageHeader(type, messageHeader: header)
+                let message = try #require(header.makeMessage() as? RTMPSetChunkSizeMessage)
+                #expect(header.payload == Data([0, 0, 16, 0]))
+                result = message.size
+            } catch RTMPChunkError.bufferUnderflow {
+                buffer.position = position
+            }
+        }
+        #expect(result == 4096)
+        #expect(buffer.remaining == 0)
+    }
+}

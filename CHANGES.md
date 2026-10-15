@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.15 21:44 修正整數解碼指標生命週期與 RTMP 發布診斷
+
+- HaishinKit 與 MoQTHaishinKit 的整數複製改在 Data.withUnsafeBytes 有效閉包內完成，避免短 Data 解碼讀取失效指標。
+- Set Chunk Size 原始四位元組獨立記錄；零值、超出支援上限及錯誤長度明確關閉，不再靜默截斷數值。
+- 診斷延伸至 createStream／發布啟動，維持每連線 192 筆上限；命令逾時包含解析進度與 socket 傳送統計，不含金鑰。
+- 新增短 Data、切片與分段控制訊息回歸測試。Restream 恢復與否仍待主 App 更新套件後實測。
+
 ## 2026.10.12 10:18 修正 RTMP 關閉死鎖：drain() 改為有界等待
 
 **檔案**：
@@ -10,13 +17,20 @@
 
 ### 動機
 
-ScreenCaptureKit 推流在「App 進背景再回來（無 PiP 保活）」後，手動停止會卡在「正在停止」永不復原。實機日誌顯示停止流程卡在 `rtmp.close.begin`，且先前連線已因 `recvLoopEnded` 嘗試關閉、卻沒有走到 `state = disconnected`。
+ScreenCaptureKit 推流在「App 進背景再回來（無 PiP 保活）」後。
+
+手動停止會卡在「正在停止」永不復原。實機日誌顯示停止流程卡在 `rtmp.close.begin`，且先前連線已因 `recvLoopEnded` 嘗試關閉、卻沒有走到 `state = disconnected`。
 
 ### 內容
 
-- **根因**：`RTMPConnection.close()` 的 `await socket?.drain()` 會一直等 `drainWaiters.finish()`，而唯一的釋放者是排在它**之後**的 `socket?.close()`。連線若已死透（暫停後 socket 被系統拆掉），最後一次送出完成不會回報、`didSendChunk` 不觸發 → `drain()` 與 `close()` 互等，永久卡死，連線關不掉、上層停止也跟著卡住。
+- **根因**：`RTMPConnection.close()` 的 `await socket?.drain()` 會一直等 `drainWaiters.finish()`，而唯一的釋放者是排在它**之後**的 `socket?.close()`
+
+  連線若已死透（暫停後 socket 被系統拆掉），最後一次送出完成不會回報、`didSendChunk` 不觸發 → `drain()` 與 `close()` 互等，永久卡死，連線關不掉、上層停止也跟著卡住。
+
 - **修正**：`RTMPSocket.drain()` 改為**有界**（預設 2 秒）——逾時後自行釋放等待者並記錄 `Socket drain timed out`，讓 `close()` 得以繼續收尾。
-- **診斷**：`RTMPConnection.close()`、`RTMPStream.close()` / `deleteStream()` / `finishOutputConsumer()` 加入步驟日誌（`Close step:` / `Stream.close step:` / `deleteStream step:` / `finishOutputConsumer step:`），下次若仍卡住可直接看出卡在哪一個 await。
+- **診斷**：`RTMPConnection.close()`、`RTMPStream.close()` / `deleteStream()` / `finishOutputConsumer()`
+
+  加入步驟日誌（`Close step:` / `Stream.close step:` / `deleteStream step:` / `finishOutputConsumer step:`），下次若仍卡住可直接看出卡在哪一個 await。
 
 ## 2026.10.11 08:54 開發索引：近期改動改為可展開檢視 diff
 

@@ -339,19 +339,39 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// Monotonic token for the current handshake stage. Re-armed on each state
     /// transition; a stale stage timer only fires if its token still matches.
     private var connectStageToken = 0
-    // 每次連線獨立統計；只在 connect 尚未完成時輸出，避免媒體流刷屏。
+    // 每次連線獨立統計；涵蓋 connect 及有界的發布啟動視窗，避免媒體流刷屏。
+    private var startupDiagnosticDeadline: TimeInterval = 0
     private var connectDiagnosticEvents = 0
     private var connectReceivedBytes = 0
     private var connectParsedMessages = 0
 
     /// 直接走 connection.onLog，略過最低等級；不記錄原始 payload、URL 或金鑰。
-    /// 逐筆最多 64 筆，timeout 摘要另外強制輸出，保留失敗現場。
+    /// 逐筆最多 192 筆，timeout 摘要另外強制輸出，保留失敗現場。
     private func logConnectDiagnostic(_ stage: String, detail: String, force: Bool = false) {
-        guard force || state == .handshakeDone else { return }
-        guard force || connectDiagnosticEvents < 64 else { return }
+        guard force || state == .handshakeDone || (state == .connected && ProcessInfo.processInfo.systemUptime < startupDiagnosticDeadline) else { return }
+        guard force || connectDiagnosticEvents < 192 else { return }
         connectDiagnosticEvents += 1
         log(.info, "Connect diagnostic: \(stage)",
             detail: "generation=\(connectGeneration) \(detail)", always: true)
+    }
+
+    /// 開啟發布啟動診斷視窗，不重設連線總筆數上限；不接受使用者命令或金鑰。
+    func beginStartupDiagnostics() {
+        startupDiagnosticDeadline = ProcessInfo.processInfo.systemUptime + 30
+    }
+
+    /// 命令逾時快照；傳送完成只代表本機 socket 回呼，不代表伺服器確認。
+    private func logCommandTimeout(transaction: Int) async {
+        let generation = connectGeneration
+        let transport = await socket?.transportDiagnostics()
+        guard generation == connectGeneration else { return }
+        logConnectDiagnostic("command timeout", detail: "txn=\(transaction) state=\(state) receivedBytes=\(connectReceivedBytes) messages=\(connectParsedMessages) bufferedBytes=\(inputBuffer.remaining) chunkSize=\(chunkSizeC) pendingTransactions=\(operations.keys.sorted())", force: true)
+        for (csid, header) in chunks.sorted(by: { $0.key < $1.key }).prefix(16) {
+            logConnectDiagnostic("pending chunk", detail: "csid=\(csid) type=\(header.messageTypeId) received=\(header.receivedPayloadBytes) expected=\(header.messageLength)", force: true)
+        }
+        if let transport {
+            logConnectDiagnostic("transport", detail: "socketGeneration=\(transport.generation) queuedBytes=\(transport.queuedBytes) completedBytes=\(transport.completedBytes) failedBatchBytes=\(transport.failedBatchBytes) completedBatches=\(transport.completedBatches) failedBatches=\(transport.failedBatches)", force: true)
+        }
     }
 
     /// Liveness watchdog state: consecutive 1s monitor intervals where neither
@@ -454,17 +474,22 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 commandObject: nil,
                 arguments: arguments
             )
+            let generation = connectGeneration
             Task {
                 try? await Task.sleep(nanoseconds: requestTimeout * 1_000_000)
-                guard let operation = operations.removeValue(forKey: message.transactionId) else {
+                guard generation == connectGeneration,
+                      let operation = operations.removeValue(forKey: message.transactionId) else {
                     return
                 }
                 log(.error, "Command timeout", detail: "cmd=\(commandName) txn=\(message.transactionId)", always: true)
+                await logCommandTimeout(transaction: message.transactionId)
                 operation.resume(throwing: Error.requestTimedOut)
             }
             operations[message.transactionId] = continutation
-            log(.debug, "Command sent", detail: "cmd=\(commandName) txn=\(message.transactionId)")
-            doOutput(.zero, chunkStreamId: .command, message: message)
+            if commandName == "createStream" { beginStartupDiagnostics() }
+            let accepted = doOutput(.zero, chunkStreamId: .command, message: message)
+            let safeName = ["createStream", "releaseStream", "FCPublish"].contains(commandName) ? commandName : "other"
+            logConnectDiagnostic("command queued", detail: "cmd=\(safeName) txn=\(message.transactionId) payloadBytes=\(message.payload.count) acceptedBytes=\(accepted) outputGeneration=\(outputGeneration)")
         }
     }
 
@@ -525,6 +550,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
         self.uri = uri
         let secure = uri.scheme == "rtmps" || uri.scheme == "rtmpts"
+        startupDiagnosticDeadline = 0
         connectDiagnosticEvents = 0
         connectReceivedBytes = 0
         connectParsedMessages = 0
@@ -983,7 +1009,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
 
     /// 把收到的位元組餵進 RTMP chunk parser，並派送完整訊息。
     private func handleChunks(_ data: Data) async throws {
-        if state == .handshakeDone { connectReceivedBytes += data.count }
+        connectReceivedBytes += data.count
         logConnectDiagnostic("receive", detail: "bytes=\(data.count) bufferedBefore=\(inputBuffer.remaining) chunkSize=\(chunkSizeC)")
         inputBuffer.put(data)
         log(.trace, "Input data", detail: "size=\(data.count) buffer=\(inputBuffer.remaining)")
@@ -999,11 +1025,21 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 if let messageHeader = chunks[chunkStreamId] {
                     try inputBuffer.getMessageHeader(chunkType, messageHeader: messageHeader)
                     logConnectDiagnostic("chunk", detail: "fmt=\(chunkType.rawValue) csid=\(chunkStreamId) type=\(messageHeader.messageTypeId) stream=\(messageHeader.messageStreamId) received=\(messageHeader.receivedPayloadBytes) expected=\(messageHeader.messageLength)")
+                    if messageHeader.messageTypeId == 1, messageHeader.receivedPayloadBytes == messageHeader.messageLength {
+                        guard messageHeader.messageLength == 4 else {
+                            log(.error, "Invalid Set Chunk Size length", detail: "bytes=\(messageHeader.messageLength)", always: true)
+                            try await close(reason: "protocolError.chunkSizeLength")
+                            return
+                        }
+                        let wire = messageHeader.payload.map { String(format: "%02X", $0) }.joined()
+                        logConnectDiagnostic("chunk size wire", detail: "wire=\(wire)")
+                    }
                     if let message = messageHeader.makeMessage() {
-                        if state == .handshakeDone { connectParsedMessages += 1 }
+                        connectParsedMessages += 1
                         logConnectDiagnostic("message", detail: "type=\(message.type.rawValue) stream=\(message.streamId) bytes=\(message.payload.count)")
                         log(.trace, "Message dispatched", detail: "type=\(message.type.rawValue) streamId=\(message.streamId)")
                         await dispatch(message, type: chunkType)
+                        guard state == .handshakeDone || state == .connected else { return }
                         messageHeader.reset()
                     } else if messageHeader.receivedPayloadBytes == messageHeader.messageLength {
                         logConnectDiagnostic("message decode failed or unsupported", detail: "csid=\(chunkStreamId) type=\(messageHeader.messageTypeId) bytes=\(messageHeader.messageLength) amf=\(messageHeader.commandDecodeDiagnostic ?? "unavailable")")
@@ -1103,9 +1139,14 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         if message.streamId == 0 {
             switch message {
             case let message as RTMPSetChunkSizeMessage:
-                chunkSizeC = min(Int(message.size), RTMPChunkBuffer.defaultMaxBufferSize)
-                let raw = message.payload.map { String(format: "%02X", $0) }.joined()
-                logConnectDiagnostic("chunk size", detail: "announced=\(message.size) effective=\(chunkSizeC) raw=\(raw)")
+                guard message.size > 0, message.size <= UInt32(RTMPChunkBuffer.defaultMaxBufferSize) else {
+                    // 不可悄悄更改對端分塊規則，否則後續 continuation header 會被當成 payload。
+                    log(.error, "Unsupported Set Chunk Size", detail: "announced=\(message.size) supportedMax=\(RTMPChunkBuffer.defaultMaxBufferSize)", always: true)
+                    try? await close(reason: "protocolError.chunkSize")
+                    return
+                }
+                chunkSizeC = Int(message.size)
+                logConnectDiagnostic("chunk size", detail: "announced=\(message.size) effective=\(chunkSizeC)")
             case let message as RTMPWindowAcknowledgementSizeMessage:
                 windowSizeC = Int64(message.size)
             case let message as RTMPSetPeerBandwidthMessage:
