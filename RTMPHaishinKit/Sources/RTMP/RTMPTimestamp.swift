@@ -17,7 +17,74 @@ private let kRTMPTimestamp_preferredDeltaMaxCorrection: TimeInterval = 5
 private let kRTMPTimestamp_preferredDeltaCorrectionRatio: TimeInterval = 0.1
 private let kRTMPTimestamp_preferredDeltaJumpThreshold: TimeInterval = 500
 
+/// 單軌時間戳診斷；僅保存固定大小的統計，不持有媒體樣本。
+/// generated 指已產生的 RTMP delta 累計，不代表入列、socket 完成或伺服器確認。
+struct RTMPTimestampDiagnostics {
+    private(set) var firstSourceSeconds: Double?
+    private(set) var lastSourceSeconds: Double?
+    private(set) var sourceRegressions = 0
+    private(set) var sourceGaps = 0
+    private(set) var clampCount = 0
+    private(set) var correctionCount = 0
+    private(set) var lastDiscontinuitySeconds: Double?
+    private(set) var maxSourceGapSeconds: Double = 0
+    private(set) var lastRetimingSeconds: Double = 0
+    private(set) var lastEffectiveSeconds: Double = 0
+    private(set) var lastSourceStepSeconds: Double = 0
+    private(set) var lastGeneratedDeltaSeconds: Double = 0
+    private(set) var generatedSeconds: Double = 0
+
+    /// 記錄呼叫端原始時間與修正後時間；不參與時間戳決策。
+    /// - Parameters:
+    ///   source: 呼叫端未補償的來源秒數。
+    ///   effective: 實際交給時間戳演算法的秒數。
+    ///   delta: 本次產生的 RTMP delta（秒）。
+    ///   generated: RTMP delta 累計秒數。
+    ///   clamped: 是否以舊 delta 取代異常跳變。
+    ///   corrected: 是否套用 preferredDelta 的漂移修正或跳轉。
+    mutating func record(source: Double, effective: Double, delta: Double,
+                         generated: Double, clamped: Bool, corrected: Bool) {
+        if let previous = lastSourceSeconds {
+            let step = source - previous
+            lastSourceStepSeconds = step
+            maxSourceGapSeconds = max(maxSourceGapSeconds, step)
+            if step < 0 {
+                sourceRegressions += 1
+                lastDiscontinuitySeconds = source
+            }
+            if step > 2 {
+                sourceGaps += 1
+                lastDiscontinuitySeconds = source
+            }
+        } else {
+            firstSourceSeconds = source
+        }
+        lastSourceSeconds = source
+        lastRetimingSeconds = effective - source
+        lastEffectiveSeconds = effective
+        lastGeneratedDeltaSeconds = delta
+        generatedSeconds = generated
+        if clamped { clampCount += 1 }
+        if corrected { correctionCount += 1 }
+    }
+
+    /// 原始來源經過時間減去產生的 RTMP 時間；正值表示輸出時間較短。
+    var sourceMinusGeneratedSeconds: Double? {
+        guard let firstSourceSeconds, let lastSourceSeconds else { return nil }
+        return lastSourceSeconds - firstSourceSeconds - generatedSeconds
+    }
+
+    /// 供既有低頻診斷日誌使用；未收到樣本的欄位明確顯示 unknown。
+    var logDescription: String {
+        func number(_ value: Double?) -> String {
+            value.map { String(format: "%.6f", $0) } ?? "unknown"
+        }
+        return "sourceStart=\(number(firstSourceSeconds)) sourceLast=\(number(lastSourceSeconds)) effective=\(number(lastSourceSeconds == nil ? nil : lastEffectiveSeconds)) generated=\(number(generatedSeconds)) sourceMinusGenerated=\(number(sourceMinusGeneratedSeconds)) retime=\(number(lastRetimingSeconds)) sourceStep=\(number(lastSourceStepSeconds)) generatedDelta=\(number(lastGeneratedDeltaSeconds)) regress=\(sourceRegressions) gapsOver2s=\(sourceGaps) maxGap=\(number(maxSourceGapSeconds)) clamps=\(clampCount) corrections=\(correctionCount) lastDiscontinuity=\(number(lastDiscontinuitySeconds))"
+    }
+}
+
 struct RTMPTimestamp<T: RTMPTimeConvertible> {
+    private(set) var diagnostics = RTMPTimestampDiagnostics()
     private var startedAt = kRTMPTimestamp_defaultTimeInterval
     private(set) var updatedAt = kRTMPTimestamp_defaultTimeInterval
     private var timedeltaFraction: TimeInterval = kRTMPTimestamp_defaultTimeInterval
@@ -32,22 +99,25 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     // wire-cumulative position, not the camera-relative PTS and not 0.
     private(set) var cumulativeTime: TimeInterval = kRTMPTimestamp_defaultTimeInterval
 
-    mutating func update(_ value: T, source: String = "", allowJump: Bool = false, preferredDelta: TimeInterval? = nil) -> UInt32 {
+    mutating func update(_ value: T, source: String = "", allowJump: Bool = false, preferredDelta: TimeInterval? = nil, originalSeconds: TimeInterval? = nil) -> UInt32 {
         if startedAt == 0 {
             startedAt = value.seconds
             updatedAt = value.seconds
             lastNormalDelta = 0
+            diagnostics.record(source: originalSeconds ?? value.seconds, effective: value.seconds, delta: 0, generated: cumulativeTime, clamped: false, corrected: false)
             return 0
         }
         let sourceTimedelta = (value.seconds - updatedAt) * 1000
         var timedelta = sourceTimedelta
+        var clamped = false
+        var corrected = false
         // 基準跳變 clamp：RTMP type-1/type-2 的 timestamp 是「相對 delta 累積」
         // 而非絕對值，下游的絕對時間 = 所有 delta 的累積和。因此：
         //  - 倒退（delta < 0）：clamp 到 0（視為同刻），不重置基準
         //  - 向前大跳（delta > maxDelta，如 13000→15000 產生 2000 秒）：用
         //    上一次正常 delta 維持平滑，避免巨大 timestamp 跳變讓下游誤判為
         //    gap/seek → 畫面凍結、音訊中斷、AV 自動修正（斷流）
-        // 這樣基準跳變時 wire 時間戳仍單調連續，下游完全察覺不到跳變。
+        // 此策略維持 wire 單調，但可能壓縮真實停頓；診斷保留來源與累計差距。
         // allowJump（僅音訊 A/V resync 用）：允許一次向前大跳，讓落後到 video
         // 之後的音訊時間軸直接跳進同步範圍，而非以 2000ms 上限慢慢追。
         let usesPreferredDelta = preferredDelta != nil
@@ -59,8 +129,10 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
             // capture jitter off the wire, then gently correct sustained drift
             // so the RTMP timeline does not fork away from the original clock.
             if allowJump && kRTMPTimestamp_preferredDeltaJumpThreshold < drift {
+                corrected = true
                 timedelta = sourceTimedelta
             } else if kRTMPTimestamp_preferredDeltaDriftTolerance < abs(drift) {
+                corrected = true
                 let correction = max(
                     -kRTMPTimestamp_preferredDeltaMaxCorrection,
                     min(kRTMPTimestamp_preferredDeltaMaxCorrection, drift * kRTMPTimestamp_preferredDeltaCorrectionRatio)
@@ -72,9 +144,11 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         }
         if timedelta < 0 {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
+            clamped = true
             timedelta = lastNormalDelta
         } else if timedelta > kRTMPTimestamp_maxDelta, !allowJump {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
+            clamped = true
             timedelta = lastNormalDelta
         }
         timedeltaFraction += timedelta.truncatingRemainder(dividingBy: 1)
@@ -90,6 +164,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         }
         cumulativeTime += wireTimedelta / 1000
         lastNormalDelta = wireTimedelta
+        diagnostics.record(source: originalSeconds ?? value.seconds, effective: value.seconds, delta: wireTimedelta / 1000, generated: cumulativeTime, clamped: clamped, corrected: corrected)
         return UInt32(wireTimedelta)
     }
 
@@ -134,6 +209,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     }
 
     mutating func clear() {
+        diagnostics = RTMPTimestampDiagnostics()
         startedAt = kRTMPTimestamp_defaultTimeInterval
         updatedAt = kRTMPTimestamp_defaultTimeInterval
         timedeltaFraction = kRTMPTimestamp_defaultTimeInterval

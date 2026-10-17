@@ -124,4 +124,41 @@ import Testing
         #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.600)), allowJump: true, preferredDelta: packetDuration) == 600)
         #expect(abs(timestamp.updatedAt - 100.600) < 0.001)
     }
+    /// 真實長間隔被縮短時，診斷仍保留來源與產生時間的差距。
+    @Test func diagnosticsExposeClampedGapAndClear() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        _ = timestamp.update(CMTime(seconds: 100, preferredTimescale: 1000))
+        let normal = timestamp.update(CMTime(seconds: 100.04, preferredTimescale: 1000))
+        let gap = timestamp.update(CMTime(seconds: 108.04, preferredTimescale: 1000))
+        #expect(gap == normal)
+        #expect(timestamp.diagnostics.sourceGaps == 1)
+        #expect(timestamp.diagnostics.clampCount == 1)
+        #expect((timestamp.diagnostics.sourceMinusGeneratedSeconds ?? 0) > 7.9)
+        timestamp.clear()
+        #expect(timestamp.diagnostics.firstSourceSeconds == nil)
+        #expect(timestamp.diagnostics.clampCount == 0)
+    }
+
+    /// 重標時間與來源時間分開保存，不把補償後的時間冒充來源。
+    @Test func diagnosticsPreserveOriginalBeforeRetiming() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        _ = timestamp.update(CMTime(seconds: 100, preferredTimescale: 1000), originalSeconds: 99)
+        _ = timestamp.update(CMTime(seconds: 100.04, preferredTimescale: 1000), originalSeconds: 98)
+        #expect(timestamp.diagnostics.sourceRegressions == 1)
+        #expect(timestamp.diagnostics.lastSourceSeconds == 98)
+        #expect(abs(timestamp.diagnostics.lastRetimingSeconds - 2.04) < 0.001)
+    }
+
+    /// 診斷用的原始時間參數不得影響既有 preferredDelta 決策。
+    @Test func diagnosticsDoNotChangeGeneratedDeltas() {
+        var baseline = RTMPTimestamp<CMTime>()
+        var observed = RTMPTimestamp<CMTime>()
+        for seconds in [100.0, 100.023, 100.223, 100.823, 100.7] {
+            let time = CMTime(seconds: seconds, preferredTimescale: 1000)
+            let expected = baseline.update(time, allowJump: true, preferredDelta: 0.023)
+            let actual = observed.update(time, allowJump: true, preferredDelta: 0.023, originalSeconds: seconds - 1)
+            #expect(actual == expected)
+        }
+        #expect(observed.diagnostics.correctionCount > 0)
+    }
 }

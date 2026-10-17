@@ -27,3 +27,22 @@ checkout 原有鎖定檔另存 checkout-Package.resolved；建置結束後的鎖
 建置失敗仍嘗試保存與上傳診斷；遭強制終止或 runner 中斷時不保證收尾執行。所有管線使用 bash 的 pipefail，tee 不會掩蓋建置失敗。文件站台 artifact 與 Pages 僅在前置步驟成功後執行，診斷檔不加入公開站台。
 
 新版首頁顯示 checkout 與模組入口，中文化範圍見 [API 文件中文化與首頁維護](https://github.com/TwhomeGH/HaishinKitFixSwfit/blob/main/Docs/DOCUMENTATION_CHINESE.md)。
+
+## 影音時間軸排查
+
+`publish timeline` 沿用 throughput 每 10 次 status 的節流（約 10 秒），schema=1，時間單位皆為秒。診斷為固定大小統計，不持有樣本、不逐封包寫日誌，亦不更改同步策略。
+
+- `generation`：發布世代，跨重連請分開比較。
+- `sourceStart`／`sourceLast`：進入 RTMP 封裝時未補償的時間；影片為編碼 DTS，音訊為編碼輸出 AVAudioTime，並非 ScreenCaptureKit 原始擷取時間。
+- `effective`：套用影片補償或音訊 resync 後交給時間戳演算法的位置。
+- `generated`：產生的 RTMP delta 累計，並非成功入列、socket 完成或伺服器確認。
+- `sourceMinusGenerated`：來源經過時間減去 generated。正值表示產生的時間軸比來源短；持續增加或突然跳動應追查。
+- `retime`：effective 減 sourceLast；可識別重標時間，不能代表音訊內容已被移除或重採樣。
+- `sourceStep`／`generatedDelta`：最近來源間隔與產生 delta。`gapsOver2s`／`regress` 保存來源長間隔及回退次數，`maxGap`／`lastDiscontinuity` 保存最大間隔及最近事件來源時間。
+- `clamps`：異常 delta 被舊 delta 替代的次數；`corrections`：preferredDelta 分支修正或跳轉次數。
+- `generatedAVOffset`：影音各自累計時間相減。兩軌各自起點不同，必須搭配 sourceStart；不能直接視為口型偏移。
+- `videoCompensation`／`audioResyncs`：目前影片補償與音訊重標累計次數。
+
+舊 `publish throughput` 的 videoPTS／audioPTS 為演算法 updatedAt，保留以相容既有工具；它們不是原始 capture PTS，也不等於累計 RTMP 時間。靜態畫面更新稀疏時，avOffset 變大不代表內容不同步。尚未收到來源的欄位顯示 unknown。
+
+下一次測試應同時保存 App 日誌、SRS 原始 FLV 與 Oryx／FFmpeg 完整參數及日誌，以來源事件對照；CFR 補幀不能恢復已錯配的聲音內容。本批尚未提供混音前後的逐軌對照，也未調整停止排空順序。

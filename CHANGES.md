@@ -1,5 +1,11 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.18 02:00 時間戳診斷補強
+
+- 新增低頻 publish timeline：保留封裝前來源時間、重標時間、產生的 RTMP 累計時間與長間隔／回退／修正計數。
+- 更正 updatedAt 與音訊 resync 的註釋，明確區分時間重標與音訊內容處理；不改變既有同步決策。
+- 補充診斷文件及時間跳變、重標、重置與輸出不變的回歸測試；純 Swift 60,000 次修改前後 delta 比較一致；Apple SDK 測試需在 CI 執行。
+
 ## 2026.10.15 21:44 修正整數解碼指標生命週期與 RTMP 發布診斷
 
 - HaishinKit 與 MoQTHaishinKit 的整數複製改在 Data.withUnsafeBytes 有效閉包內完成，避免短 Data 解碼讀取失效指標。
