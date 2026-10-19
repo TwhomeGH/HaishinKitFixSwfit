@@ -21,6 +21,11 @@ RTMPHaishinKit 是以 Swift 實作的 RTMP 協定堆疊。
   - [x] Native（RTMP over SSL/TLS）
 - [x] [Enhanced RTMP](E-RTMP.md)
 
+## 編碼診斷
+
+- <doc:RTMP_ENCODING_DIAGNOSTICS>
+- ``RTMPEncodingDiagnostics``
+
 ## 📓 使用方式
 
 ### 發布

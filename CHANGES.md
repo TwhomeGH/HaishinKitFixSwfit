@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.19 22:13 實際編碼輸出格式診斷入口
+
+- 新增 RTMPStream.encodingDiagnostics()：由有效壓縮樣本更新影片／音訊格式、格式變更與最後輸出時間、樣本／packet／payload 累計。
+- 沿用發布世代隔離與清空；只保存格式描述及純量，不保留媒體 buffer，不改編碼與傳送策略。
+- 缺少色彩附件保持 nil；H.264 有 avcC 時讀取 profile／compatibility／level，其他格式不推定。
+- 補中文 DocC 與合成樣本、格式變更、世代重設、空 buffer 測試；Apple SDK 測試待 CI。
+
 ## 2026.10.18 02:00 時間戳診斷補強
 
 - 新增低頻 publish timeline：保留封裝前來源時間、重標時間、產生的 RTMP 累計時間與長間隔／回退／修正計數。

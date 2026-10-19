@@ -327,6 +327,8 @@ public actor RTMPStream {
     /// task group（即使 cancellation 尚未生效）無法再 append / encode 新資料。
     nonisolated private let videoOutputDiagnostics = VideoPipelineEventTracker()
     private var publishGeneration: UInt64 = 0
+    // 與 actor 的發布世代一起重設，永不持有壓縮媒體樣本。
+    private var encodingTracker = RTMPEncodingTracker()
     private var lastVideoDiagnosticSnapshot: VideoPipelineSnapshot?
     private var outputGeneration: UInt64 { outputQueue.generation }
     /// 啟動 output consumer 時記下的「連線輸出世代」。送出時帶回 connection 比對，
@@ -884,6 +886,7 @@ public actor RTMPStream {
         // generation 檢查擋掉，不會混進新管線。
         lastVideoDiagnosticSnapshot = nil
         publishGeneration &+= 1
+        encodingTracker.reset(generation: publishGeneration)
         videoOutputDiagnostics.record(.publishStarted)
         let generation = publishGeneration
         waitingForVideoKeyFrame = true
@@ -947,6 +950,12 @@ public actor RTMPStream {
             encoder: outgoing.videoEncoderSnapshot, output: videoOutputDiagnostics.snapshot())
     }
 
+    /// 取得實際壓縮輸出格式與累計量；呼叫端可每數秒取樣，不必取走媒體樣本。
+    /// - Returns: 本發布世代的觀測值；尚未產出為 nil，停止時清空。不表示網路送達。
+    public func encodingDiagnostics() -> RTMPEncodingDiagnostics {
+        encodingTracker.snapshot(isPublishing: readyState == .publishing)
+    }
+
     private func logVideoQueueDiagnostics(generation: UInt64) async {
         guard generation == publishGeneration, !Task.isCancelled else { return }
         let snapshot = videoPipelineSnapshot()
@@ -965,6 +974,7 @@ public actor RTMPStream {
         // +1 並重設 keyframe 等待：所有舊世代 task 立即失效。
         lastVideoDiagnosticSnapshot = nil
         publishGeneration &+= 1
+        encodingTracker.reset(generation: publishGeneration)
         outgoing.invalidateVideoInputGeneration()
         waitingForVideoKeyFrame = true
         publishTask?.cancel()
@@ -1179,6 +1189,7 @@ extension RTMPStream: _Stream {
                     videoOutputDiagnostics.record(.outputUnavailable)
                     return
                 }
+                encodingTracker.record(video: sampleBuffer)
                 let isKeyFrame = !sampleBuffer.isNotSync
                 // 編碼格式變了（重新協商 / 換 session）等同 GOP 重新開始，必須重新等 keyframe。
                 if videoFormat != sampleBuffer.formatDescription { waitingForVideoKeyFrame = true }
@@ -1301,6 +1312,7 @@ extension RTMPStream: _Stream {
             guard readyState == .publishing, outputQueue.isOpen else { return }
             // 與 video 相同規則：sequence header 必須在時間戳推進前送出，type-0
             // header 才帶得到前一顆 frame 的 wire 位置。
+            encodingTracker.record(audio: audioBuffer)
             audioFormat = audioBuffer.format
             // A/V resync：音訊 capture 時間落後 video playhead 超過門檻時，把
             // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
