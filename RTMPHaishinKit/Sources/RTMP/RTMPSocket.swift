@@ -329,7 +329,7 @@ final actor RTMPSocket {
             drainWaiters.append(c)
             Task {
                 try? await Task.sleep(nanoseconds: deadline)
-                await self.forceDrainTimeout()
+                self.forceDrainTimeout()
             }
         }
     }

@@ -1,5 +1,11 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.20 19:02 清理 socket 與編碼診斷測試編譯警告
+
+- 移除 socket drain 的 actor 隔離 Task 內同步呼叫多餘的 await。
+- 將編碼診斷測試的 CMBlockBuffer 解包獨立成敘述，保留非空檢查，避免 CoreMedia 呼叫參數內的 require 巨集警告。
+- Swift 語法與差異檢查通過；Apple SDK 警告清除結果待 CI 確認。
+
 ## 2026.10.20 16:46 心跳改為接收進展優先與連續失敗判定
 
 - 接收位元組增加時立即取消待回應探測並清除連續未回應次數，包含探測間隔期間；計數倒退不當作存活證據。

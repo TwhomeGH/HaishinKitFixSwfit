@@ -104,12 +104,13 @@ struct RTMPEncodingDiagnosticsTests {
             memoryBlock: nil, blockLength: 4, blockAllocator: kCFAllocatorDefault,
             customBlockSource: nil, offsetToData: 0, dataLength: 4, flags: 0, blockBufferOut: &block)
         #expect(blockStatus == noErr)
+        let dataBlock = try #require(block)
         var sample: CMSampleBuffer?
         var size = 4
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 60),
             presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
         let sampleStatus = CMSampleBufferCreateReady(allocator: kCFAllocatorDefault,
-            dataBuffer: try #require(block), formatDescription: format, sampleCount: 1,
+            dataBuffer: dataBlock, formatDescription: format, sampleCount: 1,
             sampleTimingEntryCount: 1, sampleTimingArray: &timing,
             sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample)
         #expect(sampleStatus == noErr)
