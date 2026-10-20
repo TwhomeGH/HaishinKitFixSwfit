@@ -108,6 +108,9 @@ def parse(log_text: str):
     testing_failed_block: list[str] = []
 
     lines = log_text.splitlines()
+    runner_errors = list(dict.fromkeys(line.strip() for line in lines
+        if "The test runner hung before establishing connection." in line
+        or "[Runner infrastructure]" in line))
     # Swift Testing 的 issue 原因常在下一行（含多行 comment），不能只留下 Expectation。
     issues: list[str] = []
     for index, raw in enumerate(lines):
@@ -193,6 +196,7 @@ def parse(log_text: str):
             entry["count"] += 1
 
     return {
+        "runner_errors": runner_errors,
         "issues": issues,
         "errors": errors,
         "other_errors": other_errors,
@@ -220,13 +224,19 @@ def print_console(result) -> None:
     passed = len(result["tests_passed"])
 
     head = col("CI 摘要", "bold")
-    summary_line = f"\n{head}  ❌ errors={len(errors)+len(other_errors)}  ⚠️ warnings={warn_total}"
+    summary_line = f"\n{head}  compile/errors={len(errors)+len(other_errors)}  runner failures={len(result['runner_errors'])}  warnings={warn_total}"
     if passed or failed:
         summary_line += f"  🧪 tests: {passed} passed / {failed} failed"
     print(summary_line + "\n")
 
+    if result["runner_errors"]:
+        console_group("❌ 測試執行環境／Runner 啟動失敗")
+        for message in result["runner_errors"]:
+            print(message)
+        console_endgroup()
+
     if errors or other_errors or result["testing_failed"]:
-        console_group(col(f"❌ Errors ({len(errors)+len(other_errors)})", "red", "bold"))
+        console_group(col("❌ 編譯／測試執行失敗明細", "red", "bold"))
         for f in errors:
             print(col(f"{f.path}:{f.line}: {f.msg}", "red"))
             print(f"::error file={f.path},line={f.line}::{f.msg}")
@@ -270,7 +280,7 @@ def render_markdown(result) -> str:
     warn_total = warnings_total(result["warnings"])
     passed = len(result["tests_passed"])
     failed = len(result["tests_failed"])
-    ok = not errors and not other_errors and failed == 0 and not result["testing_failed"] and not result["issues"] and result["verdict"] != "failed"
+    ok = not result["runner_errors"] and not errors and not other_errors and failed == 0 and not result["testing_failed"] and not result["issues"] and result["verdict"] != "failed"
 
     out = []
     out.append("# CI 測試摘要")
@@ -279,6 +289,7 @@ def render_markdown(result) -> str:
     out.append("| --- | --- |")
     out.append(f"| 結果 | {'✅ 通過' if ok else '❌ 失敗'} |")
     out.append(f"| Compile errors | {len(errors) + len(other_errors)} |")
+    out.append(f"| Runner／環境失敗 | {len(result['runner_errors'])} |")
     out.append(f"| Warnings | {warn_total} ({len(result['warnings'])} unique) |")
     out.append(f"| Tests | {passed} passed / {failed} failed |")
     out.append("")
@@ -308,6 +319,10 @@ def render_markdown(result) -> str:
             out.append(f"| {entry['count']} | {safe_msg} | {locs} |")
         out.append("")
 
+    if result["runner_errors"]:
+        out.extend(["## ❌ 測試執行環境／Runner 啟動失敗", ""])
+        out.extend("- " + message for message in result["runner_errors"])
+        out.append("")
     out.append("## 🧪 Tests")
     out.append("")
     if result["tests_failed"]:
@@ -319,7 +334,7 @@ def render_markdown(result) -> str:
         out.append(f"**Passed ({passed}):** " + ", ".join(result["tests_passed"]))
         out.append("")
     if not result["tests_passed"] and not result["tests_failed"]:
-        out.append("_no test results (build failed before running)_")
+        out.append("_未取得測試個案結果；請查看建置或 runner 啟動診斷。_")
         out.append("")
     if result["issues"]:
         out.extend(["### Swift Testing 失敗詳細資訊", ""])

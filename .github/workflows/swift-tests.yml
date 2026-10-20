@@ -94,6 +94,9 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Validate test runner scripts
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test*.py'
+
       - name: Run RTMP tests
         id: rtmp_tests
         shell: bash
@@ -116,24 +119,13 @@ jobs:
           mkdir -p .build/test-results
           scheme="HaishinKit-Package"
           test_target="RTMPHaishinKitTests"
-          device_name="$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone[^()]*\) (.*/\1/p' | head -n 1)"
-          if [ -z "${device_name}" ]; then
-            device_name="iPhone 17"
-          fi
-          destination="platform=iOS Simulator,name=${device_name},OS=latest"
           status=0
           : > .build/test-results/rtmp-tests.log
           : > .build/test-results/summary.md
           : > .build/test-results/failures.md
-          rm -rf .build/test-results/RTMPHaishinKitTests.xcresult
-          logger_info "Using iOS Simulator destination: ${destination}"
           logger_info "Running ${test_target} with ${scheme} on iOS Simulator"
-          xcodebuild test \
-            -scheme "${scheme}" \
-            -destination "${destination}" \
-            -only-testing:"${test_target}" \
-            -resultBundlePath .build/test-results/RTMPHaishinKitTests.xcresult \
-            2>&1 | tee .build/test-results/ios-tests.log | bash .github/scripts/colorize-test-log.sh
+          python3 .github/scripts/run_ios_tests.py "${test_target}" .build/test-results \
+            2>&1 | bash .github/scripts/colorize-test-log.sh
           status=${PIPESTATUS[0]}
           cat .build/test-results/ios-tests.log >> .build/test-results/rtmp-tests.log
           if [ "${status}" -eq 0 ]; then
@@ -244,6 +236,9 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Validate test runner scripts
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test*.py'
+
       - name: Run HaishinKit tests
         id: haishinkit_tests
         shell: bash
@@ -266,24 +261,13 @@ jobs:
           mkdir -p .build/haishinkit-test-results
           scheme="HaishinKit-Package"
           test_target="HaishinKitTests"
-          device_name="$(xcrun simctl list devices available | sed -n 's/^[[:space:]]*\(iPhone[^()]*\) (.*/\1/p' | head -n 1)"
-          if [ -z "${device_name}" ]; then
-            device_name="iPhone 17"
-          fi
-          destination="platform=iOS Simulator,name=${device_name},OS=latest"
           status=0
           : > .build/haishinkit-test-results/haishinkit-tests.log
           : > .build/haishinkit-test-results/summary.md
           : > .build/haishinkit-test-results/failures.md
-          rm -rf .build/haishinkit-test-results/HaishinKitTests.xcresult
-          logger_info "Using iOS Simulator destination: ${destination}"
           logger_info "Running ${test_target} with ${scheme} on iOS Simulator"
-          xcodebuild test \
-            -scheme "${scheme}" \
-            -destination "${destination}" \
-            -only-testing:"${test_target}" \
-            -resultBundlePath .build/haishinkit-test-results/HaishinKitTests.xcresult \
-            2>&1 | tee .build/haishinkit-test-results/ios-tests.log | bash .github/scripts/colorize-test-log.sh
+          python3 .github/scripts/run_ios_tests.py "${test_target}" .build/haishinkit-test-results \
+            2>&1 | bash .github/scripts/colorize-test-log.sh
           status=${PIPESTATUS[0]}
           cat .build/haishinkit-test-results/ios-tests.log >> .build/haishinkit-test-results/haishinkit-tests.log
           if [ "${status}" -eq 0 ]; then

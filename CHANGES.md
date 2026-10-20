@@ -1,5 +1,13 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.21 00:19 改善 iOS 測試 runner 啟動與摘要
+
+- 兩個 iOS 測試 job 改用共用執行器，明確匹配 runtime 與專用模擬器 UDID，等待開機完成並限制命令執行時間。
+- 只對 runner 連線前卡住且沒有測試失敗的情況重試一次；保留各次日誌／xcresult、裝置狀態與退出碼。
+- 摘要區分 runner／環境失敗與編譯錯誤，修正 Errors (0) 無法解釋測試啟動失敗的問題。
+- 7 個 Python 測試通過並加入 CI；實際模擬器執行待 CI 驗收。fastlane 依賴與 Fastfile 未修改。
+- 操作與 artifact 說明見 Docs/CI_IOS_TEST_RUNNER.md。
+
 ## 2026.10.20 22:26 修正影片停頓後 RTMP 時間軸被縮短
 
 - 影片封裝明確啟用 preserveForwardGaps，保留真實向前間隔，不再將超過 2 秒的間隔替換成上一幀時長；修正 log-59 兩次停頓累積約 7 秒時間偏差的來源。
