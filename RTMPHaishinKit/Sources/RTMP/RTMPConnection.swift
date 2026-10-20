@@ -380,6 +380,8 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// forever and no reconnect would ever fire — this forces the socket closed
     /// so the recv loop exits and the existing reconnect path runs.
     private var silentIntervals = 0
+    /// 最近一次監控觀測到接收量增加的單調時間；nil 表示本次連線尚未觀測。
+    private var lastInboundActivityUptime: TimeInterval?
     private var lastActivityBytesIn = 0
     private var lastActivityBytesOut = 0
     private var hasSeenActivity = false
@@ -590,6 +592,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         // Fresh socket/monitor: clear liveness watchdog state so a brand-new
         // connection isn't flagged for a stall inherited from the previous one.
         silentIntervals = 0
+        lastInboundActivityUptime = nil
         lastActivityBytesIn = 0
         lastActivityBytesOut = 0
         hasSeenActivity = false
@@ -708,21 +711,45 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         guard state == .connected else {
             return
         }
-        switch keepAlive.tick(now: Date(), inboundBytes: lastActivityBytesIn) {
+        let now = Date()
+        let generation = connectGeneration
+        let beforeTick = keepAlive.diagnosticDescription(now: now, inboundBytes: lastActivityBytesIn)
+        switch keepAlive.tick(now: now, inboundBytes: lastActivityBytesIn) {
         case .none:
             break
         case .probe(let value):
             doOutput(.zero, chunkStreamId: .control, message: RTMPUserControlMessage(event: .ping, value: value))
+            await logKeepAliveTransport("probe queued", decision: keepAlive.diagnosticDescription(now: now, inboundBytes: lastActivityBytesIn), generation: generation)
         case .declareDead:
             log(.error, "Keepalive pong timeout, forcing reconnect",
-                detail: "value=\(keepAlive.value) timeout=\(keepAlivePongTimeout)s",
+                detail: "value=\(keepAlive.value) timeout=\(keepAlivePongTimeout)s \(beforeTick)",
                 always: true)
+            await logKeepAliveTransport("timeout", decision: beforeTick, generation: generation)
+            guard generation == connectGeneration, state == .connected else { return }
             await socket?.close()
         case .disablePongDetection:
             log(.warn, "Server does not answer keepalive pings; disabling pong-based death detection",
                 detail: "unanswered=\(keepAlive.unansweredProbes)",
                 always: true)
         }
+    }
+
+    /// 低頻心跳傳輸快照；socket 完成量不等於 ping 完成或伺服器確認。
+    /// - Parameters:
+    ///   - event: 探測入列或逾時事件。
+    ///   - decision: 決策當下的接收計數與等待時間。
+    ///   - generation: 決策所屬連線，避免 await 後混入新連線資料。
+    private func logKeepAliveTransport(_ event: String, decision: String, generation: Int) async {
+        let idle = lastInboundActivityUptime.map { String(format: "%.3f", ProcessInfo.processInfo.systemUptime - $0) } ?? "unknown"
+        let transport = await socket?.transportDiagnostics()
+        guard generation == connectGeneration else { return }
+        let detail: String
+        if let transport {
+            detail = "socketGeneration=\(transport.generation) queuedBytes=\(transport.queuedBytes) completedBytes=\(transport.completedBytes) failedBatchBytes=\(transport.failedBatchBytes) completedBatches=\(transport.completedBatches) failedBatches=\(transport.failedBatches)"
+        } else {
+            detail = "transport=unavailable"
+        }
+        log(.info, "Keepalive diagnostic: \(event)", detail: "generation=\(generation) \(decision) inboundIdleSeconds=\(idle) \(detail)", always: true)
     }
 
     /// 為目前握手階段武裝逾時。每次狀態前進都以遞增 token 使前一階段的計時器
@@ -1070,6 +1097,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
             // brand-new socket isn't flagged for a stall inherited from the
             // previous (stale) counters.
             silentIntervals = 0
+            lastInboundActivityUptime = nil
             lastActivityBytesIn = 0
             lastActivityBytesOut = 0
             hasSeenActivity = false
@@ -1095,6 +1123,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// watchdog only counts an interval when the send queue is non-empty — the
     /// real half-open signature (data queued, nothing draining, nothing in).
     private func checkLiveness(_ report: NetworkMonitorReport) {
+        if report.totalBytesIn > lastActivityBytesIn {
+            lastInboundActivityUptime = ProcessInfo.processInfo.systemUptime
+        }
         let moved = report.totalBytesIn != lastActivityBytesIn || report.totalBytesOut != lastActivityBytesOut
         lastActivityBytesIn = report.totalBytesIn
         lastActivityBytesOut = report.totalBytesOut

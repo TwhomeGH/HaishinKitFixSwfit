@@ -8,6 +8,40 @@ import Testing
 /// 同一組案例也有非 Apple 平台的獨立驗證腳本 `.cortexkit/verify-keepalive.swift`。
 @Suite("RTMPKeepAlive：閒置探測與死線判定")
 struct RTMPKeepAliveTests {
+    /// 決策前保存快照，確保逾時清除 pending 後仍能解釋觸發依據。
+    @Test func timeoutSnapshotPreservesProbeEvidence() {
+        let start = Date(timeIntervalSince1970: 100)
+        var heartbeat = RTMPKeepAlive()
+        heartbeat.reset(now: start)
+        _ = heartbeat.tick(now: start.addingTimeInterval(20), inboundBytes: 100)
+        heartbeat.onPong()
+        _ = heartbeat.tick(now: start.addingTimeInterval(40), inboundBytes: 200)
+        let snapshot = heartbeat.diagnosticDescription(now: start.addingTimeInterval(45), inboundBytes: 200)
+        let decision = heartbeat.tick(now: start.addingTimeInterval(45), inboundBytes: 200)
+        #expect(snapshot.contains("pendingAgeSeconds=5.000"))
+        #expect(snapshot.contains("pongSupported=true"))
+        #expect(snapshot.contains("inboundAtProbe=200 inboundNow=200"))
+        #expect(decision == .none)
+        #expect(heartbeat.unansweredProbes == 1)
+    }
+
+    /// 探測間收到資料也應消除先前失敗；只有送出資料不參與此判定。
+    @Test func inboundBetweenProbesClearsFailures() {
+        var heartbeat = Self.make()
+        heartbeat.reset(now: Self.t0)
+        heartbeat.onPong()
+        _ = heartbeat.tick(now: Self.t0.addingTimeInterval(20), inboundBytes: 0)
+        _ = heartbeat.tick(now: Self.t0.addingTimeInterval(25), inboundBytes: 0)
+        #expect(heartbeat.unansweredProbes == 1)
+        _ = heartbeat.tick(now: Self.t0.addingTimeInterval(30), inboundBytes: 100)
+        #expect(heartbeat.unansweredProbes == 0)
+        _ = heartbeat.tick(now: Self.t0.addingTimeInterval(40), inboundBytes: 100)
+        _ = heartbeat.tick(now: Self.t0.addingTimeInterval(44), inboundBytes: 200)
+        let result = heartbeat.tick(now: Self.t0.addingTimeInterval(45), inboundBytes: 200)
+        #expect(result == .none)
+        #expect(heartbeat.unansweredProbes == 0)
+    }
+
     private static let t0 = Date(timeIntervalSinceReferenceDate: 0)
 
     private static func make() -> RTMPKeepAlive {
@@ -33,14 +67,21 @@ struct RTMPKeepAliveTests {
         #expect(keepAlive.tick(now: Self.t0.addingTimeInterval(40), inboundBytes: 0) == .probe(2))
     }
 
-    @Test("pong-capable peer 停止回應 → declareDead")
+    @Test("曾回 pong 的對端連續三次無回應才判死")
     func declaresDeadAfterPongStops() {
         var keepAlive = Self.make()
         keepAlive.reset(now: Self.t0)
         _ = keepAlive.tick(now: Self.t0.addingTimeInterval(20), inboundBytes: 0)
         keepAlive.onPong()
         _ = keepAlive.tick(now: Self.t0.addingTimeInterval(40), inboundBytes: 0)
-        #expect(keepAlive.tick(now: Self.t0.addingTimeInterval(45), inboundBytes: 0) == .declareDead)
+        let first = keepAlive.tick(now: Self.t0.addingTimeInterval(45), inboundBytes: 0)
+        _ = keepAlive.tick(now: Self.t0.addingTimeInterval(60), inboundBytes: 0)
+        let second = keepAlive.tick(now: Self.t0.addingTimeInterval(65), inboundBytes: 0)
+        _ = keepAlive.tick(now: Self.t0.addingTimeInterval(80), inboundBytes: 0)
+        let third = keepAlive.tick(now: Self.t0.addingTimeInterval(85), inboundBytes: 0)
+        #expect(first == .none)
+        #expect(second == .none)
+        #expect(third == .declareDead)
     }
 
     @Test("只有 inbound（無 pong）也視為存活")

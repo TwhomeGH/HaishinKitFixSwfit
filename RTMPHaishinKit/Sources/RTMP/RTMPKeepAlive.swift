@@ -1,6 +1,8 @@
 import Foundation
 
-/// Pure keepalive state machine for the RTMP client.
+/// RTMP 心跳狀態機；任何接收進展或 pong 都清除連續未回應次數。
+/// 曾回 pong 的對端需連續 maxUnansweredProbes 次無回應才判死；從未回 pong
+/// 的對端達上限時只停用 pong 判死。每次探測入列開始計時，尚非 socket 完成時間。
 ///
 /// Deliberately free of AVFoundation / Network so it can be unit-tested (and
 /// compiled standalone on non-Apple platforms). `RTMPConnection` drives it from
@@ -34,8 +36,8 @@ struct RTMPKeepAlive {
     /// Monotonically increasing probe value (wraps).
     private(set) var value: Int32 = 0
     private(set) var unansweredProbes = 0
-    /// nil = unknown (no pong yet), true = peer answers pings (a probe timeout
-    /// is a real death signal), false = peer does not answer (kill disabled).
+    /// nil = unknown (no pong yet), true = peer answers pings (consecutive probe timeouts
+    /// can indicate a dead connection), false = peer does not answer (kill disabled).
     private(set) var pongSupported: Bool?
 
     private var lastProbeSentAt: Date = .distantPast
@@ -43,6 +45,8 @@ struct RTMPKeepAlive {
     /// Inbound byte count when the pending probe was sent. Any advance proves
     /// the link is alive even if the peer never sends a PongResponse.
     private var bytesInAtProbe = 0
+    /// 每次 tick 的接收高水位；接收進展在探測等待期間以外也會清除失敗次數。
+    private var lastObservedInboundBytes = 0
 
     init(interval: TimeInterval = 20, pongTimeout: TimeInterval = 5, maxUnansweredProbes: Int = 3) {
         self.interval = interval
@@ -59,6 +63,14 @@ struct RTMPKeepAlive {
         lastProbeSentAt = now
         pendingProbeSentAt = nil
         bytesInAtProbe = 0
+        lastObservedInboundBytes = 0
+    }
+
+    /// 逾時決策前的探測快照；計數來自接收監控，不代表 ping 傳送完成。
+    func diagnosticDescription(now: Date, inboundBytes: Int) -> String {
+        let pendingAge = pendingProbeSentAt.map { String(format: "%.3f", now.timeIntervalSince($0)) } ?? "none"
+        let supported = pongSupported.map { String($0) } ?? "unknown"
+        return "probe=\(value) pendingAgeSeconds=\(pendingAge) pongSupported=\(supported) inboundAtProbe=\(bytesInAtProbe) inboundNow=\(inboundBytes) unanswered=\(unansweredProbes)"
     }
 
     /// A PongResponse (or any proof the peer answered) arrived.
@@ -71,27 +83,27 @@ struct RTMPKeepAlive {
     /// Called once per tick with the current time and the latest inbound byte
     /// count (from the network monitor).
     mutating func tick(now: Date, inboundBytes: Int) -> Decision {
+        // 只接受增加；計數倒退不構成存活證據，新連線須呼叫 reset。
+        if inboundBytes > lastObservedInboundBytes {
+            unansweredProbes = 0
+            pendingProbeSentAt = nil
+            lastObservedInboundBytes = inboundBytes
+        }
         if let sentAt = pendingProbeSentAt {
             guard now.timeIntervalSince(sentAt) >= pongTimeout else {
                 return .none
             }
             pendingProbeSentAt = nil
-            if inboundBytes != bytesInAtProbe {
-                // Any inbound since the probe proves the link is alive; a
-                // specific pong is not required.
-                unansweredProbes = 0
-            } else if pongSupported == true {
-                return .declareDead
-            } else if pongSupported != false {
-                // Still probing whether the peer answers at all.
+            if pongSupported != false {
                 unansweredProbes += 1
-                if maxUnansweredProbes <= unansweredProbes {
+                if max(1, maxUnansweredProbes) <= unansweredProbes {
+                    if pongSupported == true {
+                        return .declareDead
+                    }
                     pongSupported = false
                     return .disablePongDetection
                 }
             }
-            // pongSupported == false: death detection already disabled; fall
-            // through so the next probe cadence is evaluated (no repeat events).
         }
         guard now.timeIntervalSince(lastProbeSentAt) >= interval else {
             return .none

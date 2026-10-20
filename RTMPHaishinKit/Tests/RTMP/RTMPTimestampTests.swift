@@ -4,6 +4,19 @@ import Foundation
 import Testing
 
 @Suite struct RTMPTimestampTests {
+    /// 重現 log-58 的大間隔：本測試確認診斷能揭露時間縮短，不認定截限策略正確。
+    @Test func videoGapExposesShortenedTimeline() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        for seconds in [100.0, 100.03, 103.496433, 103.526433] {
+            _ = timestamp.update(CMTime(seconds: seconds, preferredTimescale: 1_000_000))
+        }
+        let diagnostics = timestamp.diagnostics
+        #expect(diagnostics.clampCount == 1)
+        #expect(diagnostics.sourceGaps == 1)
+        #expect(abs(diagnostics.maxSourceGapSeconds - 3.466433) < 0.001)
+        #expect((diagnostics.sourceMinusGeneratedSeconds ?? 0) > 3.4)
+    }
+
     @Test func updateCMTime() throws {
         let times: [CMTime] = [
             CMTime(value: 286340171565869, timescale: 1000000000),
