@@ -8,9 +8,7 @@ protocol RTMPTimeConvertible {
 
 private let kRTMPTimestamp_defaultTimeInterval: TimeInterval = 0
 
-/// 單一 delta 的上限（ms）。超過視為基準跳變（向前大跳），用上一次正常
-/// delta 取代，避免巨大 timestamp 上 wire 造成下游斷流。2 秒涵蓋最低幀率
-/// （0.5fps idle），正常直播幀間距 < 100ms。
+/// 舊呼叫策略的 delta 上限（ms）；影片使用 preserveForwardGaps，不套用此截限。
 private let kRTMPTimestamp_maxDelta: TimeInterval = 2000
 private let kRTMPTimestamp_preferredDeltaDriftTolerance: TimeInterval = 80
 private let kRTMPTimestamp_preferredDeltaMaxCorrection: TimeInterval = 5
@@ -99,7 +97,20 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     // wire-cumulative position, not the camera-relative PTS and not 0.
     private(set) var cumulativeTime: TimeInterval = kRTMPTimestamp_defaultTimeInterval
 
-    mutating func update(_ value: T, source: String = "", allowJump: Bool = false, preferredDelta: TimeInterval? = nil, originalSeconds: TimeInterval? = nil) -> UInt32 {
+    /// 產生 RTMP 毫秒差值。影片可保留真實向前間隔，避免缺幀期間被從時間軸刪除。
+    /// - Parameters:
+    ///   - value: 封裝使用的媒體時間，單位秒。
+    ///   - source: 警告日誌的來源名稱。
+    ///   - allowJump: 允許音訊節奏修正直接追上大幅向前漂移。
+    ///   - preferredDelta: 壓縮音訊封包的標稱時長；nil 使用來源差值。
+    ///   - originalSeconds: 補償前時間，僅供診斷。
+    ///   - preserveForwardGaps: 保留有限且可表示的向前間隔；不把長間隔當作時鐘重設。
+    /// - Returns: 本次毫秒差值；無法表示的時間回傳零並保留原基準，另記錄警告。
+    mutating func update(_ value: T, source: String = "", allowJump: Bool = false, preferredDelta: TimeInterval? = nil, originalSeconds: TimeInterval? = nil, preserveForwardGaps: Bool = false) -> UInt32 {
+        guard value.seconds.isFinite else {
+            logger.warn("RTMPTimestamp invalid: \(source) non-finite source")
+            return 0
+        }
         if startedAt == 0 {
             startedAt = value.seconds
             updatedAt = value.seconds
@@ -108,6 +119,10 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
             return 0
         }
         let sourceTimedelta = (value.seconds - updatedAt) * 1000
+        if preserveForwardGaps && (!sourceTimedelta.isFinite || sourceTimedelta > Double(UInt32.max) - 1) {
+            logger.warn("RTMPTimestamp invalid: \(source) delta outside RTMP range")
+            return 0
+        }
         var timedelta = sourceTimedelta
         var clamped = false
         var corrected = false
@@ -117,7 +132,8 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         //  - 向前大跳（delta > maxDelta，如 13000→15000 產生 2000 秒）：用
         //    上一次正常 delta 維持平滑，避免巨大 timestamp 跳變讓下游誤判為
         //    gap/seek → 畫面凍結、音訊中斷、AV 自動修正（斷流）
-        // 此策略維持 wire 單調，但可能壓縮真實停頓；診斷保留來源與累計差距。
+        // 影片指定 preserveForwardGaps，跳過向前截限以保留真實停頓；
+        // 其他呼叫仍保留相容策略，診斷記錄來源與累計差距。
         // allowJump（僅音訊 A/V resync 用）：允許一次向前大跳，讓落後到 video
         // 之後的音訊時間軸直接跳進同步範圍，而非以 2000ms 上限慢慢追。
         let usesPreferredDelta = preferredDelta != nil
@@ -146,7 +162,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
             clamped = true
             timedelta = lastNormalDelta
-        } else if timedelta > kRTMPTimestamp_maxDelta, !allowJump {
+        } else if timedelta > kRTMPTimestamp_maxDelta, !allowJump, !preserveForwardGaps {
             logger.warn("RTMPTimestamp jump: \(source) new=\(value.seconds) last=\(updatedAt) delta=\(timedelta)ms")
             clamped = true
             timedelta = lastNormalDelta

@@ -4,7 +4,42 @@ import Foundation
 import Testing
 
 @Suite struct RTMPTimestampTests {
-    /// 重現 log-58 的大間隔：本測試確認診斷能揭露時間縮短，不認定截限策略正確。
+    /// log-59 的兩次長間隔不得累積成七秒的影片時間縮短。
+    @Test func videoPreservesRepeatedForwardGaps() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        let times = [100.0, 100.03, 103.613002, 103.646332, 107.146332, 107.162999]
+        for seconds in times {
+            _ = timestamp.update(CMTime(seconds: seconds, preferredTimescale: 1_000_000), preserveForwardGaps: true)
+        }
+        #expect(timestamp.diagnostics.sourceGaps == 2)
+        #expect(timestamp.diagnostics.clampCount == 0)
+        #expect(abs(timestamp.cumulativeTime - (times.last! - times[0])) < 0.002)
+        #expect(abs(timestamp.diagnostics.sourceMinusGeneratedSeconds ?? 100) < 0.002)
+    }
+
+    /// 長停頓可能使用 extended timestamp；不得以兩秒或 24-bit 邊界縮短。
+    @Test func videoPreservesExtendedTimestampGap() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        _ = timestamp.update(CMTime(seconds: 100, preferredTimescale: 1000), preserveForwardGaps: true)
+        let gap = timestamp.update(CMTime(seconds: 18100, preferredTimescale: 1000), preserveForwardGaps: true)
+        #expect(gap == 18_000_000)
+        #expect(timestamp.cumulativeTime == 18000)
+    }
+
+    /// 無效或超出 UInt32 毫秒範圍時保留基準，下一筆有效影片仍能延續。
+    @Test func invalidVideoTimeDoesNotReplaceBaseline() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        _ = timestamp.update(CMTime(seconds: 100, preferredTimescale: 1000), preserveForwardGaps: true)
+        let invalid = timestamp.update(.invalid, preserveForwardGaps: true)
+        let excessive = timestamp.update(CMTime(seconds: 5_000_100, preferredTimescale: 1000), preserveForwardGaps: true)
+        #expect(invalid == 0)
+        #expect(excessive == 0)
+        #expect(timestamp.updatedAt == 100)
+        let resumed = timestamp.update(CMTime(seconds: 103, preferredTimescale: 1000), preserveForwardGaps: true)
+        #expect(resumed == 3000)
+    }
+
+    /// 保留舊呼叫策略的診斷覆蓋；正式影片路徑已明確啟用 preserveForwardGaps。
     @Test func videoGapExposesShortenedTimeline() {
         var timestamp = RTMPTimestamp<CMTime>()
         for seconds in [100.0, 100.03, 103.496433, 103.526433] {

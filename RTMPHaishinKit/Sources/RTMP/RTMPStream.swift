@@ -1227,7 +1227,7 @@ extension RTMPStream: _Stream {
                 if avOffsetCompensation != 0 {
                     frameTime = CMTimeAdd(decodeTimeStamp, CMTime(seconds: avOffsetCompensation, preferredTimescale: 1000))
                 }
-                let timedelta = videoTimestamp.update(frameTime, source: "video", originalSeconds: decodeTimeStamp.seconds)
+                let timedelta = videoTimestamp.update(frameTime, source: "video", originalSeconds: decodeTimeStamp.seconds, preserveForwardGaps: true)
                 frameCount += 1
                 // composition time = wire PTS − wire DTS（保證 ≥ 0）。無 B-frame 時
                 // PTS == DTS 故為 0；A/V 補償同時作用於 DTS 與 PTS，不可混入此值
