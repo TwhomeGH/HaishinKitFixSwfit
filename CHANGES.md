@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.21 13:42 分離 iOS CI 建置與測試逾時
+
+- 修正冷建置與測試共用 660 秒導致 SDK 編譯遭中斷：建置限時 1500 秒，測試每次限時 660 秒；job 預留 65 分鐘。
+- build-for-testing 成功後才執行 test-without-building；runner 啟動重試沿用同一份產物。
+- 保存建置／測試各自日誌與 xcresult，摘要標示失敗階段，每 30 秒顯示執行進度。
+- 8 個 Python 測試通過；Xcode 分階段執行及 artifact 上傳待 CI 驗收。
+
 ## 2026.10.21 00:19 改善 iOS 測試 runner 啟動與摘要
 
 - 兩個 iOS 測試 job 改用共用執行器，明確匹配 runtime 與專用模擬器 UDID，等待開機完成並限制命令執行時間。

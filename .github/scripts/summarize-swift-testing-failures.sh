@@ -24,7 +24,7 @@ issues="$(
   grep -n -E "✘ Test .* recorded an issue at|Expectation failed:|Fatal error|Caught error:" "${log_file}" || true
 )"
 compiler_errors="$(
-  grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find|Testing failed:|\\*\\* TEST FAILED \\*\\*" "${log_file}" || true
+  grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|Runner infrastructure|BUILD INTERRUPTED|BUILD FAILED|No such module|cannot find|Testing failed:|\\*\\* TEST FAILED \\*\\*" "${log_file}" || true
 )"
 
 {

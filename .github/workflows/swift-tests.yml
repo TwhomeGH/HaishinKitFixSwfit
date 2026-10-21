@@ -82,7 +82,7 @@ jobs:
   rtmp-tests:
     name: RTMPHaishinKit iOS tests
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 65
 
     steps:
       - name: Checkout
@@ -224,7 +224,7 @@ jobs:
   haishinkit-tests:
     name: HaishinKit iOS tests
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 65
 
     steps:
       - name: Checkout

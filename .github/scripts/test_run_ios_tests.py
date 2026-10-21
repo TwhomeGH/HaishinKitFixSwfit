@@ -38,7 +38,7 @@ class RunnerTests(unittest.TestCase):
                     content = json.dumps({"devices": {"com.apple.iOS-27": [{"name": "iPhone", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}})
                 elif command[:4] == ["xcrun", "simctl", "list", "runtimes"]:
                     content = json.dumps({"runtimes": [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True}]})
-                elif command[0] == "xcodebuild":
+                elif command[:2] == ["xcodebuild", "test-without-building"]:
                     content = HUNG if log.parent.name == "attempt-1" else "✔ Test example passed after 1 second."
                 else:
                     content = "ok"
@@ -53,8 +53,38 @@ class RunnerTests(unittest.TestCase):
             self.assertIn(HUNG, (root / "attempt-1/test.log").read_text(encoding="utf-8"))
             self.assertIn("passed", (root / "ios-tests.log").read_text(encoding="utf-8"))
             self.assertTrue((root / "attempt-2/destination.txt").exists())
+            builds = [c for c in calls if c[:2] == ["xcodebuild", "build-for-testing"]]
+            tests = [c for c in calls if c[:2] == ["xcodebuild", "test-without-building"]]
+            self.assertEqual(len(builds), 1)
+            self.assertEqual(len(tests), 2)
+            self.assertEqual(builds[0][builds[0].index("-derivedDataPath") + 1],
+                             tests[1][tests[1].index("-derivedDataPath") + 1])
             deleted = [c[-1] for c in calls if c[:3] == ["xcrun", "simctl", "delete"]]
             self.assertEqual(deleted, ["UUID-A", "UUID-B"])
+
+    def test_build_timeout_does_not_start_or_retry_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            commands = []
+            def fake_run(command, timeout, log):
+                commands.append(command)
+                if command[:4] == ["xcrun", "simctl", "list", "devices"]:
+                    content = json.dumps({"devices": {"com.apple.iOS-27": [{"name": "iPhone", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}})
+                elif command[:4] == ["xcrun", "simctl", "list", "runtimes"]:
+                    content = json.dumps({"runtimes": [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True}]})
+                else:
+                    content = "** BUILD INTERRUPTED **" if command[0] == "xcodebuild" else "ok"
+                log.write_text(content, encoding="utf-8")
+                return 124 if command[0] == "xcodebuild" else 0
+            with patch.object(run_ios_tests, "run", side_effect=fake_run), \
+                 patch.object(run_ios_tests.subprocess, "check_output", return_value="UUID-A"), \
+                 patch("sys.argv", ["runner", "ExampleTests", directory]), \
+                 patch.dict("os.environ", {}, clear=True), patch("builtins.print"):
+                self.assertEqual(run_ios_tests.main(), 124)
+            text = (Path(directory) / "ios-tests.log").read_text(encoding="utf-8")
+            self.assertIn("stage=build-for-testing exit=124", text)
+            self.assertIn("tests not started", text)
+            self.assertEqual(len([c for c in commands if c[0] == "xcodebuild"]), 1)
+            self.assertFalse((Path(directory) / "attempt-2").exists())
 
     def test_selects_matching_available_runtime(self):
         runtimes = [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True},

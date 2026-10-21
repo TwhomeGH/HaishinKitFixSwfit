@@ -7,6 +7,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import time
 import uuid
 
 from ci_test_summary import parse
@@ -41,7 +42,15 @@ def run(command, timeout, log):
     with log.open("w", encoding="utf-8") as output:
         process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            return process.wait(timeout=timeout)
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    return process.wait(timeout=min(30, remaining))
+                except subprocess.TimeoutExpired:
+                    print(f"[CI progress] {log.name}: running; log bytes={log.stat().st_size}", flush=True)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGTERM)
             try:
@@ -62,6 +71,9 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     final_log = args.output / "ios-tests.log"
     attempts = []
+    # 建置產物放在 artifact 目錄之外；重試只重跑測試，不重編整套 SDK。
+    derived_data = args.output.resolve().parent / f"ios-derived-{uuid.uuid4().hex}"
+    built = False
     status = 1
     for attempt in (1, 2):
         folder = args.output / f"attempt-{attempt}"
@@ -84,11 +96,27 @@ def main():
                 raise RuntimeError("simulator boot failed")
             if run(["xcrun", "simctl", "bootstatus", udid, "-b"], 180, folder / "bootstatus.log"):
                 raise RuntimeError("simulator bootstatus failed or timed out")
-            status = run(["xcodebuild", "test", "-scheme", "HaishinKit-Package",
-                          "-destination", f"platform=iOS Simulator,id={udid}",
-                          "-destination-timeout", "60", "-parallel-testing-enabled", "NO",
-                          f"-only-testing:{args.target}", "-resultBundlePath", str(folder / "Tests.xcresult")],
-                         660, test_log)
+            common = ["-scheme", "HaishinKit-Package", "-derivedDataPath", str(derived_data),
+                      "-destination", f"platform=iOS Simulator,id={udid}",
+                      "-destination-timeout", "60", "-parallel-testing-enabled", "NO",
+                      f"-only-testing:{args.target}"]
+            stage = "build-for-testing"
+            if not built:
+                print("[CI stage] build-for-testing: limit=1500s", flush=True)
+                status = run(["xcodebuild", stage, *common, "-resultBundlePath",
+                              str(folder / "Build.xcresult")], 1500, folder / "build.log")
+                built = status == 0
+            if built:
+                stage = "test-without-building"
+                print("[CI stage] test-without-building: limit=660s", flush=True)
+                status = run(["xcodebuild", stage, *common, "-resultBundlePath",
+                              str(folder / "Tests.xcresult")], 660, test_log)
+            else:
+                test_log.write_text("[CI stage] tests not started: build failed\n", encoding="utf-8")
+            if status:
+                with test_log.open("a", encoding="utf-8") as output:
+                    output.write(f"[Runner infrastructure] stage={stage} exit={status}\n")
+
         except (RuntimeError, subprocess.SubprocessError, OSError, ValueError, KeyError) as error:
             status = 1
             with test_log.open("a", encoding="utf-8") as output:
@@ -99,6 +127,9 @@ def main():
                 run(["xcrun", "simctl", "shutdown", udid], 30, folder / "shutdown.log")
                 run(["xcrun", "simctl", "delete", udid], 30, folder / "delete.log")
         text = test_log.read_text(encoding="utf-8", errors="replace")
+        build_log = folder / "build.log"
+        if build_log.exists():
+            text = build_log.read_text(encoding="utf-8", errors="replace") + "\n" + text
         final_log.write_text(text, encoding="utf-8")
         print(text, flush=True)
         attempts.append(f"- Attempt {attempt}: exit={status}; artifacts: attempt-{attempt}/")
