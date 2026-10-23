@@ -13,18 +13,20 @@ import uuid
 from ci_test_summary import parse
 
 
-def choose_device(devices, runtimes):
-    """回傳可用 iPhone 的裝置類型與對應最新可用 iOS runtime，無匹配即失敗。"""
+def choose_device(devices, runtimes, requested="27.0"):
+    """回傳可用 iPhone 的裝置類型與明確指定的 iOS runtime，無匹配即失敗。"""
     choices = []
     for runtime in runtimes:
         if not runtime.get("isAvailable") or ".iOS-" not in runtime["identifier"]:
+            continue
+        if runtime["version"] != requested and runtime["identifier"] != requested:
             continue
         version = tuple(int(part) for part in runtime["version"].split("."))
         for device in devices.get(runtime["identifier"], []):
             if device.get("isAvailable") and device["name"].startswith("iPhone") and device.get("deviceTypeIdentifier"):
                 choices.append((version, runtime["identifier"], device["deviceTypeIdentifier"]))
     if not choices:
-        raise RuntimeError("找不到具可用 runtime 的 iPhone 模擬器")
+        raise RuntimeError("找不到指定 runtime 的可用 iPhone 模擬器")
     _, runtime, device_type = max(choices)
     return device_type, runtime
 
@@ -62,11 +64,36 @@ def run(command, timeout, log):
             return 124
 
 
+class StageFailure(RuntimeError):
+    """保留原始失敗階段與退出碼，避免逾時 124 被泛化成 1。"""
+    def __init__(self, stage, code):
+        self.stage = stage
+        self.code = code
+        super().__init__(f"stage={stage} exit={code}")
+
+
+def stage_run(command, timeout, log):
+    """保存每階段耗時與退出碼；中繼資料獨立保存，不污染 simctl JSON。"""
+    started = time.monotonic()
+    try:
+        code = run(command, timeout, log)
+    except (OSError, subprocess.SubprocessError) as error:
+        code = 1
+        with log.open("a", encoding="utf-8") as output:
+            output.write(f"\n[Runner infrastructure] {error}\n")
+    result = {"stage": log.stem, "exit": code,
+              "elapsedSeconds": round(time.monotonic() - started, 3), "limitSeconds": timeout}
+    log.with_name(log.name + ".status.json").write_text(json.dumps(result), encoding="utf-8")
+    print(f"[CI stage] {result}", flush=True)
+    return code
+
+
 def main():
     """建立、啟動、測試與清理本次專用模擬器，保留各次嘗試資料。"""
     parser = argparse.ArgumentParser()
     parser.add_argument("target")
     parser.add_argument("output", type=Path)
+    parser.add_argument("--runtime", default=os.environ.get("IOS_TEST_RUNTIME", "27.0"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     final_log = args.output / "ios-tests.log"
@@ -79,23 +106,27 @@ def main():
         folder = args.output / f"attempt-{attempt}"
         folder.mkdir(parents=True, exist_ok=True)
         udid = None
+        failed_stage = None
+        service_ok = False
         test_log = folder / "test.log"
         try:
             for kind in ("devices", "runtimes"):
-                code = run(["xcrun", "simctl", "list", kind, "--json"], 30, folder / f"{kind}.json")
+                code = stage_run(["xcrun", "simctl", "list", kind, "--json"], 30, folder / f"{kind}.json")
                 if code:
-                    raise RuntimeError(f"simctl list {kind} failed: {code}")
+                    raise StageFailure(f"list-{kind}", code)
             devices = json.loads((folder / "devices.json").read_text())["devices"]
             runtimes = json.loads((folder / "runtimes.json").read_text())["runtimes"]
-            device_type, runtime = choose_device(devices, runtimes)
+            device_type, runtime = choose_device(devices, runtimes, args.runtime)
             name = f"ci-{args.target}-{uuid.uuid4().hex[:8]}"
             udid = subprocess.check_output(["xcrun", "simctl", "create", name, device_type, runtime], text=True, timeout=30).strip()
             (folder / "destination.txt").write_text(f"UDID={udid}\nruntime={runtime}\n", encoding="utf-8")
             print(f"Attempt {attempt}: {runtime}, UDID={udid}", flush=True)
-            if run(["xcrun", "simctl", "boot", udid], 60, folder / "boot.log"):
-                raise RuntimeError("simulator boot failed")
-            if run(["xcrun", "simctl", "bootstatus", udid, "-b"], 180, folder / "bootstatus.log"):
-                raise RuntimeError("simulator bootstatus failed or timed out")
+            for command, limit, filename in [
+                (["xcrun", "simctl", "boot", udid], 60, "boot.log"),
+                (["xcrun", "simctl", "bootstatus", udid, "-b"], 180, "bootstatus.log")]:
+                code = stage_run(command, limit, folder / filename)
+                if code:
+                    raise StageFailure(Path(filename).stem, code)
             common = ["-scheme", "HaishinKit-Package", "-derivedDataPath", str(derived_data),
                       "-destination", f"platform=iOS Simulator,id={udid}",
                       "-destination-timeout", "60", "-parallel-testing-enabled", "NO",
@@ -103,13 +134,13 @@ def main():
             stage = "build-for-testing"
             if not built:
                 print("[CI stage] build-for-testing: limit=1500s", flush=True)
-                status = run(["xcodebuild", stage, *common, "-resultBundlePath",
+                status = stage_run(["xcodebuild", stage, *common, "-resultBundlePath",
                               str(folder / "Build.xcresult")], 1500, folder / "build.log")
                 built = status == 0
             if built:
                 stage = "test-without-building"
                 print("[CI stage] test-without-building: limit=660s", flush=True)
-                status = run(["xcodebuild", stage, *common, "-resultBundlePath",
+                status = stage_run(["xcodebuild", stage, *common, "-resultBundlePath",
                               str(folder / "Tests.xcresult")], 660, test_log)
             else:
                 test_log.write_text("[CI stage] tests not started: build failed\n", encoding="utf-8")
@@ -118,25 +149,41 @@ def main():
                     output.write(f"[Runner infrastructure] stage={stage} exit={status}\n")
 
         except (RuntimeError, subprocess.SubprocessError, OSError, ValueError, KeyError) as error:
-            status = 1
+            status = error.code if isinstance(error, StageFailure) else 1
+            failed_stage = error.stage if isinstance(error, StageFailure) else "setup"
             with test_log.open("a", encoding="utf-8") as output:
                 output.write(f"[Runner infrastructure] {error}\n")
         finally:
-            run(["xcrun", "simctl", "list", "devices", "--json"], 30, folder / "devices-after.json")
-            if udid:
-                run(["xcrun", "simctl", "shutdown", udid], 30, folder / "shutdown.log")
-                run(["xcrun", "simctl", "delete", udid], 30, folder / "delete.log")
+            # 查詢本身也可能卡住；服務無回應就不繼續送清理或重試命令。
+            service_ok = stage_run(["xcrun", "simctl", "list", "devices", "--json"],
+                                   30, folder / "devices-after.json") == 0
+            if udid and service_ok:
+                shutdown = stage_run(["xcrun", "simctl", "shutdown", udid], 30, folder / "shutdown.log")
+                if shutdown == 124:
+                    service_ok = False
+                else:
+                    service_ok = stage_run(["xcrun", "simctl", "delete", udid], 30, folder / "delete.log") == 0
+            if udid and not service_ok:
+                with test_log.open("a", encoding="utf-8") as output:
+                    output.write(f"[Runner infrastructure] service unavailable or cleanup failed; no retry; retained UDID={udid}\n")
+
         text = test_log.read_text(encoding="utf-8", errors="replace")
         build_log = folder / "build.log"
         if build_log.exists():
             text = build_log.read_text(encoding="utf-8", errors="replace") + "\n" + text
+        if failed_stage:
+            for filename in ("boot.log", "bootstatus.log", "devices-after.json"):
+                log = folder / filename
+                if log.exists():
+                    tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+                    text += f"\n[CI diagnostic] {filename}\n" + ("\n".join(tail) or "(no output)") + "\n"
         final_log.write_text(text, encoding="utf-8")
         print(text, flush=True)
-        attempts.append(f"- Attempt {attempt}: exit={status}; artifacts: attempt-{attempt}/")
+        attempts.append(f"- Attempt {attempt}: exit={status}; stage={failed_stage or stage}; serviceResponsive={service_ok}; artifacts: attempt-{attempt}/")
         (args.output / "attempts.md").write_text("\n".join(attempts) + "\n", encoding="utf-8")
-        if status == 0 or attempt == 2 or not retryable(text):
+        if status == 0 or attempt == 2 or not service_ok or not (failed_stage in ("boot", "bootstatus") or retryable(text)):
             break
-        print("::warning::XCTest runner 啟動故障，保留首次資料並以新模擬器重試一次", flush=True)
+        print("::warning::模擬器／XCTest runner 啟動故障，保留首次資料並以新模擬器重試一次", flush=True)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as output:

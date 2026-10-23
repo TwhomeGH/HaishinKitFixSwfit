@@ -11,6 +11,10 @@ on:
       - main
   workflow_dispatch:
 
+# 明確固定 runtime；環境升級需同步驗收，不自動選 latest。
+env:
+  IOS_TEST_RUNTIME: '27.0'
+
 permissions:
   contents: read
 

@@ -4,12 +4,12 @@ RTMPHaishinKit 與 HaishinKit 的 iOS job 使用 `.github/scripts/run_ios_tests.
 
 ## 流程
 
-- 從 simctl JSON 選擇最新可用 iOS runtime 與相符 iPhone 裝置類型；沒有可用組合即報環境失敗。
+- 從 simctl JSON 選擇指定 iOS runtime（workflow 的 `env.IOS_TEST_RUNTIME` 固定為 27.0；手動執行腳本可用 `--runtime` 覆寫）與相符 iPhone 裝置類型；沒有可用組合即報環境失敗。
 - 每次嘗試建立專用模擬器，使用其 UDID 執行測試；boot 最多等待 60 秒，bootstatus 最多等待 180 秒。
 - 關閉 Xcode 平行測試，避免為單一 job 另建多組測試裝置。先以 build-for-testing 建置（最多 1500 秒），成功才執行 test-without-building（每次最多 660 秒）。
 - 重試沿用相同 DerivedData，不重新編譯。逾時保留日誌並終止該程序群。兩個 iOS job 上限為 65 分鐘，預留兩次測試、模擬器操作與 artifact 上傳時間。
-- 僅在明確出現 `The test runner hung before establishing connection.`，且沒有編譯錯誤、測試失敗或 issue 時重試一次。boot 失敗及一般執行逾時不自動重試。
-- 每次完成只 shutdown／delete 該次建立的 UDID，不清理其他 job 或既有模擬器。
+- 僅在明確出現 `The test runner hung before establishing connection.`，且沒有編譯錯誤、測試失敗或 issue 時重試一次。boot／bootstatus 失敗另允許一次重試，但須先確認服務查詢及專用裝置清理成功。一般建置／測試逾時不自動重試。
+- 每次完成先查詢裝置狀態，再只 shutdown／delete 該次建立的 UDID。查詢失敗或清理逾時即停止後續操作與重試，摘要保留 UDID 供 runner 維護；不重啟整個服務或清理其他 job 的裝置。
 
 ## Artifact
 
@@ -26,3 +26,11 @@ Tests.xcresult（若 Xcode 有產生）、runtime／裝置清單、destination�
 ## 驗證
 
 本機 Python 測試涵蓋 runtime 選取、啟動錯誤分類、禁止重試斷言失敗、兩次結果保留、重試不重建、建置逾時不啟動測試及專用裝置清理。macOS simctl／Xcode 的實際執行仍需 CI 驗收。
+
+## 開機故障證據
+
+各階段的 `.status.json` 保存退出碼、實際耗時與限制秒數。bootstatus 的 124 保留到最終結果，不改成泛用 1；失敗摘要包含 boot／bootstatus／devices-after 日誌尾段，零輸出也明確標示。
+
+runtime 固定只確保可重現，不保證 CoreSimulator 健康。找不到指定版本會失敗，需維護 runner 或明確修改設定，不自動退回 latest。
+
+尚需核對 runner 是否共用主機及同機並行負載；本次沒有宣稱已證實其為根因。此設定適用共用執行器的兩個 iOS job，既有 TSan job 的平台選擇尚待統一。

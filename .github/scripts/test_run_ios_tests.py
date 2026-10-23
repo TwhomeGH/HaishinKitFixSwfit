@@ -86,6 +86,49 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(len([c for c in commands if c[0] == "xcodebuild"]), 1)
             self.assertFalse((Path(directory) / "attempt-2").exists())
 
+    def test_boot_timeout_retries_only_when_service_responds(self):
+        for responsive in (True, False):
+            with self.subTest(responsive=responsive), tempfile.TemporaryDirectory() as directory:
+                calls = []
+                def fake_run(command, timeout, log):
+                    calls.append(command)
+                    code = 0
+                    if command[:4] == ["xcrun", "simctl", "list", "devices"]:
+                        content = json.dumps({"devices": {"com.apple.iOS-27": [{"name": "iPhone", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}})
+                        if log.name == "devices-after.json" and not responsive:
+                            code = 124
+                    elif command[:4] == ["xcrun", "simctl", "list", "runtimes"]:
+                        content = json.dumps({"runtimes": [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True}]})
+                    else:
+                        content = "ok"
+                    if log.name == "bootstatus.log" and log.parent.name == "attempt-1":
+                        content = "waiting for simulator services"
+                        code = 124
+                    log.write_text(content, encoding="utf-8")
+                    return code
+                with patch.object(run_ios_tests, "run", side_effect=fake_run), \
+                     patch.object(run_ios_tests.subprocess, "check_output", side_effect=["UUID-A", "UUID-B"]) as create, \
+                     patch("sys.argv", ["runner", "ExampleTests", directory]), \
+                     patch.dict("os.environ", {}, clear=True), patch("builtins.print"):
+                    self.assertEqual(run_ios_tests.main(), 0 if responsive else 124)
+                self.assertEqual(create.call_count, 2 if responsive else 1)
+                root = Path(directory)
+                metadata = json.loads((root / "attempt-1/bootstatus.log.status.json").read_text())
+                self.assertEqual(metadata["exit"], 124)
+                self.assertEqual(metadata["limitSeconds"], 180)
+                if not responsive:
+                    text = (root / "ios-tests.log").read_text()
+                    self.assertIn("stage=bootstatus exit=124", text)
+                    self.assertIn("waiting for simulator services", text)
+                    self.assertFalse(any(c[2] in ("shutdown", "delete") for c in calls if c[0] == "xcrun"))
+
+    def test_runtime_does_not_silently_upgrade(self):
+        runtimes = [{"identifier": "com.apple.iOS-27-1", "version": "27.1", "isAvailable": True}]
+        devices = {"com.apple.iOS-27-1": [{"name": "iPhone", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}
+        with self.assertRaises(RuntimeError):
+            choose_device(devices, runtimes)
+        self.assertEqual(choose_device(devices, runtimes, "27.1"), ("phone", "com.apple.iOS-27-1"))
+
     def test_selects_matching_available_runtime(self):
         runtimes = [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True},
                     {"identifier": "com.apple.iOS-28", "version": "28.0", "isAvailable": False}]
