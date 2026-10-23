@@ -228,11 +228,6 @@ public actor RTMPStream {
     private var videoStallCount: Int = 0
     private var videoSourceStallCount: Int = 0
     private var audioStallCount: Int = 0
-    /// A/V resync 門檻：audio wire 時間落後 video playhead 超過此值時，把 audio
-    /// 時間戳 clamp 到 video 附近並讓時間軸一次跳進（落後區間內容被跳過），
-    /// 避免 player 因長期 A/V 偏移而棄音/靜音。健康時偏移 < 門檻不觸發。
-    static let maxAudioBehindVideoSeconds: TimeInterval = 0.5
-    private var audioResyncCount = 0
     private var warnedNilPacketDuration = false
     // 上一次有效的 packetDuration：`packetDuration` 異常回 nil（sampleRate<=0）時
     // 用它當 fallback，讓 wire 永不退回 source-time cadence（斷續音來源）。
@@ -294,14 +289,7 @@ public actor RTMPStream {
     private static let externalEncodingRestartCooldown: TimeInterval = 3
     private var lastExternalVideoEncodingRestartAt: Date = .distantPast
     private var lastExternalAudioEncodingRestartAt: Date = .distantPast
-    // A/V 對齊自動補償（video wire）：ReplayKit screen capture 的 PTS 通常比
-    // mic/app audio 落後固定量（實測 ~0.28s），造成 video wire 恆定落後 audio
-    // wire（avOffset 負）→ 玩家聽得到 lip-sync 偏差甚至觸發 A/V 自動修正。
-    // 啟動後前幾個 status 量測 avOffset，之後把 video 幀 PTS 加上補償讓 wire
-    // 對齊（audio 為同步基準，人聲為準，補 video）。
-    private var avOffsetCompensation: TimeInterval = 0
-    private var avOffsetSamples: [TimeInterval] = []
-    private var avOffsetMeasured = false
+    // 最新影音輸出不是配對樣本，只用於觀測，不能據此改寫內容時間。
     private var audioBuffer: AVAudioCompressedBuffer?
     private var howToPublish: RTMPStream.HowToPublish = .live
     private var continuation: CheckedContinuation<RTMPResponse, any Swift.Error>? {
@@ -1220,17 +1208,11 @@ extension RTMPStream: _Stream {
                 videoFormat = sampleBuffer.formatDescription
                 // 送 header 期間佇列可能已作廢（例如輸出失敗），再次確認。
                 guard outputQueue.isOpen else { return }
-                // A/V 對齊補償：量測到的 video wire 落後 audio 的固定 offset，
-                // 對 video 幀 PTS 加上補償（audio 為基準，補 video）。補償在
-                // 啟動 ~3s 後生效，wire 一次向前跳動對齊（<2000ms clamp 內）。
-                var frameTime = decodeTimeStamp
-                if avOffsetCompensation != 0 {
-                    frameTime = CMTimeAdd(decodeTimeStamp, CMTime(seconds: avOffsetCompensation, preferredTimescale: 1000))
-                }
-                let timedelta = videoTimestamp.update(frameTime, source: "video", originalSeconds: decodeTimeStamp.seconds, preserveForwardGaps: true)
+                // 保留編碼器交付的 DTS；輸出回呼先後不代表來源時鐘偏移。
+                let timedelta = videoTimestamp.update(decodeTimeStamp, source: "video", originalSeconds: decodeTimeStamp.seconds, preserveForwardGaps: true)
                 frameCount += 1
                 // composition time = wire PTS − wire DTS（保證 ≥ 0）。無 B-frame 時
-                // PTS == DTS 故為 0；A/V 補償同時作用於 DTS 與 PTS，不可混入此值
+                // PTS == DTS 故為 0；composition time 僅反映編碼重排，不混入跨軌補償
                 // （舊寫法以未補償 PTS 減已補償 updatedAt 會得到負 CTS，下游丟幀）。
                 // 計算抽到 RTMPVideoCompositionTime 以便單元測試。
                 let compositionTime = sampleBuffer.getCompositionTime(RTMPVideoMessage.ctsOffset)
@@ -1314,10 +1296,7 @@ extension RTMPStream: _Stream {
             // header 才帶得到前一顆 frame 的 wire 位置。
             encodingTracker.record(audio: audioBuffer)
             audioFormat = audioBuffer.format
-            // A/V resync：音訊 capture 時間落後 video playhead 超過門檻時，把
-            // 時間戳 clamp 到 video 附近並 allowJump 一次跳進同步範圍 — 落後
-            // 這裡只重標時間，並未丟棄舊音訊內容；需由診斷追查內容與時間是否偏離。
-            let resyncedWhen = resyncedAudioTime(original: when)
+            // 保留音訊來源時間，不把較晚完成的舊內容重標到影片位置。
             let computedPacketDuration = audioBuffer.packetDuration
             if computedPacketDuration == nil, !warnedNilPacketDuration {
                 // packetDuration 異常（sampleRate<=0）：記錄一次，並用 fallback 維持
@@ -1333,7 +1312,7 @@ extension RTMPStream: _Stream {
             let preferredDelta = computedPacketDuration
                 ?? lastAudioPacketDuration
                 ?? 1024.0 / (audioBuffer.format.sampleRate > 0 ? audioBuffer.format.sampleRate : 48000)
-            let timedelta = audioTimestamp.update(resyncedWhen, source: "audio", allowJump: true, preferredDelta: preferredDelta, originalSeconds: when.seconds)
+            let timedelta = audioTimestamp.update(when, source: "audio", allowJump: true, preferredDelta: preferredDelta, originalSeconds: when.seconds)
             guard let message = RTMPAudioMessage(streamId: id, timestamp: timedelta, audioBuffer: audioBuffer) else {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                 return
@@ -1397,25 +1376,11 @@ extension RTMPStream: _Stream {
         await restartAudioPipeline(reason: reason)
     }
 
-    /// 依現有 updatedAt 位置判斷音訊是否落後，必要時重標音訊時間。
-    /// 此處沒有丟棄或重採樣音訊內容；updatedAt 也不是累計 wire 時間。
-    /// 診斷須搭配 publish timeline 的 source／generated／retime 判讀。
-    private func resyncedAudioTime(original when: AVAudioTime) -> AVAudioTime {
-        let videoPosition = videoTimestamp.updatedAt
-        let audioPosition = audioTimestamp.updatedAt
-        guard 0 < videoPosition, 0 < audioPosition else {
-            return when
-        }
-        let behind = videoPosition - audioPosition
-        guard Self.maxAudioBehindVideoSeconds < behind else {
-            return when
-        }
-        audioResyncCount += 1
-        if audioResyncCount % 60 == 1 {
-            Task { await connection?.log(.warn, "audio resync: audio updatedAt behind video updatedAt, retiming without dropping content", detail: "behind=\(String(format: "%.3f", behind))s video=\(String(format: "%.3f", videoPosition)) audio=\(String(format: "%.3f", audioPosition)) rawAudio=\(String(format: "%.3f", when.seconds)) count=\(audioResyncCount)") }
-        }
-        let clampedSeconds = videoPosition
-        return AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: clampedSeconds))
+    /// 第一筆編碼來源的起始差；不同軌各自歸零會抹除此差，尚非共同時間原點。
+    private var sourceStartOffsetDescription: String {
+        guard let video = videoTimestamp.diagnostics.firstSourceSeconds,
+              let audio = audioTimestamp.diagnostics.firstSourceSeconds else { return "unknown" }
+        return String(format: "%.6f", video - audio)
     }
 
     public func dispatch(_ event: NetworkMonitorEvent) async {
@@ -1426,10 +1391,6 @@ extension RTMPStream: _Stream {
             stopPublishTasks()
             stopOutputConsumer()
             outgoing.stopRunning()
-            // 重推時重新量測 A/V offset 補償（來源 offset 每次連線可能不同）。
-            avOffsetCompensation = 0
-            avOffsetSamples.removeAll()
-            avOffsetMeasured = false
             id = RTMPStream.defaultID
             readyState = .idle
             videoInputFrames = 0
@@ -1473,27 +1434,13 @@ extension RTMPStream: _Stream {
                 }
                 lastStatusAudioOutputPTSSeconds = audioPTS
                 let avOffset = videoPTS - audioPTS
-                // A/V 對齊自動補償量測：啟動後前幾個 status 累積 avOffset 樣本，
-                // 取中位數設為 video wire 補償（見 append(sampleBuffer:)）。audio 為
-                // 同步基準。只有在「尚未量測」時累積，設完就停（固定來源 offset）。
-                if !avOffsetMeasured, 0 < audioPTS, 0 < videoPTS {
-                    avOffsetSamples.append(avOffset)
-                    if 3 <= avOffsetSamples.count {
-                        let sorted = avOffsetSamples.sorted()
-                        let median = sorted[sorted.count / 2]
-                        avOffsetCompensation = -median
-                        avOffsetMeasured = true
-                        avOffsetSamples.removeAll()
-                        await connection?.log(.info, "A/V offset compensated",
-                            detail: "measured=\(String(format: "%.3f", median))s compensation=\(String(format: "%.3f", avOffsetCompensation))s")
-                    }
-                }
+                // 差值仍供觀測；不同時間交付的兩個樣本不能用來判斷口型同步。
                 // 節流：每 10 個 .status（≈10s）印一筆。計數器在每次 status 結尾
                 // 重置，所以印的是「最後 1 秒」的快照——足以監測 avOffset/速率。
                 publishThroughputLogCount += 1
                 if publishThroughputLogCount % 10 == 0 {
                     await connection?.log(.debug, "publish timeline",
-                        detail: "schema=1 generation=\(publishGeneration) units=seconds generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=\(avOffsetCompensation) audioResyncs=\(audioResyncCount) video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
+                        detail: "schema=2 generation=\(publishGeneration) alignment=observeOnly origins=perTrackFirstSample units=seconds sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=0 video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
                     await connection?.log(.debug, "publish throughput",
                         detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes) videoPTS=\(String(format: "%.3f", videoPTS))s audioPTS=\(String(format: "%.3f", audioPTS))s avOffset=\(String(format: "%.3f", avOffset))s outputPTSAdvanced=\(outputPTSAdvanced) ptsRegress{v=\(videoOutputPTSRegressions),a=\(audioOutputPTSRegressions)}")
                 }

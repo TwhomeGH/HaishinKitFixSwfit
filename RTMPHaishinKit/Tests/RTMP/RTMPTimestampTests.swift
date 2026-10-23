@@ -4,6 +4,36 @@ import Foundation
 import Testing
 
 @Suite struct RTMPTimestampTests {
+    /// 同一組來源樣本即使以不同跨軌順序交付，也不得依另一軌進度重標。
+    @Test func deliveryOrderDoesNotChangePerTrackTimeline() {
+        func run(_ videoFirst: Bool) -> (Double, Double) {
+            var video = RTMPTimestamp<CMTime>()
+            var audio = RTMPTimestamp<CMTime>()
+            let videoTimes = [100.2, 100.233, 104.2, 104.233]
+            let audioTimes = [100.0, 100.021333, 100.042666, 100.063999]
+            for index in 0..<4 {
+                if videoFirst {
+                    _ = video.update(CMTime(seconds: videoTimes[index], preferredTimescale: 1_000_000), preserveForwardGaps: true)
+                }
+                _ = audio.update(CMTime(seconds: audioTimes[index], preferredTimescale: 1_000_000), allowJump: true, preferredDelta: 1024.0 / 48000)
+                if !videoFirst {
+                    _ = video.update(CMTime(seconds: videoTimes[index], preferredTimescale: 1_000_000), preserveForwardGaps: true)
+                }
+            }
+            // 各軌仍獨立歸零，起始差是已知限制，不以回呼時間推測補回。
+            #expect(abs((video.diagnostics.firstSourceSeconds ?? 0) - (audio.diagnostics.firstSourceSeconds ?? 0) - 0.2) < 0.001)
+            #expect(video.diagnostics.lastRetimingSeconds == 0)
+            #expect(audio.diagnostics.lastRetimingSeconds == 0)
+            return (video.cumulativeTime, audio.cumulativeTime)
+        }
+        let first = run(true)
+        let second = run(false)
+        #expect(first.0 == second.0)
+        #expect(first.1 == second.1)
+        #expect(abs(first.0 - 4.033) < 0.002)
+        #expect(abs(first.1 - 0.064) < 0.002)
+    }
+
     /// log-59 的兩次長間隔不得累積成七秒的影片時間縮短。
     @Test func videoPreservesRepeatedForwardGaps() {
         var timestamp = RTMPTimestamp<CMTime>()
