@@ -24,6 +24,9 @@ extension VTCompressionSession: VTSessionConvertible {
             VTSessionOptionKey.forceKeyFrame.CFString: kCFBooleanTrue as Any
         ] as CFDictionary : nil
         outputState.submitted()
+        // 捕捉數值而非輸入 sampleBuffer，避免診斷額外延長像素緩衝區生命週期。
+        let inputPTS = sampleBuffer.presentationTimeStamp.seconds
+        let submittedUptime = ProcessInfo.processInfo.systemUptime
         let status = VTCompressionSessionEncodeFrame(
             self,
             imageBuffer: imageBuffer,
@@ -34,6 +37,7 @@ extension VTCompressionSession: VTSessionConvertible {
             // VT 非同步 callback（跑在 VT 執行緒，可能晚於 session 替換才回來）。
             // 所有分支都先經過 outputState 把關，才決定是否 yield 給 consumer。
             outputHandler: { status, flags, sampleBuffer in
+                let completedUptime = ProcessInfo.processInfo.systemUptime
                 outputState.callback()
                 guard status == noErr else {
                     // encode 失敗：記錄後擋住後續幀，直到 owner 重建 session。
@@ -49,6 +53,10 @@ extension VTCompressionSession: VTSessionConvertible {
                     outputState.dropped()
                     return
                 }
+                outputState.recordTiming(inputPTS: inputPTS,
+                    outputPTS: sampleBuffer.presentationTimeStamp.seconds,
+                    outputDTS: sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp.seconds : nil,
+                    submitted: submittedUptime, completed: completedUptime)
                 // 交棒給 consumer。deliver 只在狀態允許（active、無失敗、
                 // 若在等 keyframe 則必須是 keyframe）時才呼叫 yield；
                 // yield 回傳 .enqueued 才算真正成功，否則視同丟棄。

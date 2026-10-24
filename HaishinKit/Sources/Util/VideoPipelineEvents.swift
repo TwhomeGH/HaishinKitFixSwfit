@@ -70,6 +70,10 @@ public struct VideoPipelineEventsSnapshot: Codable, Sendable {
     public let events: [String: VideoPipelineEventValue]
     /// 最近記錄的錯誤碼；nil 表示未記錄。後續成功不會自動清除此歷史值。
     public let lastErrorCode: Int32?
+    /// 目前 VT session 首筆成功回呼的同幀時間；重建／作廢後清空，舊 JSON 為 nil。
+    public var firstEncoderTiming: VideoEncoderTimingSample?
+    /// 目前 VT session 最新成功回呼的同幀時間；不是最大耗時或端到端延遲。
+    public var lastEncoderTiming: VideoEncoderTimingSample?
     /// 距指定事件最後一次發生的秒數；從未觀察到時為 nil。
     public func idle(for event: VideoPipelineEvent) -> TimeInterval? {
         events[event.rawValue].map { max(0, sampledAt - $0.lastAt) }
@@ -79,7 +83,7 @@ public struct VideoPipelineEventsSnapshot: Codable, Sendable {
         events.keys.sorted().map { key in
             let value = events[key]!
             return "\(key)=\(value.count) idle=\(max(0, sampledAt - value.lastAt))"
-        }.joined(separator: " ") + " lastError=\(lastErrorCode.map(String.init) ?? "none")"
+        }.joined(separator: " ") + " lastError=\(lastErrorCode.map(String.init) ?? "none") encoderFirst{\(firstEncoderTiming?.summary ?? "unknown")} encoderLast{\(lastEncoderTiming?.summary ?? "unknown")}"
     }
 }
 
@@ -89,6 +93,24 @@ package final class VideoPipelineEventTracker: @unchecked Sendable {
     private let clock: @Sendable () -> TimeInterval
     private var events: [String: VideoPipelineEventValue] = [:]
     private var lastErrorCode: Int32?
+    private var firstEncoderTiming: VideoEncoderTimingSample?
+    private var lastEncoderTiming: VideoEncoderTimingSample?
+
+    /// 只在 encoder state 鎖內呼叫；不反向取得 encoder 鎖。
+    func recordEncoderTiming(_ sample: VideoEncoderTimingSample) {
+        lock.lock(); defer { lock.unlock() }
+        if firstEncoderTiming?.session != sample.session { firstEncoderTiming = sample }
+        lastEncoderTiming = sample
+    }
+
+    /// session 作廢時清除同幀觀測，累計事件保持原契約。
+    func clearEncoderTiming(session: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        guard lastEncoderTiming?.session == session else { return }
+        firstEncoderTiming = nil
+        lastEncoderTiming = nil
+    }
+
     package init(clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.clock = clock
     }
@@ -100,6 +122,6 @@ package final class VideoPipelineEventTracker: @unchecked Sendable {
     }
     package func snapshot() -> VideoPipelineEventsSnapshot {
         lock.lock(); defer { lock.unlock() }
-        return VideoPipelineEventsSnapshot(id: id, sampledAt: clock(), events: events, lastErrorCode: lastErrorCode)
+        return VideoPipelineEventsSnapshot(id: id, sampledAt: clock(), events: events, lastErrorCode: lastErrorCode, firstEncoderTiming: firstEncoderTiming, lastEncoderTiming: lastEncoderTiming)
     }
 }

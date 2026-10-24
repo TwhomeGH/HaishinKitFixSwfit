@@ -14,6 +14,18 @@ import Foundation
 /// 由 NSLock 保護；且**絕不在 VT callback 內取 OutgoingStream 的鎖**，避免死鎖。
 final class VideoEncoderOutputState: @unchecked Sendable {
     private let lock = NSLock()
+    private let timingSession = UUID()
+
+    /// 成功回呼時保存捕捉自同一次 VT 提交的數值；舊 session 回呼不污染新觀測。
+    func recordTiming(inputPTS: Double, outputPTS: Double, outputDTS: Double?,
+                      submitted: Double, completed: Double) {
+        lock.lock(); defer { lock.unlock() }
+        guard active else { return }
+        diagnostics.recordEncoderTiming(VideoEncoderTimingSample(session: timingSession,
+            inputPTS: inputPTS, outputPTS: outputPTS, outputDTS: outputDTS,
+            submitted: submitted, completed: completed))
+    }
+
     private let diagnostics: VideoPipelineEventTracker
     init(diagnostics: VideoPipelineEventTracker = VideoPipelineEventTracker()) {
         self.diagnostics = diagnostics
@@ -37,6 +49,7 @@ final class VideoEncoderOutputState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         active = false
+        diagnostics.clearEncoderTiming(session: timingSession)
     }
 
     /// VT callback 回報非同步 encode 失敗：標記失敗並回到等 keyframe。

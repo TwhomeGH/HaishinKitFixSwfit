@@ -57,6 +57,10 @@ public struct RTMPEncodingDiagnostics: Codable, Sendable {
     public var lastVideoOutputAt: Date?
     /// 最近壓縮音訊輸出的觀測時間；不是媒體 PTS。
     public var lastAudioOutputAt: Date?
+    /// 影片訊息的同筆來源／RTMP 時間與入列結果；舊版 JSON 無此欄位時為 nil。
+    public var videoTiming: RTMPMediaTimingDiagnostics?
+    /// 音訊訊息的同筆來源／RTMP 時間與入列結果；舊版 JSON 無此欄位時為 nil。
+    public var audioTiming: RTMPMediaTimingDiagnostics?
     /// 本世代壓縮影片樣本累計。
     public var videoFrames: UInt64 = 0
     /// 本世代壓縮音訊 packet 累計，不是 buffer 或 RTMP chunk 數。
@@ -139,6 +143,22 @@ struct RTMPEncodingTracker {
         value.audioPackets &+= UInt64(buffer.packetCount)
         value.audioBytes &+= UInt64(buffer.byteLength)
         value.lastAudioOutputAt = now
+    }
+
+    /// 記錄成功建立訊息後的入列結果；由呼叫端提供同一筆樣本的時間。
+    mutating func recordTiming(video: Bool, pts: Double, dts: Double?, generatedDTS: Double,
+                               compositionSeconds: Double = 0, preferredDuration: Double? = nil,
+                               accepted: Bool) {
+        var timing = (video ? value.videoTiming : value.audioTiming) ?? RTMPMediaTimingDiagnostics()
+        timing.record(pts: pts, dts: dts, generatedDTS: generatedDTS,
+                      compositionSeconds: compositionSeconds, preferredDuration: preferredDuration,
+                      accepted: accepted)
+        if video { value.videoTiming = timing } else { value.audioTiming = timing }
+    }
+
+    /// 延用發布狀態的低頻節奏，不在每個 chunk 寫日誌。
+    var timingLogDescription: String {
+        "video{\(value.videoTiming?.logDescription ?? "unknown")} audio{\(value.audioTiming?.logDescription ?? "unknown")}"
     }
 
     private static func fourCC(_ value: UInt32) -> String {

@@ -1224,7 +1224,12 @@ extension RTMPStream: _Stream {
                     }
                     // 只有實際入列（doOutput == true）才視為送出成功。這正是
                     // 「請求不等於成功」在 stream 層的體現：入列失敗就維持等 keyframe。
-                    if doOutput(.one, chunkStreamId: .video, message: message) {
+                    let accepted = doOutput(.one, chunkStreamId: .video, message: message)
+                    encodingTracker.recordTiming(video: true, pts: sampleBuffer.presentationTimeStamp.seconds,
+                        dts: sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp.seconds : nil,
+                        generatedDTS: videoTimestamp.cumulativeTime,
+                        compositionSeconds: Double(compositionTime) / 1000, accepted: accepted)
+                    if accepted {
                         videoSentBytes += message.payload.count
                         hasSentVideoFrame = true
                         videoOutputDiagnostics.record(.videoQueued)
@@ -1317,9 +1322,14 @@ extension RTMPStream: _Stream {
                 Task { await connection?.log(.debug, "append(audio): RTMPAudioMessage creation failed") }
                 return
             }
-            audioSentFrames += 1
-            audioSentBytes += message.payload.count
-            doOutput(.one, chunkStreamId: .audio, message: message)
+            let accepted = doOutput(.one, chunkStreamId: .audio, message: message)
+            encodingTracker.recordTiming(video: false, pts: when.seconds, dts: nil,
+                generatedDTS: audioTimestamp.cumulativeTime, preferredDuration: preferredDelta,
+                accepted: accepted)
+            if accepted {
+                audioSentFrames += 1
+                audioSentBytes += message.payload.count
+            }
         default:
             let isPCM = audioBuffer is AVAudioPCMBuffer
             // Network congestion (full stall): drop the raw buffer BEFORE the
@@ -1441,6 +1451,8 @@ extension RTMPStream: _Stream {
                 if publishThroughputLogCount % 10 == 0 {
                     await connection?.log(.debug, "publish timeline",
                         detail: "schema=2 generation=\(publishGeneration) alignment=observeOnly origins=perTrackFirstSample units=seconds sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=0 video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
+                    await connection?.log(.debug, "publish media timing",
+                        detail: "schema=1 generation=\(publishGeneration) boundary=messageQueue units=seconds \(encodingTracker.timingLogDescription)")
                     await connection?.log(.debug, "publish throughput",
                         detail: "audioInputFrames=\(audioInputFrames) audioFrames=\(audioSentFrames) audioBytes=\(audioSentBytes) videoInputFrames=\(videoInputFrames) videoFrames=\(frameCount) videoBytes=\(videoSentBytes) videoPTS=\(String(format: "%.3f", videoPTS))s audioPTS=\(String(format: "%.3f", audioPTS))s avOffset=\(String(format: "%.3f", avOffset))s outputPTSAdvanced=\(outputPTSAdvanced) ptsRegress{v=\(videoOutputPTSRegressions),a=\(audioOutputPTSRegressions)}")
                 }
@@ -1649,15 +1661,9 @@ extension RTMPStream: MediaMixerOutput {
 }
 
 private extension AVAudioCompressedBuffer {
-    /// 每包壓縮音訊的 media duration（秒），**永不回傳 nil**：
-    /// - AAC/Opus 這類固定幀長 codec 優先使用 codec/ASBD 標稱幀數
-    /// - 其他未知 codec 才信任 packet description 的實際幀數
-    /// - 最後用 codec 標稱幀長（AAC 1024 / Opus 960）當保險
-    ///
-    /// 為何不能 nil：wire delta 在 `preferredDelta` 為 nil 時會退回 source-time
-    /// cadence（`when.seconds`），把來源的 20/37 節奏直接漏上 wire —— 正是
-    /// 「斷續音 + 累積 A/V 錯位」的來源。必須讓 compressed audio 的 wire 永遠
-    /// 依封包 duration 前進，而不是依抵達/來源時間。
+    /// 整個壓縮 buffer 的媒體長度（秒），包含所有 packet；取樣率無效時為 nil。
+    /// 優先依固定幀長、packet description 或 ASBD 計算，未知格式使用標稱後備值。
+    /// 此值供 preferredDelta 使用，並非實測內容延遲；呼叫端仍處理 nil 後備。
     var packetDuration: TimeInterval? {
         let sampleRate = format.sampleRate
         guard sampleRate > 0 else {

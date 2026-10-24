@@ -1,5 +1,13 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.10.25 00:48 補強同幀編碼與 RTMP 入列時間診斷
+
+- VT 成功回呼保留同幀提交 PTS、輸出 PTS／DTS、單調耗時與 session 識別；舊 session 回呼不污染新觀測。
+- RTMP 編碼快照新增各軌首筆嘗試、首筆成功入列與最新入列結果，並加入低頻 publish media timing 日誌。
+- 音訊吞吐計數改為入列成功才增加；更正整個壓縮 buffer duration 的註釋。
+- 新增診斷契約測試；Apple CI／實機驗收待執行，未變更影音時間戳演算法。
+- 使用與限制見 Docs/AV_TIMESTAMP_ALIGNMENT.md。
+
 ## 2026.10.24 05:46 補強模擬器開機故障診斷與重試
 
 - iOS 共用執行器固定指定 runtime，workflow env 固定為 27.0，不依賴尚未建立的 repository variable，也不自動選最新版本。
