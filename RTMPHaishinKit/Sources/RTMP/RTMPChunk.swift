@@ -281,7 +281,7 @@ final class RTMPChunkBuffer {
         let needsExtendedTimestamp = message.timestamp >= RTMPChunkMessageHeader.maxTimestamp
         let extendTimestampSize = needsExtendedTimestamp ? kRTMPExtendTimestampSize : 0
         let firstHeaderSize = firstBasicHeaderSize + chunkType.headerSize + extendTimestampSize
-        let subsequentHeaderSize: Int = 1
+        let subsequentHeaderSize = firstBasicHeaderSize + extendTimestampSize
         let totalSize = firstHeaderSize + length + (numChunks - 1) * subsequentHeaderSize
         if data.count < totalSize {
             data.append(Data(count: totalSize - data.count))
@@ -295,6 +295,11 @@ final class RTMPChunkBuffer {
                 putMessageHeader(chunkType, length: length, message: message)
             } else {
                 putBasicHeader(.three, chunkStreamId: chunkStreamId)
+                // 續接段必須重複 extended timestamp，避免接收端將 payload 當時間戳。
+                if needsExtendedTimestamp {
+                    data.replaceSubrange(position..<position + 4, with: message.timestamp.bigEndian.data)
+                    position += 4
+                }
             }
             data.replaceSubrange(position..<position + remaining, with: payload[offset..<offset + remaining])
             position += remaining
@@ -318,7 +323,7 @@ final class RTMPChunkBuffer {
             return
         }
         data[position + 0] = chunkType.rawValue << 6 | 0b00000001
-        let streamId = (chunkStreamId - 64).bigEndian.data
+        let streamId = (chunkStreamId - 64).littleEndian.data
         data[position + 1] = streamId[0]
         data[position + 2] = streamId[1]
         position += 3

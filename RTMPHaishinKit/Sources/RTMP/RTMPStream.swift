@@ -1403,6 +1403,12 @@ extension RTMPStream: _Stream {
             outgoing.stopRunning()
             id = RTMPStream.defaultID
             readyState = .idle
+            // 新連線重建 wire 時間；同連線 codec restart 不走此處。
+            audioTimestamp = .init()
+            videoTimestamp = .init()
+            audioFormat = nil
+            videoFormat = nil
+            waitingForVideoKeyFrame = true
             videoInputFrames = 0
             videoStallCount = 0
             videoSourceStallCount = 0
@@ -1532,23 +1538,12 @@ extension RTMPStream: _Stream {
         info.update()
     }
 
-    func resumePublishing() async {
-        guard let name = lastPublishName else {
-            return
-        }
-        guard readyState == .idle else {
-            await connection?.log(.warn, "resumePublishing: skipped, readyState=\(readyState)")
-            return
-        }
-        guard await connection?.connected == true else {
-            await connection?.log(.warn, "resumePublishing: skipped, connection is down")
-            return
-        }
-        do {
-            _ = try await publish(name, type: lastPublishType)
-        } catch {
-            await connection?.log(.error, "Auto-republish failed", detail: "\(error)")
-        }
+    /// 恢復原發布；無發布工作可略過，其餘錯誤向外傳遞，避免誤報重連成功。
+    func resumePublishing() async throws {
+        guard let name = lastPublishName else { return }
+        guard readyState == .idle else { throw Error.invalidState }
+        guard await connection?.connected == true else { throw Error.connectionLost(nil) }
+        _ = try await publish(name, type: lastPublishType)
     }
 
     private func restartVideoPipeline(reason: String) async {

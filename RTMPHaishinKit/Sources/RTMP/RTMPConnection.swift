@@ -626,6 +626,9 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         for await data in await socket.recv() {
                             try await listen(data)
                         }
+                        guard generation == connectGeneration else { return }
+                        let endReason = await socket.terminationReason ?? "unknown"
+                        log(.warn, "Receive loop ended", detail: "generation=\(generation) reason=\(endReason)", always: true)
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
                             try? await close(reason: "recvLoopEnded")
                             await startReconnection()
@@ -633,6 +636,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                             try? await close(reason: "recvLoopEnded")
                         }
                     } catch {
+                        guard generation == connectGeneration else { return }
                         log(.error, "Socket recv loop ended with error", detail: "\(error)", always: true)
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
                             try? await close(reason: "recvLoopError")
@@ -811,7 +815,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                 for stream in streams {
                     await stream.dispatch(.reset)
                     try await stream.createStream()
-                    await stream.resumePublishing()
+                    try await stream.resumePublishing()
                 }
                 log(.info, "Reconnect succeeded", detail: "attempt \(reconnectAttempts)/\(maxReconnectAttempts)", always: true)
                 await onReconnectStateChanged?(.succeeded)

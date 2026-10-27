@@ -282,3 +282,12 @@
 ## 完整設計缺陷說明
 
 詳見 [RTMP_SOCKET_DESIGN.md](RTMP_SOCKET_DESIGN.md)
+
+## 2026.10.28 RTMP 封包與重連契約修正
+
+- 多段訊息的 fmt=3 續接 chunk 補 extended timestamp；容量納入完整 basic header 與時間戳。大 CSID 改用低位元組在前。
+- 新連線 reset 重建影音時間基準與格式前導；同連線 codec restart 保持時間連續。
+- resumePublishing 改為拋出錯誤，重新發布失敗不再誤報成功。
+- 收包處理 isComplete，先交付 EOF 同批最後資料；保存第一個接收錯誤／遠端 EOF／本機關閉原因，接收迴圈日誌附連線世代。
+- 舊連線接收迴圈結束不得關閉新世代。新增 45 組封包位元組比較案例。
+- 尚未證實以上缺陷是 log-62 首次 Twitch reset 的原因。Apple SDK 測試及實際 Twitch 重連仍待驗收。

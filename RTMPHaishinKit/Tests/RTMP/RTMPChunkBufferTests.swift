@@ -177,3 +177,41 @@ import Testing
         #expect(buffer.remaining == 0)
     }
 }
+
+/// 直接比對線上位元組，避免讀寫器共享錯誤造成假通過。
+extension RTMPChunkBufferTests {
+    private struct WireMessage: RTMPMessage {
+        let type: RTMPMessageType = .video
+        let streamId: UInt32 = 1
+        let timestamp: UInt32
+        let payload = Data([10, 11, 12, 13, 14])
+    }
+
+    @Test func extendedContinuationWireBytes() {
+        for timestamp: UInt32 in [0xFFFFFE, 0xFFFFFF, 0x1000000] {
+            for id: UInt16 in [5, 64, 319, 320, 65535] {
+                for type in [RTMPChunkType.zero, .one, .two] {
+                    let buffer = RTMPChunkBuffer()
+                    buffer.chunkSize = 2
+                    let actual = buffer.putMessage(type, chunkStreamId: id, message: WireMessage(timestamp: timestamp))
+                    func basic(_ fmt: UInt8) -> [UInt8] {
+                        if id < 64 { return [fmt << 6 | UInt8(id)] }
+                        if id < 320 { return [fmt << 6, UInt8(id - 64)] }
+                        return [fmt << 6 | 1, UInt8((id - 64) & 255), UInt8((id - 64) >> 8)]
+                    }
+                    let extended = timestamp >= 0xFFFFFF
+                    let field = min(timestamp, 0xFFFFFF)
+                    let time = [UInt8(field >> 16), UInt8((field >> 8) & 255), UInt8(field & 255)]
+                    let extra: [UInt8] = extended ? [UInt8(timestamp >> 24), UInt8((timestamp >> 16) & 255), UInt8((timestamp >> 8) & 255), UInt8(timestamp & 255)] : []
+                    var expected = basic(type.rawValue) + time
+                    if type != .two { expected += [0, 0, 5, 9] }
+                    if type == .zero { expected += [1, 0, 0, 0] }
+                    expected += extra + [10, 11]
+                    expected += basic(3) + extra + [12, 13]
+                    expected += basic(3) + extra + [14]
+                    #expect(actual == Data(expected))
+                }
+            }
+        }
+    }
+}

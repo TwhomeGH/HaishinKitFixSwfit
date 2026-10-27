@@ -23,6 +23,8 @@ final actor RTMPSocket {
     /// no `NWError`). Lets RTMPConnection distinguish "peer closed" from a
     /// transport fault without synthesizing a blank `Connect.Failed`.
     private(set) var didEndStream = false
+    /// 第一個終止原因，後續清理不覆蓋。
+    private(set) var terminationReason: String?
     private var timeout: UInt64 = 15
     private var connected = false
     private var windowSizeC = RTMPSocket.defaultWindowSizeC
@@ -179,6 +181,7 @@ final actor RTMPSocket {
         completedBatches = 0
         failedBatches = 0
         lastCompletionMilliseconds = nil
+        terminationReason = nil
         lastRecvError = nil
         didEndStream = false
         isReceiveStopped = true
@@ -258,13 +261,13 @@ final actor RTMPSocket {
         guard !isReceiveStopped, let connection else {
             return
         }
-        connection.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { [weak self] content, _, _, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: windowSizeC) { [weak self] content, _, isComplete, error in
             guard let self else { return }
-            Task { await self.didReceive(content: content, error: error) }
+            Task { await self.didReceive(content: content, isComplete: isComplete, error: error) }
         }
     }
 
-    private func didReceive(content: Data?, error: NWError?) async {
+    private func didReceive(content: Data?, isComplete: Bool, error: NWError?) async {
         guard !isReceiveStopped else {
             return
         }
@@ -272,6 +275,7 @@ final actor RTMPSocket {
             // 這裡就是所有 recv error 的集中點
             isReceiveStopped = true
             lastRecvError = error
+            if terminationReason == nil { terminationReason = "receiveError: \(error)" }
             logger.error("recv error:", error)
             onLog?(.init(level: .error, message: "recv error", detail: "\(error)", always: true))
             receiveContinuation?.finish()
@@ -281,10 +285,12 @@ final actor RTMPSocket {
             totalBytesIn += content.count
             onLog?(.init(level: .trace, message: "Socket recv", detail: "size=\(content.count) totalIn=\(totalBytesIn)"))
             receiveContinuation?.yield(content)
-        } else {
-            // content == nil && error == nil: clean end of stream (peer closed).
+        }
+        if isComplete {
+            // EOF 可以帶最後一段資料；先交付資料才終止。
             isReceiveStopped = true
             didEndStream = true
+            if terminationReason == nil { terminationReason = "peerEOF" }
             logger.info("recv end of stream")
             onLog?(.init(level: .info, message: "recv end of stream", detail: "totalIn=\(totalBytesIn)", always: true))
             receiveContinuation?.finish()
@@ -342,6 +348,9 @@ final actor RTMPSocket {
     }
 
     func close(_ error: NWError? = nil) {
+        if terminationReason == nil {
+            terminationReason = error.map { "transportError: \($0)" } ?? "localClose"
+        }
         sendGeneration &+= 1
         drainWaiters.finish()
         guard connection != nil else {
