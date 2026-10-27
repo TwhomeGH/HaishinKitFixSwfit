@@ -5,50 +5,79 @@
 ### 28. AAC compressed audio timestamp 固定幀長優先（2026-09）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`
-- **診斷：** live FLV audio payload 為 legacy AAC（`af00` / `af01`），不是 E-RTMP audio exheader；timestamp 沒有倒退、0 delta 或大跳，但 delta 又回到 `20/36/37ms`。
-- **根因推定：** `AVAudioCompressedBuffer.packetDuration` 優先採用 `packetDescriptions.mVariableFramesInPacket`，在 AAC 固定幀長情境可能讀到 input callback cadence，而非 AAC access unit 的 1024 samples duration。
+- **診斷：** live FLV audio payload 為 legacy AAC（`af00` / `af01`）
+  - 不是 E-RTMP audio exheader；timestamp 沒有倒退、0 delta 或大跳，但 delta 又回到 `20/36/37ms`。
+
+- **根因推定：** `AVAudioCompressedBuffer.packetDuration` 優先採用 `packetDescriptions.mVariableFramesInPacket`
+  - 在 AAC 固定幀長情境可能讀到 input callback cadence
+  - 而非 AAC access unit 的 1024 samples duration。
+
 - **修正：** AAC / HE-AAC / Opus 優先使用 ASBD `mFramesPerPacket` 或 codec 標稱幀長；未知 codec 才信任 packet descriptions。
 - **效果：** compressed audio wire timestamp 回到 codec media duration，避免來源 callback 抖動污染 FLV/RTMP audio cadence。
 
 ### 27. AAC/Opus compressed audio timestamp 改用 packet media duration（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`、`RTMPHaishinKit/Tests/RTMP/RTMPTimestampTests.swift`
-- **診斷：** SRS 推流診斷頁確認 AAC payload 本身合規（sequence header `AF 00 12 10`、raw frame `AF 01`），但 FLV audio tag timestamp 間距出現 `20ms` 與 `36/37ms` 交錯。44.1k AAC 每個 1024-sample packet 的 media duration 應約 `23.22ms`，因此問題不是 AAC frame bytes，而是 wire timestamp cadence 被上游 callback / resample 排程抖動污染。
+- **診斷：** SRS 推流診斷頁確認 AAC payload 本身合規（sequence header `AF 00 12 10`、raw frame `AF 01`）
+  - 但 FLV audio tag timestamp 間距出現 `20ms` 與 `36/37ms` 交錯。
+  - 44.1k AAC 每個 1024-sample packet 的 media duration 應約 `23.22ms`
+  - 因此問題不是 AAC frame bytes，而是 wire timestamp cadence 被上游 callback / resample 排程抖動污染。
+
 - **修正：**
   - `RTMPTimestamp.update` 新增 `preferredDelta`，可讓呼叫端指定「媒體包本身代表的時間長度」。
-  - `RTMPStream` compressed audio append 改用 `AVAudioCompressedBuffer.packetDuration` 作為 audio RTMP delta。後續 v28 已修正 AAC/Opus 固定幀長 codec 的優先順序：先用 ASBD / codec 標稱幀長，未知 codec 才信任 packet description。
+  - `RTMPStream` compressed audio append 改用 `AVAudioCompressedBuffer.packetDuration` 作為 audio RTMP delta。後續 v28
+  - 已修正 AAC/Opus 固定幀長 codec 的優先順序：先用 ASBD / codec 標稱幀長，未知 codec 才信任 packet description。
   - `preferredDelta` 路徑的 `updatedAt` / `cumulativeTime` 改為累加實際送出的整數 RTMP ms，避免內部時間軸與 wire timestamp 分裂。
   - 保留既有 audio A/V resync 守衛：小抖動一律忽略，但若 source time 真的落後超過約 500ms，仍允許一次大跳追到 video 附近。
   - 新增測試覆蓋 source time `20/37/20ms` 抖動時，44.1k AAC packet 仍輸出約 `23/23/23/23/24ms` 的 RTMP delta。
-- **效果：** 不改 AAC payload、不改 sequence header，只讓 FLV/RTMP audio timestamp 依壓縮音訊的實際 media duration 單調平滑前進。診斷頁的 audio 間距應由 `20/36/37ms` 改為接近 `23/23/23/23/24ms`，降低播放器把合法 AAC 誤排程成斷續音訊的機率。
+- **效果：** 不改 AAC payload、不改 sequence header，只讓 FLV/RTMP audio timestamp 依壓縮音訊的實際 media duration 單調平滑前進。
+  - 診斷頁的 audio 間距應由 `20/36/37ms` 改為接近 `23/23/23/23/24ms`，降低播放器把合法 AAC 誤排程成斷續音訊的機率。
 
 ### 26. Audio A/V resync 守衛 + wire 層偏移監測（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`RTMPHaishinKit/Sources/RTMP/RTMPTimestamp.swift`
 - **背景：** 長推流出現「音訊 bytes 正常送出（44/s）但 player 靜音」，疑似 audio wire 時間軸落後 video 過多 → player 棄音。
 - **修正：**
-  - `RTMPTimestamp.update(_:source:allowJump:)` 新增 `allowJump`（僅音訊 resync 用）：允許一次向前大跳讓落後音訊時間軸直接跳進同步範圍；倒退 clamp 保持不變、video 路徑不傳 `allowJump`（行為不變）。
-  - `RTMPStream` compressed audio append 加入 resync 守衛：audio 落後 video playhead > 0.5s 時，把音訊時間戳 clamp 到 video 附近並 `allowJump` — 落後區間內容被跳過（丟棄舊資料），時間軸重新對齊。健康時（偏移 < 0.5s）完全不觸發，零副作用。觸發會 `warn` log（每 60 次）。
+  - `RTMPTimestamp.update(_:source:allowJump:)` 新增 `allowJump`（僅音訊 resync 用）：允許一次向前大跳讓落後音訊時間軸直接跳進同步範圍
+  - 倒退 clamp 保持不變、video 路徑不傳 `allowJump`（行為不變）。
+  - `RTMPStream` compressed audio append 加入 resync 守衛：audio 落後 video playhead > 0.5s 時，把音訊時間戳 clamp 到 video 附近並 `allowJump` — 落後區間內容被跳過（丟棄舊資料），時間軸重新對齊。
+  - 健康時（偏移 < 0.5s）完全不觸發，零副作用。觸發會 `warn` log（每 60 次）。
   - `publish throughput` log 新增 `avOffset`（video - audio wire 位置，正=音訊落後）：固定常數=健康，持續增大=兩時鐘漂移。
-- **注意：** 此為**安全網**，非主嫌疑。音訊編碼管線本身（44 packets/s、每包 ~2ms）不可能自行落後；若 `avOffset` 恆定小值，問題應在格式（HE-AAC，檢查 `audio: AAC sequence header type=`）或**送達延遲**（app 端 DSP / socket 壅塞使音訊帶舊時間戳晚到 → player 視為 stale 丟棄）。
+- **注意：** 此為**安全網**，非主嫌疑。音訊編碼管線本身（44 packets/s、每包 ~2ms）不可能自行落後；若 `avOffset` 恆定小值，問題應在格式（HE-AAC，檢查 `audio: AAC sequence header type=`）
+- 或**送達延遲**（app 端 DSP / socket 壅塞使音訊帶舊時間戳晚到 → player 視為 stale 丟棄）。
 
 ### 25. RTMPConnection.close() 等待 output consumer flush 後才關 socket（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPConnection.swift`
-- **問題（stop 訊號切斷 / 掉幀）：** `close()` 的順序是 `outputContinuation?.finish()` → `socket?.drain()` → `socket?.close()`。`FCUnpublish`/`deleteStream`（`deleteStream()` 用 `async let` 送出）與尾幀只被 yield 進 `outputContinuation`（AsyncStream），實際 `socket.send` 在非結構化 consumer Task（`startOutputConsumer`）非同步執行。若 `drain()` 檢查時 consumer 尚未把資料 push 進 sendQueue → sendQueue 空 → drain 立即返回 → `socket.close()` 清掉緩衝 → consumer 醒來 `socket.send` 回報 "not connected" → **最終 RTMP 指令與尾幀被丟棄**。
-- **修正：** 把 consumer Task 存為 `outputConsumerTask`，`close()` 在 `finish()` 後 **`await outputConsumerTask?.value`**（consumer 消化完所有緩衝並送進 socket send queue），再 `drain()`（等 sendQueue 上 wire）+ `socket?.close()`。
+- **問題（stop 訊號切斷 / 掉幀）：** `close()` 的順序是 `outputContinuation?.finish()` → `socket?.drain()`
+  - → `socket?.close()`。`FCUnpublish`/`deleteStream`（`deleteStream()` 用 `async let` 送出）
+  - 與尾幀只被 yield 進 `outputContinuation`（AsyncStream），實際 `socket.send` 在非結構化 consumer Task（`startOutputConsumer`）非同步執行。
+  - 若 `drain()` 檢查時 consumer 尚未把資料 push 進 sendQueue → sendQueue 空 → drain 立即返回 → `socket.close()` 清掉緩衝 → consumer 醒來 `socket.send` 回報 "not connected"
+  - → **最終 RTMP 指令與尾幀被丟棄**。
+
+- **修正：** 把 consumer Task 存為 `outputConsumerTask`，`close()` 在 `finish()` 後 **`await outputConsumerTask?.value`**（consumer 消化完所有緩衝並送進 socket send queue）
+- 再 `drain()`（等 sendQueue 上 wire）+ `socket?.close()`。
 - **為什麼不用 `Task.detached`：** 問題是 `close()` 沒 `await` consumer，不是耦合度；detached 反而無法被追蹤/等待。
 - **stream 層不需另修：** stream 的 outputContinuation 是 FIFO，`close()`/`deleteStream()` await 伺服器 response 表示先前幀已送達 wire，stream 層緩衝自然清空；缺口只在 connection 層。
 
 ### 24. AudioCodec 遷移到專用 serial queue（消除 A/V 不同步）（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Codec/AudioCodec.swift`
-- **問題：** AAC 編碼（`AudioCodec.append`，含無界 drain 迴圈）同步跑在 `RTMPStream` actor 內，與 video append / socket send / backpressure update 爭搶 actor。video 早已解耦（`videoInputStream` → 獨立 task → 硬體 VT），audio 沒有 → actor 忙碌時音訊延遲送達 → 落後 video（A/V 不同步）。
+- **問題：** AAC 編碼（`AudioCodec.append`，含無界 drain 迴圈）同步跑在 `RTMPStream` actor 內
+
+  - 與 video append / socket send / backpressure update 爭搶 actor。
+  - video 早已解耦（`videoInputStream` → 獨立 task → 硬體 VT）
+  - audio 沒有 → actor 忙碌時音訊延遲送達 → 落後 video（A/V 不同步）。
+
 - **修正：**
-  - `AudioCodec` 內部掛 serial DispatchQueue（`.userInitiated`），所有處理（AAC 轉碼、converter 建立、settings 套用、start/stop 重置）統一 dispatch 到 queue；呼叫端 `append` 立即返回。
+  - `AudioCodec` 內部掛 serial DispatchQueue（`.userInitiated`），所有處理（AAC 轉碼、converter 建立、settings 套用、start/stop 重置）
+  - 統一 dispatch 到 queue；呼叫端 `append` 立即返回。
   - `settings` 以 NSLock 保護（外部 actor 讀寫 + queue 內部處理），setter 同步更新值並 `queue.async` 套用到 converter — 保證下一次 append 前已生效。
   - `outputFormat` 改 `queue.sync`（官方允許的「讀取計算結果」用法，只在 off-queue 呼叫；內部一律直接讀 `audioConverter`，避免 queue 內 `sync` 死鎖）。
-  - **全程非阻塞，不用 `queue.sync` 做排水**：`append` 在 enqueue 當下 capture continuation；`stopRunning` 把舊 continuation 以 `queue.async` 排到 queue 尾巴 finish — 排在所有 pending block 之後（它們看到 `isRunning=false` 會跳過），等同排水效果但無 sync 死鎖/thread 阻塞風險（Apple 官方文件明示 sync 是 blocking、main queue sync 會 deadlock）。
+  - **全程非阻塞，不用 `queue.sync` 做排水**：`append` 在 enqueue 當下 capture continuation
+  - `stopRunning` 把舊 continuation 以 `queue.async` 排到 queue 尾巴 finish
+  - 排在所有 pending block 之後（它們看到 `isRunning=false` 會跳過），等同排水效果但無 sync 死鎖/thread
+  - 阻塞風險（Apple 官方文件明示 sync 是 blocking、main queue sync 會 deadlock）。
   - `startRunning` 的 stream 建立保持同步（consumer 需要立刻讀 `outputStream`），狀態重置走 queue。
   - 單執行緒保證由 queue 提供：converter / ringBuffer / buffers / audioTime 只在 queue 上被碰觸；`settings` / `isRunning` 以 NSLock 保護。
 - **注意：** 不改 timestamp 語意、不改 HE-AAC format。若剩餘 A/V 落差仍存在，再量 `ΔaudioPTS/Δwall` vs `ΔvideoPTS/Δwall` 確認是否為 timestamp 漂移（見 #23 思路），目前證據（`audioFrames=43~45/s`）指向送達延遲而非漂移。
@@ -56,7 +85,10 @@
 ### 23. Keyframe 幀數約束改以 sample buffer 實測幀率為基準（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Codec/VideoCodec.swift`、`HaishinKit/Sources/Codec/VideoCodecSettings.swift`、`HaishinKit/Sources/Codec/VTSessionMode.swift`、`HaishinKit/Tests/Codec/VideoCodecSettingsTests.swift`
-- **問題：** `maxKeyFrameInterval`（幀數）在 `expectedFrameRate` 未設定時用 `30.0` 兜底 → 60 幀。VFR 螢幕擷取實際 41~49fps 下 60 幀 ≈ 1.2~1.5s，比 `MaxKeyFrameIntervalDuration = 2s` 先觸發 → 伺服器量到 ~1s keyframe interval。
+- **問題：** `maxKeyFrameInterval`（幀數）在 `expectedFrameRate` 未設定時用 `30.0` 兜底 → 60 幀。
+
+- VFR 螢幕擷取實際 41~49fps 下 60 幀 ≈ 1.2~1.5s，比 `MaxKeyFrameIntervalDuration = 2s` 先觸發 → 伺服器量到 ~1s keyframe interval。
+
 - **修正：**
   - `VideoCodec` 以 raw frame PTS delta 做 EMA 測量真實幀率（`measuredFrameRate`），session 建立後一併 refresh 到 VT
   - 幀數基準優先序：`frameInterval` > `expectedFrameRate` > `measuredFrameRate` > **不設幀數約束**（不再猜 30fps；VFR 下只靠 duration 才是正確機制）
@@ -65,8 +97,14 @@
 ### 22. 自訂 StreamBitRateStrategy 必須 forward 內建適應（2026-08）
 
 - **檔案：** `HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`、`Docs/RTMP_SOCKET_DESIGN.md`
-- **背景：** 用戶自訂 `StreamBitRateStrategy`（例如只想要統計 log）時，用 protocol 實作直接取代了內建 `StreamVideoAdaptiveBitRateStrategy`。內建策略**預設並未啟動**（`RTMPStream.bitRateStrategy` 預設 `nil`，需自行實例化），一旦被自訂策略取代，`.publishInsufficientBWOccured`（壅塞降速）、`.status`（回復 ratchet 爬升）、`.reset`（恢復 `lastStableBitRate`）三個行為全部消失 → bitrate 永遠釘在設定值，壅塞時只剩 SocketBackpressure 丟 pre-encode raw frame（最高 90%）→ 畫面凍結、音訊正常、`isStalling` 抑制 stall detector → 永不恢復。
+- **背景：** 用戶自訂 `StreamBitRateStrategy`（例如只想要統計 log）時，用 protocol 實作直接取代了內建 `StreamVideoAdaptiveBitRateStrategy`。
+  - 內建策略**預設並未啟動**（`RTMPStream.bitRateStrategy`
+  - 預設 `nil`，需自行實例化），一旦被自訂策略取代，`.publishInsufficientBWOccured`（壅塞降速）
+  - `.status`（回復 ratchet 爬升）、`.reset`（恢復 `lastStableBitRate`）三個行為全部消失
+  - → bitrate 永遠釘在設定值，壅塞時只剩 SocketBackpressure 丟 pre-encode raw frame（最高 90%）
+  - → 畫面凍結、音訊正常、`isStalling` 抑制 stall detector → 永不恢復。
 - **規範：** 自訂策略若**不打算自己處理壅塞適應**，必須用**組合（composition）**持有內建策略並 forward：
+
   ```swift
   final actor MyStrategy: StreamBitRateStrategy {
       private let inner = StreamVideoAdaptiveBitRateStrategy(mamimumVideobitrate: max)
@@ -76,18 +114,21 @@
       }
   }
   ```
+
 - **禁止：** 直接 `setVideoSettings` 只做統計（會喪失壅塞降速）；`StreamVideoAdaptiveBitRateStrategy` 是 `final actor` 無法繼承，只能組合。
 
 ### 21. Stall Detection 改為 PTS 基準 + 恢復 ratchet 封頂（2026-08）
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPStream.swift`、`HaishinKit/Sources/Stream/StreamBitRateStrategy.swift`
-- **問題：** 舊 stall detection 用 frame count 當健康信號。ReplyKIT 是螢幕擷取（VFR），畫面靜態時幀數合法降到接近 0 → 舊邏輯把「靜態」誤判為「video source stalled」，畫面一恢復就 `restartVideoPipeline()` 重建 encoder → sequence header 重送、時間戳重置，造成 fps 掉幀假象與 spike。
+- **問題：** 舊 stall detection 用 frame count 當健康信號。ReplyKIT 是螢幕擷取（VFR），畫面靜態時幀數合法降到接近 0 → 舊邏輯把「靜態」誤判為「video source stalled」
+  - 畫面一恢復就 `restartVideoPipeline()` 重建 encoder → sequence header 重送、時間戳重置，造成 fps 掉幀假象與 spike。
 - **修正（PTS 基準）：**
   - 追蹤 `lastVideoInputPTSSeconds`（原始幀 PTS），以 `inputPTSAdvanced` / `outputPTSAdvanced` 判斷健康
   - 唯一真正的 encoder stall = `inputPTSAdvanced && !outputPTSAdvanced`（幀有進來但無編碼產出）才 restart
   - 「video source idle」（`!inputPTSAdvanced && audio 有流`）→ 只 log、不 restart（靜態畫面正常）
   - 移除「both audio/video silent」與「suspended gap」對 VFR 來源的誤觸 restart
-- **修正（ratchet 封頂）：** `.status` 恢復爬升改為 `min(max, lastStableBitRate + max/5)`，且爬升路徑不再更新 `lastStableBitRate` — 避免振盪回 max 造成的 VBR 1.5× keyframe burst（15k+ spike）。
+- **修正（ratchet 封頂）：** `.status` 恢復爬升改為 `min(max, lastStableBitRate + max/5)`，且爬升路徑不再更新 `lastStableBitRate`
+- 避免振盪回 max 造成的 VBR 1.5× keyframe burst（15k+ spike）。
 
 ### 20. 位元率爆衝 + Receive 安全重構（2026-08）
 
@@ -107,11 +148,14 @@
 ### 19. 移除 Socket 層自動重連 — 全權交由 RTMPConnection 處理
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`
-- **問題：** `RTMPSocket.scheduleReconnect()` 只重建 TCP，不重新 RTMP 握手（C0/C1→S0/S1→C2/S2），且 `recv()` AsyncStream 是 single-use，新連線無人讀取，形成孤兒連線。同時與 `RTMPConnection.startReconnection()` 競爭，當 `isReconnectEnabled = true` 時兩個機制同時跑。
+- **問題：** `RTMPSocket.scheduleReconnect()` 只重建 TCP，不重新 RTMP 握手（C0/C1→S0/S1→C2/S2），且 `recv()` AsyncStream 是 single-use，新連線無人讀取，形成孤兒連線。
+  - 同時與 `RTMPConnection.startReconnection()` 競爭，當 `isReconnectEnabled = true` 時兩個機制同時跑。
+
 - **修改：**
   - 移除 `scheduleReconnect()` 方法
   - 移除 `stateDidChange()` 中對 `scheduleReconnect()` 的呼叫
-  - Socket 層 `.failed`/`.cancelled` 後只 clean up，由 `RTMPConnection` 的 `for await` loop exit 偵測中斷，透過 `startReconnection()` 重新建立新 socket + 完整握手 + stream 重建
+  - Socket 層 `.failed`/`.cancelled` 後只 clean up，由 `RTMPConnection` 的 `for await` loop exit 偵測中斷
+  - 透過 `startReconnection()` 重新建立新 socket + 完整握手 + stream 重建
 - **效應：**
   - 不再有孤兒 TCP 連線
   - 重連必定走完整 RTMP 握手（C0C1→S0S1→C2→S2）
@@ -130,7 +174,8 @@
 ### 17. 停止直播時 drain 避免 buffer 丟棄 + Frame Rate 自動上限
 
 - **檔案：** `RTMPHaishinKit/Sources/RTMP/RTMPSocket.swift`, `RTMPConnection.swift`, `HaishinKit/Sources/Codec/VideoCodec.swift`
-- **問題 A（stop drain）：** `RTMPConnection.close()` → `outputContinuation.finish()` → `socket.close()` 直接 `sendBuffer.removeAll()` + `forceCancel()`，未送出的 RTMP 指令（closeStream、FCUnpublish）可能永遠到不了伺服器。
+- **問題 A（stop drain）：** `RTMPConnection.close()` → `outputContinuation.finish()`
+  - → `socket.close()` 直接 `sendBuffer.removeAll()` + `forceCancel()`，未送出的 RTMP 指令（closeStream、FCUnpublish）可能永遠到不了伺服器。
 - **修正 A：**
   - `RTMPSocket` 新增 `drain()` async 方法，用 continuation 等待 `sendBuffer` 清空且無 pending send 後才返回
   - `didSendChunk()` 在 buffer 完全送出後 resume drain continuation
@@ -291,3 +336,9 @@
 - 收包處理 isComplete，先交付 EOF 同批最後資料；保存第一個接收錯誤／遠端 EOF／本機關閉原因，接收迴圈日誌附連線世代。
 - 舊連線接收迴圈結束不得關閉新世代。新增 45 組封包位元組比較案例。
 - 尚未證實以上缺陷是 log-62 首次 Twitch reset 的原因。Apple SDK 測試及實際 Twitch 重連仍待驗收。
+
+## 2026.10.28 07:15 TSan 產物上傳容錯
+
+- TSan 測試產物首次上傳失敗後等待 15 秒，再以獨立名稱重試一次；不重跑測試。
+- 分開顯示測試結果與產物交付結果；兩次上傳都失敗仍回報 CI 失敗，測試失敗也不會被重試成功掩蓋。
+- 取消工作流後不再啟動重試。此次修正針對測試通過後的 ENOTFOUND 上傳失敗；持續 DNS／服務問題仍需檢查 runner 網路。

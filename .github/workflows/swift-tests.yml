@@ -634,10 +634,48 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
           exit "${status}"
 
+      # 上傳失敗不重跑測試；保留 outcome，交由重試與最後摘要決定產物交付結果。
       - name: Upload Thread Sanitizer log
-        if: always()
+        id: tsan_upload
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: haishinkit-tsan-logs-${{ matrix.platform }}
           path: .build/haishinkit-tsan-${{ matrix.platform }}
           if-no-files-found: error
+
+      - name: Wait before artifact retry
+        if: ${{ !cancelled() && steps.tsan_upload.outcome == 'failure' }}
+        shell: bash
+        run: sleep 15
+
+      # 使用獨立名稱，避免上次已建立產物但回應遺失時發生衝突。
+      - name: Retry Thread Sanitizer log upload
+        id: tsan_upload_retry
+        if: ${{ !cancelled() && steps.tsan_upload.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: haishinkit-tsan-logs-${{ matrix.platform }}-retry
+          path: .build/haishinkit-tsan-${{ matrix.platform }}
+          if-no-files-found: error
+
+      - name: Report Thread Sanitizer artifact delivery
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          FIRST_UPLOAD: ${{ steps.tsan_upload.outcome }}
+          RETRY_UPLOAD: ${{ steps.tsan_upload_retry.outcome }}
+        run: |
+          echo '### TSan 測試產物交付' >> "${GITHUB_STEP_SUMMARY}"
+          if [ "${FIRST_UPLOAD}" = success ]; then
+            echo '- 產物上傳成功。測試結果見上方摘要。' >> "${GITHUB_STEP_SUMMARY}"
+          elif [ "${RETRY_UPLOAD}" = success ]; then
+            echo '- 首次上傳失敗，重試成功；請下載名稱含 retry 的產物。' >> "${GITHUB_STEP_SUMMARY}"
+            echo '::warning title=Artifact upload recovered::首次產物上傳失敗，重試已成功；未重新執行測試。'
+          else
+            echo '- 產物上傳兩次失敗；這是交付失敗，測試結果請看上方摘要。請檢查上傳步驟的網路／DNS 或服務錯誤。' >> "${GITHUB_STEP_SUMMARY}"
+            echo '::error title=Artifact delivery failed::測試產物上傳失敗；不代表 TSan 測試失敗，請分別查看測試與上傳紀錄。'
+            exit 1
+          fi
