@@ -329,6 +329,10 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
     }
     private var command: String = ""
+    /// close 在 await 期間仍可能收到 EOF；阻止重複收尾與重連。
+    private var isClosing = false
+    /// 同一世代維持連線 60 秒後恢復重試額度；不代表遠端解碼成功。
+    private var reconnectBudgetTask: Task<Void, Never>?
     private var reconnectAttempts = 0
     private var isReconnecting = false
     private var reconnectionTask: Task<Void, Never>?
@@ -624,11 +628,13 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                         // 區分卡在哪一階段，逾時訊息也帶上階段名。
                         armStageTimeout(generation: generation, stage: "waiting S0S1", seconds: handshakeTimeout)
                         for await data in await socket.recv() {
+                            guard generation == connectGeneration, !isClosing else { return }
                             try await listen(data)
                         }
                         guard generation == connectGeneration else { return }
                         let endReason = await socket.terminationReason ?? "unknown"
                         log(.warn, "Receive loop ended", detail: "generation=\(generation) reason=\(endReason)", always: true)
+                        guard !isClosing, endReason != "localClose" else { return }
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
                             try? await close(reason: "recvLoopEnded")
                             await startReconnection()
@@ -636,7 +642,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                             try? await close(reason: "recvLoopEnded")
                         }
                     } catch {
-                        guard generation == connectGeneration else { return }
+                        guard generation == connectGeneration, !isClosing else { return }
                         log(.error, "Socket recv loop ended with error", detail: "\(error)", always: true)
                         if isReconnectEnabled, state == .connected || state == .handshakeDone {
                             try? await close(reason: "recvLoopError")
@@ -818,6 +824,7 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
                     try await stream.resumePublishing()
                 }
                 log(.info, "Reconnect succeeded", detail: "attempt \(reconnectAttempts)/\(maxReconnectAttempts)", always: true)
+                scheduleReconnectBudgetReset()
                 await onReconnectStateChanged?(.succeeded)
                 return
             } catch {
@@ -827,6 +834,25 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
         }
         log(.error, "Reconnect exhausted", detail: "attempts=\(reconnectAttempts)/\(maxReconnectAttempts)", always: true)
         await onReconnectStateChanged?(.exhausted)
+    }
+
+    /// 成功重連後開始觀察穩定期間；舊世代或已關閉的連線不可清除新額度。
+    private func scheduleReconnectBudgetReset() {
+        reconnectBudgetTask?.cancel()
+        let generation = connectGeneration
+        reconnectBudgetTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 60_000_000_000) }
+            catch { return }
+            await self?.resetReconnectBudget(generation: generation)
+        }
+    }
+
+    /// 僅對仍持續連線的同一世代恢復額度，短時間反覆斷線仍受五次上限保護。
+    private func resetReconnectBudget(generation: Int) {
+        guard generation == connectGeneration, connected, !isClosing else { return }
+        reconnectAttempts = 0
+        reconnectBudgetTask = nil
+        log(.info, "Reconnect budget reset", detail: "generation=\(generation) connectedSeconds=60", always: true)
     }
 
     /// Closes the connection from the server.
@@ -839,6 +865,11 @@ public actor RTMPConnection: HaishinKit.NetworkConnection {
     /// `external`＝呼叫端主動、`serverClose`＝伺服器送 close 命令、
     /// `stageTimeout`／`recvLoop*`／`protocolError*`＝內部偵測到問題。
     public func close(reason: String) async throws {
+        guard !isClosing, state != .disconnected else { return }
+        isClosing = true
+        defer { isClosing = false }
+        reconnectBudgetTask?.cancel()
+        reconnectBudgetTask = nil
         guard state != .uninitialized else {
             throw Error.invalidState
         }
