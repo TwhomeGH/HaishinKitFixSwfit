@@ -1456,7 +1456,7 @@ extension RTMPStream: _Stream {
                 publishThroughputLogCount += 1
                 if publishThroughputLogCount % 10 == 0 {
                     await connection?.log(.debug, "publish timeline",
-                        detail: "schema=2 generation=\(publishGeneration) alignment=observeOnly origins=perTrackFirstSample units=seconds sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=0 video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
+                        detail: "schema=2 generation=\(publishGeneration) alignment=audioRebase origins=perTrackFirstSample units=seconds sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=\(audioTimestamp.diagnostics.sourceRebases) video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
                     await connection?.log(.debug, "publish media timing",
                         detail: "schema=1 generation=\(publishGeneration) boundary=messageQueue units=seconds \(encodingTracker.timingLogDescription)")
                     await connection?.log(.debug, "publish throughput",

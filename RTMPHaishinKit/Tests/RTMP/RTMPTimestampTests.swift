@@ -148,13 +148,29 @@ import Testing
         #expect(abs(timestamp.updatedAt - 100.051) < 0.001)
     }
 
-    @Test func updateAVAudioTimeWithPreferredDeltaSlowsLargeNegativeSourceDrift() throws {
+    @Test func updateAVAudioTimeWithPreferredDeltaRebasesLargeNegativeSourceDrift() throws {
         let packetDuration = 0.023
         var timestamp = RTMPTimestamp<AVAudioTime>()
         #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
         #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
-        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 99.923)), preferredDelta: packetDuration) == 18)
-        #expect(abs(timestamp.updatedAt - 100.041) < 0.001)
+        // -100ms 來源倒退：重新建立來源基準，wire 保持正常封包節奏（不是 -5ms 慢速修正）。
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 99.923)), preferredDelta: packetDuration) == 23)
+        #expect(abs(timestamp.updatedAt - 100.046) < 0.001)
+        #expect(timestamp.diagnostics.sourceRebases == 1)
+        // 下一筆以新基準正常前進，不再持續套用負向修正。
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 99.946)), preferredDelta: packetDuration) == 23)
+        #expect(abs(timestamp.updatedAt - 100.069) < 0.001)
+    }
+
+    @Test func updateAVAudioTimeAllowJumpPreservesForwardGap() throws {
+        let packetDuration = 0.023
+        var timestamp = RTMPTimestamp<AVAudioTime>()
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
+        // 127ms 真實來源缺口：保留 gap，避免被 preferredDelta 壓縮造成音畫偏移。
+        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.150)), allowJump: true, preferredDelta: packetDuration) == 127)
+        #expect(abs(timestamp.updatedAt - 100.150) < 0.001)
+        #expect(timestamp.diagnostics.sourceRebases == 0)
     }
 
     @Test func updateAVAudioTimePreferredDeltaKeeps48kAACCadence() throws {
