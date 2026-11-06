@@ -131,7 +131,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_selects_matching_available_runtime(self):
         runtimes = [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True},
-                    {"identifier": "com.apple.iOS-28", "version": "28.0", "isAvailable": False}]
+                    {"identifier": "com.apple.iOS-27-1", "version": "27.1", "isAvailable": False}]
         devices = {"com.apple.iOS-27": [{"name": "iPhone 17", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}
         self.assertEqual(choose_device(devices, runtimes), ("iPhone 17", "phone", "com.apple.iOS-27"))
         with self.assertRaises(RuntimeError):
@@ -148,4 +148,5 @@ class RunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

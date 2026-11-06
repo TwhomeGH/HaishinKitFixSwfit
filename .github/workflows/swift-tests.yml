@@ -87,6 +87,9 @@ jobs:
     name: RTMPHaishinKit iOS tests
     runs-on: xcode-27
     timeout-minutes: 65
+    concurrency:
+      group: ios-simulator-${{ github.run_id }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -145,6 +148,7 @@ jobs:
               echo "#### Diagnostics"
               extract_errors .build/test-results/ios-tests.log
               grep -n -E "Test Case '-\\[.*\\]' failed|failed:|Failure|Issue recorded|Test Suite .* failed|Failing tests:" .build/test-results/ios-tests.log | head -n 120 || true
+              grep -n -E "\\[Runner infrastructure\\]|The test runner hung" .build/test-results/ios-tests.log | head -n 40 || true
             } >> .build/test-results/failures.md
           fi
           echo "${status}" > .build/test-results/exit-code
@@ -194,6 +198,11 @@ jobs:
             if [ -s .build/test-results/summary.md ]; then
               cat .build/test-results/summary.md
             fi
+            if [ -s .build/test-results/ci-summary.md ]; then
+              echo
+              echo "### CI summary"
+              cat .build/test-results/ci-summary.md
+            fi
             if [ -s .build/test-results/failures.md ]; then
               echo
               echo "### Failure summary"
@@ -229,6 +238,9 @@ jobs:
     name: HaishinKit iOS tests
     runs-on: xcode-27
     timeout-minutes: 65
+    concurrency:
+      group: ios-simulator-${{ github.run_id }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -287,6 +299,7 @@ jobs:
               echo "#### Diagnostics"
               extract_errors .build/haishinkit-test-results/ios-tests.log
               grep -n -E "Test Case '-\\[.*\\]' failed|failed:|Failure|Issue recorded|Test Suite .* failed|Failing tests:" .build/haishinkit-test-results/ios-tests.log | head -n 120 || true
+              grep -n -E "\\[Runner infrastructure\\]|The test runner hung" .build/haishinkit-test-results/ios-tests.log | head -n 40 || true
             } >> .build/haishinkit-test-results/failures.md
           fi
           echo "${status}" > .build/haishinkit-test-results/exit-code
@@ -335,6 +348,11 @@ jobs:
             echo
             if [ -s .build/haishinkit-test-results/summary.md ]; then
               cat .build/haishinkit-test-results/summary.md
+            fi
+            if [ -s .build/haishinkit-test-results/ci-summary.md ]; then
+              echo
+              echo "### CI summary"
+              cat .build/haishinkit-test-results/ci-summary.md
             fi
             if [ -s .build/haishinkit-test-results/failures.md ]; then
               echo
@@ -520,6 +538,9 @@ jobs:
     name: HaishinKit tests (Thread Sanitizer, ${{ matrix.platform }})
     runs-on: xcode-27
     timeout-minutes: 30
+    concurrency:
+      group: ios-simulator-${{ github.run_id }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -679,3 +700,4 @@ jobs:
             echo '::error title=Artifact delivery failed::測試產物上傳失敗；不代表 TSan 測試失敗，請分別查看測試與上傳紀錄。'
             exit 1
           fi
+

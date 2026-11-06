@@ -1,4 +1,4 @@
-﻿@preconcurrency import AVFAudio
+@preconcurrency import AVFAudio
 import AVFoundation
 import Combine
 import HaishinKit
@@ -276,8 +276,8 @@ public actor RTMPStream {
     private var hasSentMetadata = false
     private var metadataIncludesVideo = false
     private var lastStatusTime = Date.distantPast
-    // `publish throughput` log 節流：NetworkMonitor 每 1s 發 .status，改為每 10
-    // 個 status（≈10s）才印一筆，避免每秒 log 增加發熱/CPU 與伺服器流量。
+    // `publish throughput` log 節流：NetworkMonitor 每 1s 發 .status，改為每 30
+    // 個 status（≈30s）才印一筆，避免每秒 log 增加發熱/CPU 與伺服器流量。
     private var publishThroughputLogCount = 0
     // 管線重啟防重入：restartVideoPipeline / restartAudioPipeline 共用同一個
     // outgoing（stop/startRunning 重啟兩個 codec），若誤判連發或重入，只允許
@@ -900,7 +900,7 @@ public actor RTMPStream {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     while !Task.isCancelled {
-                        do { try await Task.sleep(nanoseconds: 5_000_000_000) }
+                        // VideoQueue 摘要每 15 秒一筆；異常仍由事件日誌即時記錄。\n                        do { try await Task.sleep(nanoseconds: 15_000_000_000) }
                         catch { break }
                         await self.logVideoQueueDiagnostics(generation: generation)
                     }
@@ -1451,10 +1451,10 @@ extension RTMPStream: _Stream {
                 lastStatusAudioOutputPTSSeconds = audioPTS
                 let avOffset = videoPTS - audioPTS
                 // 差值仍供觀測；不同時間交付的兩個樣本不能用來判斷口型同步。
-                // 節流：每 10 個 .status（≈10s）印一筆。計數器在每次 status 結尾
+                // 節流：每 30 個 .status（≈30s）印一筆。計數器在每次 status 結尾
                 // 重置，所以印的是「最後 1 秒」的快照——足以監測 avOffset/速率。
                 publishThroughputLogCount += 1
-                if publishThroughputLogCount % 10 == 0 {
+                if publishThroughputLogCount % 30 == 0 {
                     await connection?.log(.debug, "publish timeline",
                         detail: "schema=2 generation=\(publishGeneration) alignment=audioRebase origins=perTrackFirstSample units=seconds sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=\(audioTimestamp.diagnostics.sourceRebases) video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
                     await connection?.log(.debug, "publish media timing",
@@ -1711,3 +1711,5 @@ private extension AudioStreamBasicDescription {
         }
     }
 }
+
+

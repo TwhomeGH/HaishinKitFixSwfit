@@ -6,6 +6,7 @@ RTMPHaishinKit 與 HaishinKit 的 iOS job 使用 `.github/scripts/run_ios_tests.
 
 - 從 simctl JSON 選擇指定 iOS runtime（workflow 的 `env.IOS_TEST_RUNTIME` 固定為 27.0；手動執行腳本可用 `--runtime` 覆寫），並優先 iPhone 17／16／15／14／13／SE 等標準機型，最後才退到其他 iPhone（避免字典序或 Air 類非常規機型）。
 - 每次嘗試建立專用模擬器，日誌與 `destination.txt` 都記錄實際 **name、device type、runtime、UDID**；boot 最多等待 60 秒，bootstatus 最多等待 180 秒。
+- RTMPHaishinKit、HaishinKit 與 TSan 的 iOS job 共用 `ios-simulator-<run_id>` job concurrency，一次只跑一個，避免 CoreSimulator 服務被同機並行建立／開機拖垮。
 - 關閉 Xcode 平行測試，避免為單一 job 另建多組測試裝置。先以 build-for-testing 建置（最多 1500 秒），成功才執行 test-without-building（每次最多 660 秒）。
 - 重試沿用相同 DerivedData，不重新編譯。逾時保留日誌並終止該程序群。兩個 iOS job 上限為 65 分鐘，預留兩次測試、模擬器操作與 artifact 上傳時間。
 - 僅在明確出現 `The test runner hung before establishing connection.`，且沒有編譯錯誤、測試失敗或 issue 時重試一次。boot／bootstatus 失敗另允許一次重試；建置成功後的測試逾時（exit 124）也允許換一台新模擬器重試一次，建置逾時則不重試。重試前都須確認服務查詢及專用裝置清理成功。
@@ -21,7 +22,7 @@ Tests.xcresult（若 Xcode 有產生）、runtime／裝置清單、destination�
 
 命令執行期間輸出寫入檔案，每 30 秒顯示日誌大小；完成後回放完整內容到 Actions console。階段開始會顯示命令用途與時間限制，失敗摘要包含 stage 與 exit code。
 
-摘要把 runner／環境失敗與編譯錯誤分開；未取得測試個案結果不再一律寫成 build failed。
+摘要把 runner／環境失敗與編譯錯誤分開；未取得測試個案結果不再一律寫成 build failed。`ci-summary.md` 會納入 GitHub 摘要，失敗的 `failures.md` 也直接列出 `[Runner infrastructure]` 行，bootstatus／清理逾時不必再從 artifact 手動挖。
 
 ## 驗證
 
