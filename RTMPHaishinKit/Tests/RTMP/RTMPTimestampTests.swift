@@ -168,8 +168,10 @@ import Testing
         #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.000)), preferredDelta: packetDuration) == 0)
         #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.023)), preferredDelta: packetDuration) == 23)
         // 127ms 真實來源缺口：保留 gap，避免被 preferredDelta 壓縮造成音畫偏移。
-        #expect(timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.150)), allowJump: true, preferredDelta: packetDuration) == 127)
-        #expect(abs(timestamp.updatedAt - 100.150) < 0.001)
+        // AVAudioTime 轉秒有浮點誤差，wire 又以整數毫秒截斷，允許 1ms 誤差。
+        let gap = timestamp.update(.init(hostTime: AVAudioTime.hostTime(forSeconds: 100.150)), allowJump: true, preferredDelta: packetDuration)
+        #expect(abs(Double(gap) - 127) <= 1)
+        #expect(abs(timestamp.updatedAt - 100.150) < 0.002)
         #expect(timestamp.diagnostics.sourceRebases == 0)
     }
 
