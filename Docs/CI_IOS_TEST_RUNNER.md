@@ -5,11 +5,11 @@ RTMPHaishinKit 與 HaishinKit 的 iOS job 使用 `.github/scripts/run_ios_tests.
 ## 流程
 
 - 從 simctl JSON 選擇指定 iOS runtime（workflow 的 `env.IOS_TEST_RUNTIME` 固定為 27.0；手動執行腳本可用 `--runtime` 覆寫），並優先 iPhone 17／16／15／14／13／SE 等標準機型，最後才退到其他 iPhone（避免字典序或 Air 類非常規機型）。
-- 每次嘗試建立專用模擬器，日誌與 `destination.txt` 都記錄實際 **name、device type、runtime、UDID**；boot 最多等待 60 秒，bootstatus 最多等待 180 秒。
+- 每次嘗試建立專用模擬器，日誌與 `destination.txt` 都記錄實際 **name、device type、runtime、UDID**；boot 最多等待 120 秒，bootstatus 最多等待 300 秒，逾時會對同一台模擬器再等一次。
 - RTMPHaishinKit、HaishinKit 與 TSan 的 iOS job 以 `needs` 串行（`if: always()` 保留後續執行），避免同機並行建立／開機拖垮 CoreSimulator 服務；macOS job 不受影響。
 - 關閉 Xcode 平行測試，避免為單一 job 另建多組測試裝置。先以 build-for-testing 建置（最多 1500 秒），成功才執行 test-without-building（每次最多 660 秒）。
 - 重試沿用相同 DerivedData，不重新編譯。逾時保留日誌並終止該程序群。兩個 iOS job 上限為 65 分鐘，預留兩次測試、模擬器操作與 artifact 上傳時間。
-- 僅在明確出現 `The test runner hung before establishing connection.`，且沒有編譯錯誤、測試失敗或 issue 時重試一次。boot／bootstatus 失敗另允許一次重試；建置成功後的測試逾時（exit 124）也允許換一台新模擬器重試一次，建置逾時則不重試。重試前都須確認服務查詢及專用裝置清理成功。
+- 僅在明確出現 `The test runner hung before establishing connection.`，且沒有編譯錯誤、測試失敗或 issue 時重試一次。bootstatus 本身會在同一台模擬器重試一次；bootstatus 仍失敗、或建置成功後的測試逾時（exit 124），允許換一台新模擬器再試一次。建置逾時不重試。重試前都須確認服務查詢及專用裝置清理成功；服務查詢會重試兩次。
 - 每次完成先查詢裝置狀態，再只 shutdown／delete 該次建立的 UDID。查詢失敗或清理逾時即停止後續操作與重試，摘要保留 UDID 供 runner 維護；不重啟整個服務或清理其他 job 的裝置。
 
 ## Artifact

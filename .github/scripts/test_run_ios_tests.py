@@ -101,7 +101,7 @@ class RunnerTests(unittest.TestCase):
                         content = json.dumps({"runtimes": [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True}]})
                     else:
                         content = "ok"
-                    if log.name == "bootstatus.log" and log.parent.name == "attempt-1":
+                    if log.name.startswith("bootstatus") and log.parent.name == "attempt-1":
                         content = "waiting for simulator services"
                         code = 124
                     log.write_text(content, encoding="utf-8")
@@ -115,7 +115,7 @@ class RunnerTests(unittest.TestCase):
                 root = Path(directory)
                 metadata = json.loads((root / "attempt-1/bootstatus.log.status.json").read_text())
                 self.assertEqual(metadata["exit"], 124)
-                self.assertEqual(metadata["limitSeconds"], 180)
+                self.assertEqual(metadata["limitSeconds"], 300)
                 if not responsive:
                     text = (root / "ios-tests.log").read_text()
                     self.assertIn("stage=bootstatus exit=124", text)
@@ -148,5 +148,7 @@ class RunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

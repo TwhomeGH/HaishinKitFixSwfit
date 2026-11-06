@@ -120,24 +120,30 @@ def main():
         test_log = folder / "test.log"
         try:
             for kind in ("devices", "runtimes"):
-                code = stage_run(["xcrun", "simctl", "list", kind, "--json"], 30, folder / f"{kind}.json")
+                code = stage_run(["xcrun", "simctl", "list", kind, "--json"], 60, folder / f"{kind}.json")
                 if code:
                     raise StageFailure(f"list-{kind}", code)
             devices = json.loads((folder / "devices.json").read_text())["devices"]
             runtimes = json.loads((folder / "runtimes.json").read_text())["runtimes"]
             device_name, device_type, runtime = choose_device(devices, runtimes, args.runtime)
             name = f"ci-{args.target}-{uuid.uuid4().hex[:8]}"
-            udid = subprocess.check_output(["xcrun", "simctl", "create", name, device_type, runtime], text=True, timeout=30).strip()
+            udid = subprocess.check_output(["xcrun", "simctl", "create", name, device_type, runtime], text=True, timeout=90).strip()
             device_label = f"{device_name} ({device_type}) @ {runtime}"
             (folder / "destination.txt").write_text(
                 f"name={device_name}\ntype={device_type}\nruntime={runtime}\nUDID={udid}\n", encoding="utf-8")
             print(f"Attempt {attempt}: device={device_name} type={device_type} runtime={runtime} UDID={udid}", flush=True)
-            for command, limit, filename in [
-                (["xcrun", "simctl", "boot", udid], 60, "boot.log"),
-                (["xcrun", "simctl", "bootstatus", udid, "-b"], 180, "bootstatus.log")]:
-                code = stage_run(command, limit, folder / filename)
-                if code:
-                    raise StageFailure(Path(filename).stem, code)
+            code = stage_run(["xcrun", "simctl", "boot", udid], 120, folder / "boot.log")
+            if code:
+                raise StageFailure("boot", code)
+            for boot_try in (1, 2):
+                log_name = "bootstatus.log" if boot_try == 1 else "bootstatus-retry.log"
+                code = stage_run(["xcrun", "simctl", "bootstatus", udid, "-b"], 300, folder / log_name)
+                if code == 0:
+                    break
+                if boot_try == 1 and code == 124:
+                    print("[CI stage] bootstatus timed out; retrying the same simulator once", flush=True)
+                    continue
+                raise StageFailure("bootstatus", code)
             common = ["-scheme", "HaishinKit-Package", "-derivedDataPath", str(derived_data),
                       "-destination", f"platform=iOS Simulator,id={udid}",
                       "-destination-timeout", "60", "-parallel-testing-enabled", "NO",
@@ -166,14 +172,19 @@ def main():
                 output.write(f"[Runner infrastructure] {error}\n")
         finally:
             # 查詢本身也可能卡住；服務無回應就不繼續送清理或重試命令。
-            service_ok = stage_run(["xcrun", "simctl", "list", "devices", "--json"],
-                                   30, folder / "devices-after.json") == 0
+            service_ok = False
+            for _ in range(2):
+                if stage_run(["xcrun", "simctl", "list", "devices", "--json"],
+                             60, folder / "devices-after.json") == 0:
+                    service_ok = True
+                    break
+                time.sleep(10)
             if udid and service_ok:
-                shutdown = stage_run(["xcrun", "simctl", "shutdown", udid], 30, folder / "shutdown.log")
+                shutdown = stage_run(["xcrun", "simctl", "shutdown", udid], 60, folder / "shutdown.log")
                 if shutdown == 124:
                     service_ok = False
                 else:
-                    service_ok = stage_run(["xcrun", "simctl", "delete", udid], 30, folder / "delete.log") == 0
+                    service_ok = stage_run(["xcrun", "simctl", "delete", udid], 60, folder / "delete.log") == 0
             if udid and not service_ok:
                 with test_log.open("a", encoding="utf-8") as output:
                     output.write(f"[Runner infrastructure] service unavailable or cleanup failed; no retry; retained UDID={udid}\n")
@@ -204,6 +215,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
 
 
 
