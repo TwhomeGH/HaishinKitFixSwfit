@@ -127,15 +127,25 @@ class RunnerTests(unittest.TestCase):
         devices = {"com.apple.iOS-27-1": [{"name": "iPhone", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}
         with self.assertRaises(RuntimeError):
             choose_device(devices, runtimes)
-        self.assertEqual(choose_device(devices, runtimes, "27.1"), ("phone", "com.apple.iOS-27-1"))
+        self.assertEqual(choose_device(devices, runtimes, "27.1"), ("iPhone", "phone", "com.apple.iOS-27-1"))
 
     def test_selects_matching_available_runtime(self):
         runtimes = [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True},
                     {"identifier": "com.apple.iOS-28", "version": "28.0", "isAvailable": False}]
         devices = {"com.apple.iOS-27": [{"name": "iPhone 17", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}
-        self.assertEqual(choose_device(devices, runtimes), ("phone", "com.apple.iOS-27"))
+        self.assertEqual(choose_device(devices, runtimes), ("iPhone 17", "phone", "com.apple.iOS-27"))
         with self.assertRaises(RuntimeError):
             choose_device({}, runtimes)
 
+    def test_prefers_standard_iphone_over_unusual_models(self):
+        runtimes = [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True}]
+        devices = {"com.apple.iOS-27": [
+            {"name": "iPhone Air", "isAvailable": True, "deviceTypeIdentifier": "air"},
+            {"name": "iPhone 17 Pro", "isAvailable": True, "deviceTypeIdentifier": "pro"},
+            {"name": "iPhone 17", "isAvailable": True, "deviceTypeIdentifier": "standard"},
+        ]}
+        self.assertEqual(choose_device(devices, runtimes), ("iPhone 17", "standard", "com.apple.iOS-27"))
+
 if __name__ == "__main__":
     unittest.main()
+

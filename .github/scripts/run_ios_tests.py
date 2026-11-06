@@ -13,8 +13,12 @@ import uuid
 from ci_test_summary import parse
 
 
+PREFERRED_DEVICE_PREFIXES = (
+    "iPhone 17", "iPhone 16", "iPhone 15", "iPhone 14", "iPhone 13", "iPhone SE")
+
+
 def choose_device(devices, runtimes, requested="27.0"):
-    """回傳可用 iPhone 的裝置類型與明確指定的 iOS runtime，無匹配即失敗。"""
+    """優先常見 iPhone 機型；回傳名稱、device type 與明確 runtime，無匹配即失敗。"""
     choices = []
     for runtime in runtimes:
         if not runtime.get("isAvailable") or ".iOS-" not in runtime["identifier"]:
@@ -23,12 +27,16 @@ def choose_device(devices, runtimes, requested="27.0"):
             continue
         version = tuple(int(part) for part in runtime["version"].split("."))
         for device in devices.get(runtime["identifier"], []):
-            if device.get("isAvailable") and device["name"].startswith("iPhone") and device.get("deviceTypeIdentifier"):
-                choices.append((version, runtime["identifier"], device["deviceTypeIdentifier"]))
+            name = device.get("name", "")
+            if not device.get("isAvailable") or not name.startswith("iPhone") or not device.get("deviceTypeIdentifier"):
+                continue
+            rank = next((i for i, prefix in enumerate(PREFERRED_DEVICE_PREFIXES) if name.startswith(prefix)),
+                        len(PREFERRED_DEVICE_PREFIXES))
+            choices.append((rank, name, device["deviceTypeIdentifier"], runtime["identifier"], version))
     if not choices:
         raise RuntimeError("找不到指定 runtime 的可用 iPhone 模擬器")
-    _, runtime, device_type = max(choices)
-    return device_type, runtime
+    _, name, device_type, runtime, _ = min(choices, key=lambda item: (item[0], item[1], item[3]))
+    return name, device_type, runtime
 
 
 def retryable(text):
@@ -106,6 +114,7 @@ def main():
         folder = args.output / f"attempt-{attempt}"
         folder.mkdir(parents=True, exist_ok=True)
         udid = None
+        device_label = "unselected"
         failed_stage = None
         service_ok = False
         test_log = folder / "test.log"
@@ -116,11 +125,13 @@ def main():
                     raise StageFailure(f"list-{kind}", code)
             devices = json.loads((folder / "devices.json").read_text())["devices"]
             runtimes = json.loads((folder / "runtimes.json").read_text())["runtimes"]
-            device_type, runtime = choose_device(devices, runtimes, args.runtime)
+            device_name, device_type, runtime = choose_device(devices, runtimes, args.runtime)
             name = f"ci-{args.target}-{uuid.uuid4().hex[:8]}"
             udid = subprocess.check_output(["xcrun", "simctl", "create", name, device_type, runtime], text=True, timeout=30).strip()
-            (folder / "destination.txt").write_text(f"UDID={udid}\nruntime={runtime}\n", encoding="utf-8")
-            print(f"Attempt {attempt}: {runtime}, UDID={udid}", flush=True)
+            device_label = f"{device_name} ({device_type}) @ {runtime}"
+            (folder / "destination.txt").write_text(
+                f"name={device_name}\ntype={device_type}\nruntime={runtime}\nUDID={udid}\n", encoding="utf-8")
+            print(f"Attempt {attempt}: device={device_name} type={device_type} runtime={runtime} UDID={udid}", flush=True)
             for command, limit, filename in [
                 (["xcrun", "simctl", "boot", udid], 60, "boot.log"),
                 (["xcrun", "simctl", "bootstatus", udid, "-b"], 180, "bootstatus.log")]:
@@ -179,9 +190,9 @@ def main():
                     text += f"\n[CI diagnostic] {filename}\n" + ("\n".join(tail) or "(no output)") + "\n"
         final_log.write_text(text, encoding="utf-8")
         print(text, flush=True)
-        attempts.append(f"- Attempt {attempt}: exit={status}; stage={failed_stage or stage}; serviceResponsive={service_ok}; artifacts: attempt-{attempt}/")
+        attempts.append(f"- Attempt {attempt}: device={device_label}; exit={status}; stage={failed_stage or stage}; serviceResponsive={service_ok}; artifacts: attempt-{attempt}/")
         (args.output / "attempts.md").write_text("\n".join(attempts) + "\n", encoding="utf-8")
-        if status == 0 or attempt == 2 or not service_ok or not (failed_stage in ("boot", "bootstatus") or retryable(text)):
+        if status == 0 or attempt == 2 or not service_ok or not (failed_stage in ("boot", "bootstatus") or retryable(text) or (status == 124 and built)):
             break
         print("::warning::模擬器／XCTest runner 啟動故障，保留首次資料並以新模擬器重試一次", flush=True)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -193,3 +204,6 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+
