@@ -900,7 +900,8 @@ public actor RTMPStream {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     while !Task.isCancelled {
-                        // VideoQueue 摘要每 15 秒一筆；異常仍由事件日誌即時記錄。\n                        do { try await Task.sleep(nanoseconds: 15_000_000_000) }
+                        // VideoQueue 摘要每 15 秒一筆；異常仍由事件日誌即時記錄。
+                        do { try await Task.sleep(nanoseconds: 15_000_000_000) }
                         catch { break }
                         await self.logVideoQueueDiagnostics(generation: generation)
                     }

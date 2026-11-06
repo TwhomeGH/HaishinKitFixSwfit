@@ -87,9 +87,6 @@ jobs:
     name: RTMPHaishinKit iOS tests
     runs-on: xcode-27
     timeout-minutes: 65
-    concurrency:
-      group: ios-simulator-${{ github.run_id }}
-      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -238,9 +235,8 @@ jobs:
     name: HaishinKit iOS tests
     runs-on: xcode-27
     timeout-minutes: 65
-    concurrency:
-      group: ios-simulator-${{ github.run_id }}
-      cancel-in-progress: false
+    needs: rtmp-tests
+    if: always()
 
     steps:
       - name: Checkout
@@ -538,9 +534,8 @@ jobs:
     name: HaishinKit tests (Thread Sanitizer, ${{ matrix.platform }})
     runs-on: xcode-27
     timeout-minutes: 30
-    concurrency:
-      group: ios-simulator-${{ github.run_id }}
-      cancel-in-progress: false
+    needs: [rtmp-tests, haishinkit-tests]
+    if: always()
     strategy:
       fail-fast: false
       matrix:
