@@ -36,4 +36,11 @@ struct MixClockAdvanceTests {
         #expect(!MixClockAdvance.shouldAdvance(
             track: 1, mainTrack: 0, mainLastOutputPosition: 2048, position: 1024))
     }
+
+    @Test("main 停止或移除 → 其他軌接手，不被舊位置阻擋")
+    func advancesWhenMainIsInactive() {
+        #expect(MixClockAdvance.shouldAdvance(
+            track: 1, mainTrack: 0, mainLastOutputPosition: 9999,
+            position: 1024, mainIsActive: false))
+    }
 }

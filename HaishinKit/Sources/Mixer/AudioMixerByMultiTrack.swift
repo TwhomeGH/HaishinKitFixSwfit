@@ -113,6 +113,9 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     // 各軌最近一次輸出的「幀結束位置」（when.sampleTime + frameLength）。
     // 用於 main 軌靜默時由其他軌推進混音時間軸。
     private var lastOutputPosition: [UInt8: Int64] = [:]
+    // 各軌最近一次輸出的 wall-clock 時間，用於判斷 main track 是否已停止送資料。
+    private var lastOutputUptime: [UInt8: TimeInterval] = [:]
+    private let mainTrackInactivityThreshold: TimeInterval = 0.25
     // 物理回音消除（NLMS AEC）：以 echoCancellationReferenceTrack（App 軌）為
     // reference、非 reference 軌（mic）為 target，混音前對 mic 幀相消（喇叭外放
     // 被 mic 收音造成的雙重重疊）。每 channel 一個 canceler；僅在 serial queue 上使用。
@@ -218,6 +221,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         }
         sampleTime = Self.defaultSampleTime
         lastOutputPosition.removeAll()
+        lastOutputUptime.removeAll()
         let mixerNode = try MixerNode(format: outputFormat)
         try mixerNode.update(busCount: tracks.count, scope: .input)
         let busCount = try mixerNode.busCount(scope: .input)
@@ -387,15 +391,34 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         }
         buffers[track.id]?.append(bufferToAppend, when: when)
         lastOutputPosition[track.id] = when.sampleTime + Int64(audioPCMBuffer.frameLength)
-        // main 軌正常驅動時鐘；main 靜默/從未輸出時由其他軌接手推進（見 MixClockAdvance）。
+        let now = ProcessInfo.processInfo.systemUptime
+        lastOutputUptime[track.id] = now
+        let mainIsActive = isMainTrackActive(now: now)
+        // main 停止後，其他軌接手時要先把播放頭移到自己的位置；否則 render()
+        // 會用它對齊到舊 main 的 sampleTime，把剛到的 App 音訊當成過期資料丟掉。
+        if !mainIsActive, track.id != settings.mainTrack, sampleTime != when.sampleTime {
+            sampleTime = when.sampleTime
+            anchor = when
+        }
+        // main 軌正常驅動時鐘；main 停止/靜默/從未輸出時由其他軌接手推進。
         if MixClockAdvance.shouldAdvance(
             track: track.id,
             mainTrack: settings.mainTrack,
             mainLastOutputPosition: lastOutputPosition[settings.mainTrack],
-            position: when.sampleTime
+            position: when.sampleTime,
+            mainIsActive: mainIsActive
         ) {
             advanceMix(to: when, numberOfFrames: audioPCMBuffer.frameLength)
         }
+    }
+
+    /// main track 是否仍在輸出；移除或停止送資料超過門檻就視為 inactive。
+    private func isMainTrackActive(now: TimeInterval) -> Bool {
+        let id = _settings.mainTrack
+        guard tracks[id] != nil, let last = lastOutputUptime[id] else {
+            return false
+        }
+        return now - last <= mainTrackInactivityThreshold
     }
 
     /// 推進混音時間軸到指定幀的位置，以區塊渲染（各軌由 align 對齊到正確位置）。

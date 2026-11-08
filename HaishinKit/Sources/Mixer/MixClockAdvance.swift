@@ -17,15 +17,23 @@ enum MixClockAdvance {
     ///   - mainLastOutputPosition: main 軌最近一次輸出的「幀結束位置」；nil 表示
     ///     main 從未輸出過。
     ///   - position: 目前這幀的起始位置（`when.sampleTime`）。
+    ///   - mainIsActive: main 軌最近是否仍有輸出；false 代表 mic 關閉、停止送資料
+    ///     或已被移除，不應再讓 main 的舊位置阻擋其他軌推進。
     /// - Returns: 是否應由這幀推進混音時間軸。
     static func shouldAdvance(
         track: UInt8,
         mainTrack: UInt8,
         mainLastOutputPosition: Int64?,
-        position: Int64
+        position: Int64,
+        mainIsActive: Bool = true
     ) -> Bool {
         // main 軌本身永遠驅動時鐘。
         if track == mainTrack {
+            return true
+        }
+        // main 已停止/移除時，其他軌必須接手；否則 App 軌會一直被舊的
+        // main 位置擋住，最後被 align 當成過期資料丟棄。
+        if !mainIsActive {
             return true
         }
         guard let mainLastOutputPosition else {
