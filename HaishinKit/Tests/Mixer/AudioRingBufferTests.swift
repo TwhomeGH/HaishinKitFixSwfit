@@ -71,6 +71,46 @@ import Testing
         #expect(ring.counts == 0)
     }
 
+    @Test("Float32 非交錯：跨兩個 render 不位移") func float32NonInterleavedRenderKeepsChannelsAligned() throws {
+        let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 44100,
+            channels: 2,
+            interleaved: false
+        )!
+        let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
+        let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 2048))
+        pcm.frameLength = 2048
+        for frame in 0..<2048 {
+            pcm.floatChannelData?[0][frame] = 0.25
+            pcm.floatChannelData?[1][frame] = -0.5
+        }
+        ring.append(pcm, when: AVAudioTime(sampleTime: 0, atRate: format.sampleRate))
+
+        let read = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))
+        #expect(ring.render(1024, ioData: read.mutableAudioBufferList) == noErr)
+        #expect(read.floatChannelData?[0][0] == 0.25)
+        #expect(read.floatChannelData?[1][1023] == -0.5)
+
+        #expect(ring.render(1024, ioData: read.mutableAudioBufferList) == noErr)
+        #expect(read.floatChannelData?[0][1023] == 0.25)
+        #expect(read.floatChannelData?[1][0] == -0.5)
+    }
+
+    @Test("來源 PTS 大幅倒退會重建時間基準") func backwardTimestampResetsTimeline() throws {
+        let format = makeInt16Format()
+        let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
+        let (old, oldTime) = makeInt16Buffer(format, sampleTime: 96000, fill: 3)
+        ring.append(old, when: oldTime)
+        let (new, newTime) = makeInt16Buffer(format, sampleTime: 0, fill: 9)
+        ring.append(new, when: newTime)
+
+        #expect(ring.counts == 1024)
+        let read = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))
+        #expect(ring.render(1024, ioData: read.mutableAudioBufferList) == noErr)
+        #expect(readInt16(read).allSatisfy { $0 == 9 })
+    }
+
     // MARK: align(to:)
 
     @Test("align：超前補靜音") func alignAheadInsertsSilence() throws {

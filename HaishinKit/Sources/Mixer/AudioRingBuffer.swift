@@ -11,6 +11,9 @@ final class AudioRingBuffer: @unchecked Sendable {
     private static let bufferCounts: UInt32 = 24
     private static let numSamples: UInt32 = 1024
     private static let maxCapacity: Int = Int(AudioRingBuffer.numSamples * AudioRingBuffer.bufferCounts)
+    /// 來源 PTS 倒退超過約 1 秒視為新的時間基準；清空舊資料，避免把新紀元
+    /// 的音訊接在舊時間軸尾端，造成混音錯位或整段靜音。
+    private static let timestampResetThreshold: Int64 = 48_000
 
     var counts: Int {
         lock()
@@ -87,6 +90,9 @@ final class AudioRingBuffer: @unchecked Sendable {
             targetSampleTime = Int64(Double(sampleBuffer.presentationTimeStamp.value) * inputBuffer.format.sampleRate / Double(sampleBuffer.presentationTimeStamp.timescale))
         }
         lock()
+        if sampleTime != 0, targetSampleTime < sampleTime - Self.timestampResetThreshold {
+            resetLocked()
+        }
         if sampleTime == 0 {
             sampleTime = targetSampleTime
         }
@@ -129,6 +135,9 @@ final class AudioRingBuffer: @unchecked Sendable {
         let numSamples = Int(audioPCMBuffer.frameLength)
         guard numSamples <= AudioRingBuffer.maxCapacity else { return }
         lock()
+        if sampleTime != 0, when.sampleTime < sampleTime - Self.timestampResetThreshold {
+            resetLocked()
+        }
         if sampleTime == 0 {
             sampleTime = when.sampleTime
         }
@@ -234,23 +243,21 @@ final class AudioRingBuffer: @unchecked Sendable {
             return -1
         }
         let channelCount = Int(inputFormat.channelCount)
-        let bytesPerSample: Int
-        switch inputFormat.commonFormat {
-        case .pcmFormatInt16: bytesPerSample = 2
-        case .pcmFormatInt32: bytesPerSample = 4
-        case .pcmFormatFloat32: bytesPerSample = 4
-        default: return -1
-        }
-        let copyBytes = numSamples * channelCount * bytesPerSample
+        let bytesPerSample = Self.bytesPerSample(inputFormat.commonFormat)
+        guard 0 < bytesPerSample else { return -1 }
         if inputFormat.isInterleaved {
             guard let dst = bufferList[0].mData,
-                  let src = outputBuffer.int16ChannelData?[0].advanced(by: tail * channelCount) else { return -1 }
-            memcpy(dst.advanced(by: offset * channelCount * bytesPerSample), src, copyBytes)
+                  let src = channelPointer(outputBuffer, channel: 0) else { return -1 }
+            memcpy(dst.advanced(by: offset * channelCount * bytesPerSample),
+                   src.advanced(by: tail * channelCount * bytesPerSample),
+                   numSamples * channelCount * bytesPerSample)
         } else {
             for i in 0..<channelCount {
                 guard let dst = bufferList[i].mData,
-                      let src = outputBuffer.int16ChannelData?[i].advanced(by: tail) else { continue }
-                memcpy(dst.advanced(by: offset * bytesPerSample), src, numSamples * bytesPerSample)
+                      let src = channelPointer(outputBuffer, channel: i) else { continue }
+                memcpy(dst.advanced(by: offset * bytesPerSample),
+                       src.advanced(by: tail * bytesPerSample),
+                       numSamples * bytesPerSample)
             }
         }
         tail += numSamples
@@ -295,12 +302,17 @@ final class AudioRingBuffer: @unchecked Sendable {
 
     func reset() {
         lock()
+        resetLocked()
+        unlock()
+    }
+
+    /// 已持鎖時使用；不要在 reset() 內重複上鎖。
+    private func resetLocked() {
         head = 0
         tail = 0
         skip = 0
         storedSamples = 0
         sampleTime = 0
-        unlock()
     }
 
     @inline(__always)
@@ -314,23 +326,21 @@ final class AudioRingBuffer: @unchecked Sendable {
         guard numSamples > 0 else { return }
         discardStoredSamples(max(0, storedSamples + numSamples - capacity))
         let channelCount = Int(inputFormat.channelCount)
-        let bytesPerSample: Int
-        switch inputFormat.commonFormat {
-        case .pcmFormatInt16: bytesPerSample = 2
-        case .pcmFormatInt32: bytesPerSample = 4
-        case .pcmFormatFloat32: bytesPerSample = 4
-        default: return
-        }
-        let copyBytes = numSamples * channelCount * bytesPerSample
+        let bytesPerSample = Self.bytesPerSample(inputFormat.commonFormat)
+        guard 0 < bytesPerSample else { return }
         if inputFormat.isInterleaved {
-            guard let dst = outputBuffer.int16ChannelData?[0].advanced(by: head * channelCount),
-                  let src = audioPCMBuffer.int16ChannelData?[0].advanced(by: effectiveOffset * channelCount) else { return }
-            memcpy(dst, src, copyBytes)
+            guard let dst = channelPointer(outputBuffer, channel: 0),
+                  let src = channelPointer(audioPCMBuffer, channel: 0) else { return }
+            memcpy(dst.advanced(by: head * channelCount * bytesPerSample),
+                   src.advanced(by: effectiveOffset * channelCount * bytesPerSample),
+                   numSamples * channelCount * bytesPerSample)
         } else {
             for i in 0..<channelCount {
-                guard let dst = outputBuffer.int16ChannelData?[i].advanced(by: head),
-                      let src = audioPCMBuffer.int16ChannelData?[i].advanced(by: effectiveOffset) else { continue }
-                memcpy(dst, src, numSamples * bytesPerSample)
+                guard let dst = channelPointer(outputBuffer, channel: i),
+                      let src = channelPointer(audioPCMBuffer, channel: i) else { continue }
+                memcpy(dst.advanced(by: head * bytesPerSample),
+                       src.advanced(by: effectiveOffset * bytesPerSample),
+                       numSamples * bytesPerSample)
             }
         }
         head += numSamples
@@ -368,21 +378,34 @@ final class AudioRingBuffer: @unchecked Sendable {
     /// 把環形緩衝區 [offset, offset+count) 範圍的樣本清零。
     private func zeroRingSamples(at offset: Int, count: Int) {
         let channelCount = Int(inputFormat.channelCount)
-        let bytesPerSample: Int
-        switch inputFormat.commonFormat {
-        case .pcmFormatInt16: bytesPerSample = 2
-        case .pcmFormatInt32: bytesPerSample = 4
-        case .pcmFormatFloat32: bytesPerSample = 4
-        default: return
-        }
+        let bytesPerSample = Self.bytesPerSample(inputFormat.commonFormat)
+        guard 0 < bytesPerSample else { return }
         if inputFormat.isInterleaved {
-            guard let dst = outputBuffer.int16ChannelData?[0] else { return }
-            memset(dst.advanced(by: offset * channelCount), 0, count * channelCount * bytesPerSample)
+            guard let dst = channelPointer(outputBuffer, channel: 0) else { return }
+            memset(dst.advanced(by: offset * channelCount * bytesPerSample), 0,
+                   count * channelCount * bytesPerSample)
         } else {
             for i in 0..<channelCount {
-                guard let dst = outputBuffer.int16ChannelData?[i] else { continue }
-                memset(dst.advanced(by: offset), 0, count * bytesPerSample)
+                guard let dst = channelPointer(outputBuffer, channel: i) else { continue }
+                memset(dst.advanced(by: offset * bytesPerSample), 0, count * bytesPerSample)
             }
+        }
+    }
+
+    /// 以 AudioBufferList 的原始指標取得 channel，避免 float32/int32 被當成
+    /// Int16 指標做 element offset（會錯位並造成爆音／靜音）。
+    private func channelPointer(_ buffer: AVAudioPCMBuffer, channel: Int) -> UnsafeMutableRawPointer? {
+        let list = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+        guard channel >= 0, channel < list.count else { return nil }
+        return list[channel].mData
+    }
+
+    private static func bytesPerSample(_ format: AVAudioCommonFormat) -> Int {
+        switch format {
+        case .pcmFormatInt16: return 2
+        case .pcmFormatInt32: return 4
+        case .pcmFormatFloat32: return 4
+        default: return 0
         }
     }
 

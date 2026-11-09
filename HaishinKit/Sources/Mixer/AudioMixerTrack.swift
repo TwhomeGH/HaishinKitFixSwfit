@@ -43,6 +43,9 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         }
     }
     private var audioTime = AudioTime()
+    // 來源 PTS 的最後值（秒）。只有真正的不連續才重建 anchor；正常連續幀
+    // 不再每幀覆寫時間，避免兩軌混音時播放頭被反覆拉動。
+    private var lastSourceTime: Double?
     private var ringBuffer: AudioRingBuffer?
     private var inputBuffer: AVAudioPCMBuffer?
     private var outputBuffer: AVAudioPCMBuffer?
@@ -86,6 +89,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
 
     func append(_ sampleBuffer: CMSampleBuffer) {
         inSourceFormat = sampleBuffer.formatDescription
+        noteSourceTime(sampleBuffer.presentationTimeStamp.seconds)
         if !audioTime.hasAnchor {
             audioTime.anchor(sampleBuffer.presentationTimeStamp, sampleRate: outputFormat.sampleRate)
         }
@@ -95,11 +99,24 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
 
     func append(_ audioBuffer: AVAudioPCMBuffer, when: AVAudioTime) {
         inSourceFormat = audioBuffer.format.formatDescription
+        if when.sampleRate > 0 {
+            noteSourceTime(Double(when.sampleTime) / when.sampleRate)
+        }
         if !audioTime.hasAnchor {
             audioTime.anchor(when)
         }
         ringBuffer?.append(audioBuffer, when: when)
         resample()
+    }
+
+    /// 來源時間跳躍時重建 anchor；來源端可以主動送新 PTS，但不能在每個
+    /// 連續幀上覆寫，否則跨軌對齊會被反覆拉動。
+    private func noteSourceTime(_ seconds: Double) {
+        guard seconds.isFinite else { return }
+        if let lastSourceTime, abs(seconds - lastSourceTime) > 1 {
+            audioTime.reset()
+        }
+        lastSourceTime = seconds
     }
 
     @inline(__always)
@@ -181,6 +198,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             logger.info("inputFormat:", inputFormat, ", outputFormat:", outputFormat)
         }
         audioTime.reset()
+        lastSourceTime = nil
         audioConverter = .init(from: inputFormat, to: outputFormat)
     }
 }
