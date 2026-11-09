@@ -75,6 +75,18 @@ final class VideoCaptureUnit: CaptureUnit {
 
     /// 設定相機動態範圍；相機不支援時把 VideoDeviceUnit 的錯誤原樣往上拋。
     /// iOS 目前沒有這條相機 format 路徑，因此會直接更新狀態、不拋錯。
+    /// 只調整相機擷取端的 frame rate；沒有 camera device 時是 no-op。
+    /// 不影響 offscreen display link，也不影響 encoder 的 expected frame rate。
+    func setFrameRate(_ frameRate: Float64) throws {
+        #if os(tvOS)
+        if #available(tvOS 17.0, *) {
+            for device in devices.values {
+                try device.setFrameRate(frameRate)
+            }
+        }
+        #endif
+    }
+
     func setDynamicRangeMode(_ mode: DynamicRangeMode) throws {
         guard mode != dynamicRangeMode else { return }
         if #available(tvOS 17.0, *) {

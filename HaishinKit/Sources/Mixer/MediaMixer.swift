@@ -14,6 +14,8 @@ public final actor MediaMixer {
         case failedToAttach(_ error: any Swift.Error)
         /// The mixer missing a device of track.
         case deviceNotFound
+        /// The requested frame rate is outside the supported range.
+        case unsupportedFrameRate
     }
 
     /// An enumeration defines the capture session mode used for video/audio input.
@@ -102,6 +104,8 @@ public final actor MediaMixer {
 
     /// The output frame rate.
     public private(set) var frameRate = MediaMixer.defaultFrameRate
+    /// offscreen 合成用的 display-link FPS；與相機 `frameRate` 脫鉤。
+    private var displayFrameRate: Float64 = 60
 
     /// The AVCaptureSession is in a running state or not.
     @available(tvOS 17.0, *)
@@ -284,26 +288,31 @@ public final actor MediaMixer {
         }
     }
 
-    /// Sets the output frame rate of the mixer.
+    /// 設定相機擷取端的 frame rate。
     ///
-    /// This is distinct from the camera capture rate, which can be configured separately as shown below.
-    /// ```swift
-    /// try? await mixer.configuration(video: 0) { video in
-    ///     try? video.setFrameRate(fps)
-    /// }
-    /// ```
+    /// - 只影響 `AVCaptureDevice`；ReplayKit／ScreenCaptureKit 沒有 camera device
+    ///   時不會改變輸出 FPS。
+    /// - 不影響 offscreen display link；請用 `setDisplayFrameRate(_:)`。
+    /// - 不影響 encoder 的 `expectedFrameRate` 或 frame limit。
     public func setFrameRate(_ frameRate: Float64) throws {
-        switch videoMixerSettings.mode {
-        case .passthrough:
-            if #available(tvOS 17.0, *) {
-                try videoIO.devices.first?.value.setFrameRate(frameRate)
-            }
-        case .offscreen:
-            Task { @ScreenActor in
-                displayLink.preferredFramesPerSecond = Int(frameRate)
-            }
+        guard (1...240).contains(frameRate) else {
+            throw Error.unsupportedFrameRate
         }
+        try videoIO.setFrameRate(frameRate)
         self.frameRate = frameRate
+    }
+
+    /// 設定 offscreen 合成／display link 的輸出頻率。
+    ///
+    /// 這不是相機 FPS，也不是 encoder 上限；主要供 `.offscreen` 模式使用。
+    public func setDisplayFrameRate(_ frameRate: Float64) throws {
+        guard (1...120).contains(frameRate) else {
+            throw Error.unsupportedFrameRate
+        }
+        displayFrameRate = frameRate
+        Task { @ScreenActor in
+            displayLink.preferredFramesPerSecond = Int(frameRate)
+        }
     }
 
     /// 設定動態範圍（SDR／HDR）。
@@ -410,7 +419,7 @@ public final actor MediaMixer {
             }
         case .offscreen:
             Task { @ScreenActor in
-                displayLink.preferredFramesPerSecond = await Int(frameRate)
+                displayLink.preferredFramesPerSecond = Int(displayFrameRate)
                 displayLink.startRunning()
                 for await updateFrame in displayLink.updateFrames {
                     guard let buffer = screen.makeSampleBuffer(updateFrame) else {
