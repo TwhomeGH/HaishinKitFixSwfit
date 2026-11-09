@@ -60,10 +60,14 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
             try? mixerNode?.update(volume: trackSettings.volume, bus: id, scope: .input)
         }
         // 只有 mainTrack 改變或目前時鐘軌已不存在時才重設；音量更新不應
-        // 把 fallback 時鐘踢回已停止的 main track。
+        // 把 fallback 時鐘踢回已停止的 main track。main track 尚未建立時
+        // 直接選第一個存在的軌，避免只有 App 軌卻把時鐘留在缺席的 mic。
         if newValue.mainTrack != previous.mainTrack
             || !newValue.tracks.keys.contains(activeClockTrack) {
-            activeClockTrack = newValue.mainTrack
+            let fallback = newValue.tracks.keys.sorted().first
+            activeClockTrack = newValue.tracks.keys.contains(newValue.mainTrack)
+                ? newValue.mainTrack
+                : (fallback ?? newValue.mainTrack)
         }
     }
 
@@ -231,7 +235,9 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         sampleTime = Self.defaultSampleTime
         lastOutputPosition.removeAll()
         lastOutputUptime.removeAll()
-        activeClockTrack = _settings.mainTrack
+        activeClockTrack = tracks.keys.contains(_settings.mainTrack)
+            ? _settings.mainTrack
+            : (tracks.keys.sorted().first ?? _settings.mainTrack)
         let mixerNode = try MixerNode(format: outputFormat)
         try mixerNode.update(busCount: tracks.count, scope: .input)
         let busCount = try mixerNode.busCount(scope: .input)
