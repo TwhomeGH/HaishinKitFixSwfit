@@ -59,6 +59,12 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
             tracks[id]?.settings = trackSettings
             try? mixerNode?.update(volume: trackSettings.volume, bus: id, scope: .input)
         }
+        // 只有 mainTrack 改變或目前時鐘軌已不存在時才重設；音量更新不應
+        // 把 fallback 時鐘踢回已停止的 main track。
+        if newValue.mainTrack != previous.mainTrack
+            || !newValue.tracks.keys.contains(activeClockTrack) {
+            activeClockTrack = newValue.mainTrack
+        }
     }
 
     private(set) var outputFormat: AVAudioFormat? {
@@ -116,6 +122,9 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     // 各軌最近一次輸出的 wall-clock 時間，用於判斷 main track 是否已停止送資料。
     private var lastOutputUptime: [UInt8: TimeInterval] = [:]
     private let mainTrackInactivityThreshold: TimeInterval = 0.25
+    // 目前實際驅動混音時鐘的軌。正常是 _settings.mainTrack；main 停止時
+    // 只切換一次，不會每一幀用新 PTS 重覆覆寫播放頭。
+    private var activeClockTrack: UInt8 = 0
     // 物理回音消除（NLMS AEC）：以 echoCancellationReferenceTrack（App 軌）為
     // reference、非 reference 軌（mic）為 target，混音前對 mic 幀相消（喇叭外放
     // 被 mic 收音造成的雙重重疊）。每 channel 一個 canceler；僅在 serial queue 上使用。
@@ -222,6 +231,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         sampleTime = Self.defaultSampleTime
         lastOutputPosition.removeAll()
         lastOutputUptime.removeAll()
+        activeClockTrack = _settings.mainTrack
         let mixerNode = try MixerNode(format: outputFormat)
         try mixerNode.update(busCount: tracks.count, scope: .input)
         let busCount = try mixerNode.busCount(scope: .input)
@@ -286,7 +296,9 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         // 對齊（對齊它會吃掉其內部來源 gap 的 silence 推進）。
         // 註：`buffers[track]` 是用 outputFormat 建的，其 sampleTime 與 mixer 的
         // sampleTime 同為 output 取樣率單位，可直接比較（無單位不一致問題）。
-        if track != _settings.mainTrack {
+        // align 只作用在非時鐘軌；fallback 接手時，時鐘軌自己不可再被
+        // 對齊到舊 main 的播放頭，否則它的新 PTS 會被當成過期資料丟棄。
+        if track != activeClockTrack {
             buffer.align(to: sampleTime)
         }
         if buffer.counts == 0 {
@@ -390,31 +402,55 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
             }
         }
         buffers[track.id]?.append(bufferToAppend, when: when)
+        let previousOutputPosition = lastOutputPosition[track.id]
         lastOutputPosition[track.id] = when.sampleTime + Int64(audioPCMBuffer.frameLength)
         let now = ProcessInfo.processInfo.systemUptime
         lastOutputUptime[track.id] = now
-        let mainIsActive = isMainTrackActive(now: now)
-        // main 停止後，其他軌接手時要先把播放頭移到自己的位置；否則 render()
-        // 會用它對齊到舊 main 的 sampleTime，把剛到的 App 音訊當成過期資料丟掉。
-        if !mainIsActive, track.id != settings.mainTrack, sampleTime != when.sampleTime {
+        let configuredMain = settings.mainTrack
+        let mainIsActive = isTrackActive(configuredMain, now: now)
+        let clockTrackChanged: Bool
+        if mainIsActive {
+            // main 恢復輸出時，才把時鐘交回 main；這是一次性切換。
+            clockTrackChanged = activeClockTrack != configuredMain
+            if clockTrackChanged {
+                activeClockTrack = configuredMain
+            }
+        } else if track.id != configuredMain,
+                  activeClockTrack == configuredMain
+                    || !isTrackActive(activeClockTrack, now: now) {
+            // main 停止或目前接手軌也停止，才由這一軌接手；不要每幀改時鐘。
+            clockTrackChanged = activeClockTrack != track.id
+            if clockTrackChanged {
+                activeClockTrack = track.id
+            }
+        } else {
+            clockTrackChanged = false
+        }
+        let clockTrack = activeClockTrack
+        // 來源端可能主動送新的 PTS（例如網路時鐘校正或 track 重建）。只有
+        // 時鐘擁有者改變，或時鐘軌本身出現 >1 秒的不連續時才重設播放頭；
+        // 正常連續幀不可反覆覆寫 sampleTime，否則兩軌混音會被切碎。
+        let jumpThreshold = Int64(outputFormat?.sampleRate ?? 48_000)
+        let timestampJumped = previousOutputPosition.map {
+            abs(when.sampleTime - $0) > jumpThreshold
+        } ?? false
+        if clockTrackChanged || (track.id == clockTrack && timestampJumped) {
             sampleTime = when.sampleTime
             anchor = when
         }
-        // main 軌正常驅動時鐘；main 停止/靜默/從未輸出時由其他軌接手推進。
         if MixClockAdvance.shouldAdvance(
             track: track.id,
-            mainTrack: settings.mainTrack,
-            mainLastOutputPosition: lastOutputPosition[settings.mainTrack],
+            mainTrack: clockTrack,
+            mainLastOutputPosition: lastOutputPosition[clockTrack],
             position: when.sampleTime,
-            mainIsActive: mainIsActive
+            mainIsActive: isTrackActive(clockTrack, now: now)
         ) {
             advanceMix(to: when, numberOfFrames: audioPCMBuffer.frameLength)
         }
     }
 
-    /// main track 是否仍在輸出；移除或停止送資料超過門檻就視為 inactive。
-    private func isMainTrackActive(now: TimeInterval) -> Bool {
-        let id = _settings.mainTrack
+    /// 指定軌是否仍在輸出；移除或停止送資料超過門檻就視為 inactive。
+    private func isTrackActive(_ id: UInt8, now: TimeInterval) -> Bool {
         guard tracks[id] != nil, let last = lastOutputUptime[id] else {
             return false
         }
