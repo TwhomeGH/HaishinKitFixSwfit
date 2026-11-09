@@ -26,6 +26,8 @@ public enum VideoPipelineEvent: String, Codable, Sendable, CaseIterable {
     case encoderUnavailable
     /// VideoCodec 的 session 屬性變更並重新建立輸出狀態；不保證新 session 已成功編碼。
     case encoderSessionChanged
+    /// 來源 PTS 大幅倒退，編碼輸出狀態重建 keyframe 等待。
+    case encoderPTSReset
     /// 編碼輸出端等待關鍵幀時，阻擋了非關鍵幀。
     case encoderKeyFrameSuppressed
     /// 編碼輸出 continuation 未接受結果，例如已終止或緩衝拒收；回到等待關鍵幀。

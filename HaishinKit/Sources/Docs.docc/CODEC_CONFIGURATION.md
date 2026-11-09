@@ -96,29 +96,13 @@ public enum BitRateMode: String {
 
 ### Keyframe 間隔語意
 
-`maxKeyFrameIntervalDuration` 目前採直播安全預設：大於 `0` 時使用指定秒數；
-小於或等於 `0` 時視為無效值，fallback 到 `2` 秒。這不是「完全交給系統自行決定」
-的語意。
+`maxKeyFrameIntervalDuration` 大於 `0` 時使用指定秒數；等於 `0` 代表
+**automatic**，不送出 `maxKeyFrameIntervalDuration` / `maxKeyFrameInterval`
+option，由 VideoToolbox 依裝置／codec／bitrate／profile 自行決定。預設值仍是
+`2` 秒，保留穩定 GOP 對 RTMP / HLS / 直播 CDN 的相容性。
 
-保留 `2` 秒 fallback 的原因是 RTMP / HLS / 直播 CDN 通常需要穩定 GOP：
-首屏、重連、轉碼切片與播放器恢復都仰賴可預期的 keyframe cadence。若把 `0`
-直接傳給 VideoToolbox 或省略 keyframe duration option，encoder 可能依裝置、
-OS、codec profile、bitrate 與硬體實作自行選擇，對一般錄影或離線編碼較彈性，
-但對直播推流較容易造成跨平台行為飄移。
-
-未來若要支援「完全交給 VideoToolbox / 系統自行決定」，不要再擴大 `0` 這個
-magic value 的含義。建議新增明確 API，例如：
-
-```swift
-enum KeyFrameIntervalStrategy {
-    case liveDefault
-    case duration(seconds: Int32)
-    case automatic
-}
-```
-
-其中 `automatic` 代表不設定 `maxKeyFrameIntervalDuration` / `maxKeyFrameInterval`
-相關 option，由底層 encoder 決定；`liveDefault` 則保留目前的 `2` 秒直播預設。
+App 端使用 `KeyFrameIntervalPolicy` 把舊設定（含負值）正規化：`<= 0` 是
+automatic，`1...60` 是固定秒數。底層不再把 `0` fallback 成 `2`。
 
 ### 設定生效與重啟
 

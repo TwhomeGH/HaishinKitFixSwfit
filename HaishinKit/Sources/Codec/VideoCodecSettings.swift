@@ -431,9 +431,12 @@ public struct VideoCodecSettings: Codable, Sendable {
     /// 4. 以上皆無 → **不設幀數約束**（不再用 30fps 猜測；VFR 來源下幀數無意義，只靠 duration）
     func makeKeyFrameIntervalOptions(measuredFrameRate: Double? = nil) -> Set<VTSessionOption> {
         let duration = effectiveMaxKeyFrameIntervalDuration
-        var options = Set<VTSessionOption>([
-            .init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: duration))
-        ])
+        var options = Set<VTSessionOption>()
+        // 0 代表 automatic：兩個 keyframe option 都不送，交給 VideoToolbox
+        // 依裝置／codec／bitrate 決定；不可再 fallback 成 2 秒。
+        if duration > 0 {
+            options.insert(.init(key: .maxKeyFrameIntervalDuration, value: NSNumber(value: duration)))
+        }
         if let maxKeyFrameInterval = maxKeyFrameInterval(measuredFrameRate: measuredFrameRate) {
             options.insert(.init(key: .maxKeyFrameInterval, value: NSNumber(value: maxKeyFrameInterval)))
         }
@@ -448,7 +451,7 @@ public struct VideoCodecSettings: Codable, Sendable {
     }
 
     package var effectiveMaxKeyFrameIntervalDuration: Int32 {
-        maxKeyFrameIntervalDuration > 0 ? maxKeyFrameIntervalDuration : 2
+        max(0, maxKeyFrameIntervalDuration)
     }
 
     private func maxKeyFrameInterval(measuredFrameRate: Double?) -> Int32? {

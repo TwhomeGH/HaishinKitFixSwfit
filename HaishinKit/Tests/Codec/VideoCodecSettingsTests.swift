@@ -49,20 +49,22 @@ import VideoToolbox
         #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 120)
     }
 
-    @Test("duration 為 0：退回預設") func keyFrameIntervalOptions_zeroDurationFallsBackToDefault() {
+    @Test("duration 為 0：automatic，不送 keyframe options")
+    func keyFrameIntervalOptions_zeroDurationIsAutomatic() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
         let options = settings.makeKeyFrameIntervalOptions()
 
-        #expect(options.number(for: .maxKeyFrameIntervalDuration)?.int32Value == 2)
+        #expect(options.value(for: .maxKeyFrameIntervalDuration) == nil)
         #expect(options.value(for: .maxKeyFrameInterval) == nil)
     }
 
-    @Test("duration 為 0：實測幀率回退") func keyFrameIntervalOptions_zeroDurationUsesFallbackForMeasuredFrameRate() {
+    @Test("duration 為 0：即使有幀率也不送幀數約束")
+    func keyFrameIntervalOptions_zeroDurationIgnoresMeasuredFrameRate() {
         let settings = VideoCodecSettings(maxKeyFrameIntervalDuration: 0)
         let options = settings.makeKeyFrameIntervalOptions(measuredFrameRate: 45)
 
-        #expect(options.number(for: .maxKeyFrameIntervalDuration)?.int32Value == 2)
-        #expect(options.number(for: .maxKeyFrameInterval)?.int32Value == 90)
+        #expect(options.value(for: .maxKeyFrameIntervalDuration) == nil)
+        #expect(options.value(for: .maxKeyFrameInterval) == nil)
     }
 
     @Test("實測幀率作為 expectedFrameRate") func makeOptions_measuredFrameRateAsExpectedFrameRateHint() {

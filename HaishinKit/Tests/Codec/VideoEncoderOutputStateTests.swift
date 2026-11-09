@@ -113,6 +113,14 @@ import Testing
         #expect(decoded.events["encoderKeyFrame"]?.count == 1)
     }
 
+    @Test func ptsRegressionRequiresNewKeyFrame() {
+        let state = VideoEncoderOutputState()
+        #expect(state.shouldForceKeyFrame(at: 10, interval: 2))
+        state.deliver(isKeyFrame: true, seconds: 10) { true }
+        #expect(!state.shouldForceKeyFrame(at: 11, interval: 2))
+        #expect(state.shouldForceKeyFrame(at: 1, interval: 2))
+    }
+
     @Test func diagnosticFailureAndRejectedYieldAreDistinct() {
         let tracker = VideoPipelineEventTracker()
         let state = VideoEncoderOutputState(diagnostics: tracker)

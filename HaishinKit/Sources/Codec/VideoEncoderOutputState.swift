@@ -41,6 +41,8 @@ final class VideoEncoderOutputState: @unchecked Sendable {
     private var waitingForKeyFrame = true
     /// 最後一個確認成功（被 continuation 接受）的 keyframe PTS（秒）。
     private var lastKeyFrameSeconds: Double?
+    /// 最後一次觀察到的輸入 PTS（秒）；用於偵測來源時間軸重建。
+    private var lastObservedSeconds: Double?
     /// encode 非同步失敗碼。一旦寫入就持續失敗，直到 owner 換掉 session 為止。
     private var failure: Int32?
 
@@ -90,6 +92,14 @@ final class VideoEncoderOutputState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard active else { return false }
+        if let lastObservedSeconds, seconds < lastObservedSeconds - 1 {
+            // 來源 PTS 重建（倒退超過 1 秒）：舊的 GOP 基準已失效，重新要求
+            // 一顆 sync frame，避免 keyframe cadence 卡在錯誤的時間軸。
+            waitingForKeyFrame = true
+            lastKeyFrameSeconds = nil
+            diagnostics.record(.encoderPTSReset)
+        }
+        lastObservedSeconds = seconds
         if waitingForKeyFrame { return true }
         guard interval > 0, let lastKeyFrameSeconds else { return false }
         return seconds - lastKeyFrameSeconds >= interval
