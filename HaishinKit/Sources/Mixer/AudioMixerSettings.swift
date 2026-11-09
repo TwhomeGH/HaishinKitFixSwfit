@@ -127,6 +127,16 @@ public struct AudioMixerSettings: Codable, Sendable {
         // float32 planar 音訊），沿用 `format.isInterleaved` 會推導出 non-interleaved 的
         // 輸出格式，使 MultiChannelMixer／GenericOutput 在 initialize／render 階段失敗
         // → mixer 完全不輸出（推流無聲）。混音結果不受 interleaving 影響。
+        // 1／2 聲道不需要 channel layout；帶 layout 的 interleaved 2ch
+        // 在部分 macOS AudioUnit 會讓 mixer input stream format 回 -10868。
+        if channelCount <= 2 {
+            return .init(
+                commonFormat: Self.commonFormat,
+                sampleRate: sampleRate,
+                channels: channelCount,
+                interleaved: true
+            )
+        }
         if let channelLayout = AVAudioUtil.makeChannelLayout(channelCount) {
             return .init(
                 commonFormat: Self.commonFormat,
