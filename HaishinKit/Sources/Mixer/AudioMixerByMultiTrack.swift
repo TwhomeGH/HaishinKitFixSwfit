@@ -233,6 +233,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
             return
         }
         sampleTime = Self.defaultSampleTime
+        anchor = nil
         lastOutputPosition.removeAll()
         lastOutputUptime.removeAll()
         activeClockTrack = tracks.keys.contains(_settings.mainTrack)
@@ -329,7 +330,8 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
             outputChannelRMS = Self.channelRMS(buffer)
             refreshDiagnosticsCache()
             let time = AVAudioTime(sampleTime: sampleTime, atRate: outputNode.format.sampleRate)
-            if let anchor, let when = time.extrapolateTime(fromAnchor: anchor) {
+            if let anchor {
+                let when = time.extrapolateTime(fromAnchor: anchor) ?? time
                 delegate?.audioMixer(self, didOutput: buffer.muted(settings.isMuted), when: when)
                 sampleTime += Int64(numberOfFrames)
             }
@@ -473,6 +475,10 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         let endPosition = position + Int64(numberOfFrames)
         if sampleTime == Self.defaultSampleTime {
             sampleTime = position
+            anchor = when
+        } else if anchor == nil {
+            // sampleTime 已被其他路徑推進但沒有基準時，補上本次 when；
+            // 否則 mix() 會因缺 anchor 而只 render、不交給 delegate。
             anchor = when
         }
         guard endPosition > sampleTime else {
