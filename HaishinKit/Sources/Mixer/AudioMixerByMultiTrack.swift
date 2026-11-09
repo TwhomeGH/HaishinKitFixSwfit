@@ -240,7 +240,10 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
             ? _settings.mainTrack
             : (tracks.keys.sorted().first ?? _settings.mainTrack)
         let mixerNode = try MixerNode(format: outputFormat)
-        try mixerNode.update(busCount: tracks.count, scope: .input)
+        // Apple bug: MultiChannelMixer 無法設成少於 8 個 bus；即使只啟用
+        // 實際存在的軌，也要先把 element count 拉到 8，否則 2 聲道設定會
+        // 在 updateBus 回 -10868（kAudioUnitErr_InvalidElement）。
+        try mixerNode.update(busCount: max(tracks.count, 8), scope: .input)
         let busCount = try mixerNode.busCount(scope: .input)
         for index in 0..<busCount {
             try mixerNode.enable(bus: UInt8(index), scope: .input, isEnabled: false)
