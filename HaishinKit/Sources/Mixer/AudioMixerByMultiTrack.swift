@@ -114,6 +114,7 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     // 最近一次 setup／render 失敗原因（診斷用）。錯誤原本會被 AudioCaptureUnit 吞掉，
     // 這裡保留以便透過 AudioPipelineDiagnostics 顯示在 host 端日誌。
     private var lastError: String?
+    private var setupStage = "init"
     // 最近一次混合輸出的 per-channel RMS（AHealth 診斷用）。
     private var outputChannelRMS: [Float] = []
     // 診斷快照快取：由 queue 上的 append/mix 更新；讀取端只上鎖不排隊，
@@ -214,13 +215,13 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         do {
             try setupAudioNodes()
         } catch {
-            lastError = "setup: \(error)"
+            lastError = "setup[\(setupStage)]: \(error)"
             logger.error(error)
             delegate?.audioMixer(self, errorOccurred: .failedToMix(error: error))
         }
     }
 
-    private func setupAudioNodes() throws {
+        private func setupAudioNodes() throws {
         if let mixerNode {
             AudioOutputUnitStop(mixerNode.audioUnit)
         }
@@ -239,33 +240,50 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
         activeClockTrack = tracks.keys.contains(_settings.mainTrack)
             ? _settings.mainTrack
             : (tracks.keys.sorted().first ?? _settings.mainTrack)
+        setupStage = "mixer.init"
         let mixerNode = try MixerNode(format: outputFormat)
         // Apple bug: MultiChannelMixer 無法設成少於 8 個 bus；即使只啟用
         // 實際存在的軌，也要先把 element count 拉到 8，否則 2 聲道設定會
         // 在 updateBus 回 -10868（kAudioUnitErr_InvalidElement）。
+        setupStage = "mixer.updateBusCount"
         try mixerNode.update(busCount: max(tracks.count, 8), scope: .input)
+        setupStage = "mixer.busCount"
         let busCount = try mixerNode.busCount(scope: .input)
         for index in 0..<busCount {
+            setupStage = "mixer.disableBus(\(index))"
             try mixerNode.enable(bus: UInt8(index), scope: .input, isEnabled: false)
         }
         for (bus, track) in tracks {
+            setupStage = "mixer.enableBus(\(bus))"
             try mixerNode.enable(bus: bus, scope: .input, isEnabled: true)
+            setupStage = "mixer.inputFormat(\(bus))"
             try mixerNode.update(format: outputFormat, bus: bus, scope: .input)
+            setupStage = "mixer.inputCallback(\(bus))"
             var callbackStruct = AURenderCallbackStruct(inputProc: inputRenderCallback,
                                                         inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
             try mixerNode.update(inputCallback: &callbackStruct, bus: bus)
+            setupStage = "mixer.inputVolume(\(bus))"
             try mixerNode.update(volume: track.settings.volume, bus: bus, scope: .input)
         }
+        setupStage = "mixer.outputFormat"
         try mixerNode.update(format: outputFormat, bus: 0, scope: .output)
+        setupStage = "mixer.outputVolume"
         try mixerNode.update(volume: 1, bus: 0, scope: .output)
+        setupStage = "output.init"
         let outputNode = try OutputNode(format: outputFormat)
+        setupStage = "output.inputFormat"
         try outputNode.update(format: outputFormat, bus: 0, scope: .input)
+        setupStage = "output.outputFormat"
         try outputNode.update(format: outputFormat, bus: 0, scope: .output)
+        setupStage = "mixer.connect"
         try mixerNode.connect(to: outputNode)
+        setupStage = "mixer.initialize"
         try mixerNode.initializeAudioUnit()
+        setupStage = "output.initialize"
         try outputNode.initializeAudioUnit()
         self.mixerNode = mixerNode
         self.outputNode = outputNode
+        setupStage = "done"
         registerRouteObservation()
         if logger.isEnabledFor(level: .info) {
             logger.info("mixerAudioUnit: \(mixerNode)")
