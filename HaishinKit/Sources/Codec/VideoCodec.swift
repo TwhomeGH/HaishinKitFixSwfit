@@ -72,6 +72,9 @@ final class VideoCodec {
     }
     /// Last frame rate pushed into the VT session (refresh throttle).
     private var lastPushedFrameRate: Double?
+    /// 最近一次 VT NumberOfPendingFrames；僅供診斷，不參與節流決策以外的狀態。
+    private(set) var pendingFrameCount: Int?
+    private var lastPendingFrameSampleTime = Date.distantPast
 
     /// EMA of the real frame cadence from sample-buffer PTS deltas. Ignored
     /// frames (useFrame filter / drop ratio) don't advance the source clock —
@@ -129,6 +132,8 @@ final class VideoCodec {
         lastRawFramePTSSeconds = nil
         measuredFrameInterval = nil
         lastPushedFrameRate = nil
+        pendingFrameCount = nil
+        lastPendingFrameSampleTime = .distantPast
     }
 
     /// Adaptive frame throttle: pre-encode drop-ratio gate. Only engages when VT is
@@ -136,6 +141,15 @@ final class VideoCodec {
     /// drop ratio one step at a time (60→30→20→15fps at 60fps input), and recovers
     /// below a lower hysteresis threshold. PTS of accepted frames is untouched —
     /// output cadence stays uniform. Never writes frameInterval.
+    private func refreshPendingFrameCount() {
+        let now = Date()
+        guard 0.5 < now.timeIntervalSince(lastPendingFrameSampleTime) else {
+            return
+        }
+        lastPendingFrameSampleTime = now
+        pendingFrameCount = (session?.copyProperty(kVTCompressionPropertyKey_NumberOfPendingFrames) as? NSNumber)?.intValue
+    }
+
     private func updateAdaptiveDropRatio() {
         guard settings.adaptiveFrameThrottle else {
             dropRatio = 1
@@ -172,6 +186,7 @@ final class VideoCodec {
         }
         if sampleBuffer.formatDescription?.isCompressed == false {
             updateMeasuredFrameRate(sampleBuffer.presentationTimeStamp)
+            refreshPendingFrameCount()
         }
         do {
             // 上一輪若 VT callback 回報非同步 encode 失敗，先在此把錯誤拋出，
@@ -323,5 +338,7 @@ extension VideoCodec: Runner {
         lastRawFramePTSSeconds = nil
         measuredFrameInterval = nil
         lastPushedFrameRate = nil
+        pendingFrameCount = nil
+        lastPendingFrameSampleTime = .distantPast
     }
 }

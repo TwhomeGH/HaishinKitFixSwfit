@@ -936,7 +936,9 @@ public actor RTMPStream {
     /// 統一唯讀入口，不等待 RTMP 或 Mixer actor；UI 與日誌可各自保存前次快照。
     public nonisolated func videoPipelineSnapshot() -> VideoPipelineSnapshot {
         mixerOutputBridge.snapshot(encoderInput: outgoing.videoQueueSnapshot(),
-            encoder: outgoing.videoEncoderSnapshot, output: videoOutputDiagnostics.snapshot())
+            encoder: outgoing.videoEncoderSnapshot,
+            encoderPendingFrames: outgoing.videoEncoderPendingFrames,
+            output: videoOutputDiagnostics.snapshot())
     }
 
     /// 取得實際壓縮輸出格式與累計量；呼叫端可每數秒取樣，不必取走媒體樣本。

@@ -117,6 +117,83 @@ public struct VideoMixerSnapshot: Codable, Sendable {
     }
 }
 
+/// VT 編碼器健康摘要；區分 VT 丟幀、App 節流、下游拒收與等待 keyframe。
+public struct VideoEncoderHealth: Codable, Sendable {
+    public enum State: String, Codable, Sendable, Equatable {
+        case healthy
+        case failure
+        case vtDrop
+        case outputRejected
+        case waitingKeyFrame
+        case throughputThrottle
+        case ptsReset
+    }
+
+    public let state: State
+    public let sampledAt: TimeInterval
+    public let submitted: UInt64
+    public let callbacks: UInt64
+    public let delivered: UInt64
+    public let keyFrames: UInt64
+    public let dropped: UInt64
+    public let filtered: UInt64
+    public let keyFrameSuppressed: UInt64
+    public let yieldRejected: UInt64
+    public let failures: UInt64
+    public let sessionChanges: UInt64
+    public let ptsResets: UInt64
+    public let pendingFrames: Int?
+    public let lastErrorCode: Int32?
+
+    public init(events: VideoPipelineEventsSnapshot?, pendingFrames: Int?) {
+        let snapshot = events
+        let sampledAt = snapshot?.sampledAt ?? 0
+        let counts = snapshot?.events ?? [:]
+        func count(_ event: VideoPipelineEvent) -> UInt64 {
+            counts[event.rawValue]?.count ?? 0
+        }
+        func recent(_ event: VideoPipelineEvent, window: TimeInterval = 5) -> Bool {
+            guard let value = counts[event.rawValue] else { return false }
+            return sampledAt - value.lastAt <= window
+        }
+
+        submitted = count(.encoderSubmitted)
+        callbacks = count(.encoderCallback)
+        delivered = count(.encoderDelivered)
+        keyFrames = count(.encoderKeyFrame)
+        dropped = count(.encoderDropped)
+        filtered = count(.encoderFiltered)
+        keyFrameSuppressed = count(.encoderKeyFrameSuppressed)
+        yieldRejected = count(.encoderYieldRejected)
+        failures = count(.encoderFailure)
+        sessionChanges = count(.encoderSessionChanged)
+        ptsResets = count(.encoderPTSReset)
+        self.sampledAt = sampledAt
+        self.pendingFrames = pendingFrames
+        lastErrorCode = snapshot?.lastErrorCode
+
+        if recent(.encoderFailure) {
+            state = .failure
+        } else if recent(.encoderDropped) {
+            state = .vtDrop
+        } else if recent(.encoderYieldRejected) {
+            state = .outputRejected
+        } else if recent(.encoderPTSReset) {
+            state = .ptsReset
+        } else if recent(.encoderKeyFrameSuppressed) {
+            state = .waitingKeyFrame
+        } else if recent(.encoderFiltered) {
+            state = .throughputThrottle
+        } else {
+            state = .healthy
+        }
+    }
+
+    public var summary: String {
+        "state=\(state.rawValue) pending=\(pendingFrames.map(String.init) ?? "unknown") submitted=\(submitted) delivered=\(delivered) dropped=\(dropped) filtered=\(filtered) suppressed=\(keyFrameSuppressed) yieldRejected=\(yieldRejected) failures=\(failures) ptsReset=\(ptsResets) lastError=\(lastErrorCode.map(String.init) ?? "none")"
+    }
+}
+
 /// 影片從 Mixer、編碼輸入到 RTMP 本機輸出階段的唯讀診斷彙總。
 ///
 /// 由 RTMPHaishinKit 的 RTMPStream.videoPipelineSnapshot() 取得；
@@ -125,7 +202,7 @@ public struct VideoMixerSnapshot: Codable, Sendable {
 /// 時間採單調時鐘；累計量的生命週期依佇列／事件 tracker／橋接器而不同。
 /// 請以 queue.id、事件 id 與上游串流實例分別判斷是否可比較。
 public struct VideoPipelineSnapshot: Codable, Sendable {
-    /// 快照資料結構版本，目前為 2；不是套件版本或連線世代。
+    /// 快照資料結構版本，目前為 3（新增 encoderHealth）；不是套件版本或連線世代。
     public let schemaVersion: Int
     /// 彙總快照的單調時鐘秒數；各子快照另有自己的取樣時間。
     public let sampledAt: TimeInterval
@@ -146,13 +223,18 @@ public struct VideoPipelineSnapshot: Codable, Sendable {
     /// RTMPStream 的編碼接收、訊息建立、輸出入列與連線接受事件。
     /// 只表示本機管線進度，不代表 socket 成功送出或伺服器確認；nil 表示未提供。
     public let output: VideoPipelineEventsSnapshot?
+    /// VT 編碼器健康摘要（含 pending frames）；舊快照沒有此欄位時為 nil。
+    public let encoderHealth: VideoEncoderHealth?
 
     /// 組合呼叫端已取得的診斷資料；不會觸發擷取、編碼或網路傳送。
     public init(sampledAt: TimeInterval, mixer: VideoMixerSnapshot?, encoderInput: VideoQueueStageSnapshot,
                 bridgeReceived: Int, pressureDrops: Int, lastPTS: Double?,
-                encoder: VideoPipelineEventsSnapshot? = nil, output: VideoPipelineEventsSnapshot? = nil) {
-        schemaVersion = 2
+                encoder: VideoPipelineEventsSnapshot? = nil,
+                encoderPendingFrames: Int? = nil,
+                output: VideoPipelineEventsSnapshot? = nil) {
+        schemaVersion = 3
         self.encoder = encoder; self.output = output
+        encoderHealth = VideoEncoderHealth(events: encoder, pendingFrames: encoderPendingFrames)
         self.sampledAt = sampledAt; self.mixer = mixer; self.encoderInput = encoderInput
         self.bridgeReceived = bridgeReceived; self.pressureDrops = pressureDrops
         self.lastPTS = lastPTS
@@ -162,6 +244,6 @@ public struct VideoPipelineSnapshot: Codable, Sendable {
     /// - Parameter previous: 同一觀察來源的前次快照；不同 queue.id 不計算速率。
     /// - Returns: 日誌文字，格式不適合作為穩定的機器解析接口；UI 應直接讀欄位。
     public func summary(since previous: Self? = nil) -> String {
-        "schema=\(schemaVersion) encoder{\(encoder?.summary ?? "unavailable")} output{\(output?.summary ?? "unavailable")} encoderInput{\(encoderInput.summary(since: previous?.encoderInput))} bridge{received=\(bridgeReceived) pressureDrop=\(pressureDrops) lastPTS=\(lastPTS ?? -1)} mixer{input{\(mixer?.input.summary(since: previous?.mixer?.input) ?? "unavailable")} output{\(mixer?.output.summary(since: previous?.mixer?.output) ?? "unavailable")}}"
+        "schema=\(schemaVersion) encoderHealth{\(encoderHealth?.summary ?? "unavailable")} encoder{\(encoder?.summary ?? "unavailable")} output{\(output?.summary ?? "unavailable")} encoderInput{\(encoderInput.summary(since: previous?.encoderInput))} bridge{received=\(bridgeReceived) pressureDrop=\(pressureDrops) lastPTS=\(lastPTS ?? -1)} mixer{input{\(mixer?.input.summary(since: previous?.mixer?.input) ?? "unavailable")} output{\(mixer?.output.summary(since: previous?.mixer?.output) ?? "unavailable")}}"
     }
 }
