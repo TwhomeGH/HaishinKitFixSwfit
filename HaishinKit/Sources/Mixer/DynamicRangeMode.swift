@@ -1,19 +1,19 @@
 import AVFoundation
 import CoreImage
 
-/// Defines the dynamic range mode used for rendering or video processing.
+/// 定義影片擷取與畫面合成使用的動態範圍。
 ///
-/// - Note: Live streaming is **not yet supported** when using HDR mode.
+/// - Note: HDR 模式目前**尚未支援即時串流**；只用於本機處理／錄製時，
+///   仍需確認下游 encoder 與輸出格式支援 10-bit／HLG。
 public enum DynamicRangeMode: Sendable {
     private static let colorSpaceITUR709 = CGColorSpace(name: CGColorSpace.itur_709)
     private static let colorSpaceITUR2100 = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
 
-    /// Standard Dynamic Range (SDR) mode.
-    /// Uses the sRGB color space and standard luminance range.
+    /// 標準動態範圍：8-bit YUV 420（VideoRange）＋ ITU-R BT.709。
     case sdr
 
-    /// High Dynamic Range (HDR) mode.
-    /// Uses the ITU-R BT.2100 HLG color space for wide color gamut and extended brightness.
+    /// 高動態範圍：10-bit YUV 420（VideoRange）＋ ITU-R BT.2100 HLG。
+    /// 輸出的 pixel buffer 會帶上 BT.2020 primaries／HLG transfer。
     case hdr
 
     var videoFormat: OSType {

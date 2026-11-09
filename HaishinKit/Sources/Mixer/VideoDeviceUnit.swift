@@ -133,6 +133,8 @@ public final class VideoDeviceUnit: DeviceUnit {
         self.frameRate = frameRate
     }
 
+    /// 在目前解析度下尋找對應 SDR／HDR pixel format 的 AVCaptureDevice format。
+    /// 找不到時丟出 unsupportedDynamicRangeMode；成功才更新 activeFormat。
     func setDynamicRangeMode(_ dynamicRangeMode: DynamicRangeMode) throws {
         guard let device, self.dynamicRangeMode != dynamicRangeMode else {
             return

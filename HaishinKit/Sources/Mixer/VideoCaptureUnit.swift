@@ -70,6 +70,8 @@ final class VideoCaptureUnit: CaptureUnit {
         "input{\(inputQueue.diagnostics())} output{\(outputQueue.diagnostics())}"
     }
 
+    /// 相機擷取端的動態範圍；目前只在 tvOS 17+ 套用到 AVCaptureDevice format。
+    /// iOS 的 Live Photo／相機擷取不走這裡，因此上層設定可能只更新 Screen renderer。
     var dynamicRangeMode: DynamicRangeMode = .sdr {
         didSet {
             guard dynamicRangeMode != oldValue, #available(tvOS 17.0, *) else {
