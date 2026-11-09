@@ -123,6 +123,8 @@ import Testing
         for _ in 0..<4 {
             mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
         }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        print("APP-ONLY-DIAG format=\(String(describing: mixer.outputFormat)) tracks=\(mixer.diagnosticsSnapshot().tracks)")
         try await waitUntil { !result.outputs.isEmpty }
         #expect(!result.outputs.isEmpty)
     }
