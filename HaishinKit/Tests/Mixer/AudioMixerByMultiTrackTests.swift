@@ -109,6 +109,22 @@ import Testing
         // #expect(result.error == nil)
     }
 
+    @Test("只有 App 軌且 mainTrack 指向已移除的 mic 仍要輸出") func appOnlyWithMissingMainTrack() async throws {
+        let result = Result()
+        let mixer = AudioMixerByMultiTrack()
+        mixer.delegate = result
+        mixer.settings = .init(
+            sampleRate: 48000,
+            channels: 2,
+            mainTrack: 1,
+            outputFormatTrack: 0,
+            tracks: [0: .default]
+        )
+        mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
+        try await waitUntil { !result.outputs.isEmpty }
+        #expect(!result.outputs.isEmpty)
+    }
+
     @Test("各軌輸入格式") func inputFormats() async throws {
         let mixer = AudioMixerByMultiTrack()
         mixer.settings = .init(
