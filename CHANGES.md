@@ -1,5 +1,16 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.09 23:40 音訊時間軸、環形緩衝與 VT 健康
+
+- 音訊主時鐘：`AudioMixerByMultiTrack` 新增 `activeClockTrack`，只在 main 停止、接手軌停止或 main 恢復時切換；正常連續幀不再每幀覆寫 `sampleTime`。`MixClockAdvance` 新增 `mainIsActive`，main 停止後由其他軌接手。
+- 音訊環形緩衝：copy／render／zero 改走 `AudioBufferList.mData` 原始指標，修正 Float32／Int32 被當成 Int16 指標的 byte offset；來源 PTS 倒退超過約 1 秒時重建緩衝。`AudioMixerTrack` 的 `AudioTime` 只在不連續時重建 anchor。
+- 新增 Mixer track 的 AVAudioConverter 診斷：convert 狀態、input callback 請求／供應 frames、輸出 frames、zero output、重建、格式與錯誤。
+- Keyframe：`maxKeyFrameIntervalDuration == 0` 改為真正的 automatic，不送 duration／frame interval option；PTS 大幅倒退時重置 keyframe 等待。
+- VT 健康：`VideoEncoderHealth` 區分 vtDrop／outputRejected／waitingKeyFrame／throughputThrottle／ptsReset／failure，加入 pendingFrameCount；`VideoPipelineSnapshot` schema 3 新增 `encoderHealth`。
+- 動態範圍：補中文註釋；`VideoCaptureUnit` 不再用 `try?` 吞掉相機動態範圍錯誤，`MediaMixer.setDynamicRangeMode` 會把錯誤往上回傳。
+- FPS：`MediaMixer.setFrameRate` 明確只控制相機 frame rate，新增 `setDisplayFrameRate` 控制 offscreen display link；`frameRate` 與 display FPS 脫鉤。
+- 尚未 push；Apple CI／實機驗收待執行。AVAudioConverter 目前只接到 Mixer track，AAC `AudioCodec` 的 encoder converter 尚未接入同一摘要。
+
 ## 2026.10.25 00:48 補強同幀編碼與 RTMP 入列時間診斷
 
 - VT 成功回呼保留同幀提交 PTS、輸出 PTS／DTS、單調耗時與 session 識別；舊 session 回呼不污染新觀測。
