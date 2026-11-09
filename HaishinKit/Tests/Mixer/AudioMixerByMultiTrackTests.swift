@@ -120,7 +120,9 @@ import Testing
             outputFormatTrack: 0,
             tracks: [0: .default]
         )
-        mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
+        for _ in 0..<4 {
+            mixer.append(0, buffer: CMAudioSampleBufferFactory.makeSinWave(48000, numSamples: 1024, channels: 2)!)
+        }
         try await waitUntil { !result.outputs.isEmpty }
         #expect(!result.outputs.isEmpty)
     }
