@@ -312,16 +312,16 @@ public final actor MediaMixer {
     /// `VideoCaptureUnit` 的相機格式。相機格式切換需要時間，直播中不建議
     /// 動態切換；目前 HDR 也不支援即時串流。
     ///
-    /// - Important: 擷取端的 camera format 更新目前在 `VideoCaptureUnit` 內以
-    ///   `try?` 吞掉錯誤，因此這個 `throws` 介面目前無法可靠回報相機不支援。
+    /// - Throws: 相機不支援目標格式時由 `VideoCaptureUnit` 原樣拋出，不會
+    ///   再被 `try?` 吞掉；失敗時 `self` 與 Screen renderer 維持原狀。
     public func setDynamicRangeMode(_ dynamicRangeMode: DynamicRangeMode) throws {
         guard self.dynamicRangeMode != dynamicRangeMode else {
             return
         }
+        try videoIO.setDynamicRangeMode(dynamicRangeMode)
         Task { @ScreenActor in
             screen.dynamicRangeMode = dynamicRangeMode
         }
-        videoIO.dynamicRangeMode = dynamicRangeMode
         self.dynamicRangeMode = dynamicRangeMode
     }
 

@@ -70,19 +70,21 @@ final class VideoCaptureUnit: CaptureUnit {
         "input{\(inputQueue.diagnostics())} output{\(outputQueue.diagnostics())}"
     }
 
-    /// 相機擷取端的動態範圍；目前只在 tvOS 17+ 套用到 AVCaptureDevice format。
-    /// iOS 的 Live Photo／相機擷取不走這裡，因此上層設定可能只更新 Screen renderer。
-    var dynamicRangeMode: DynamicRangeMode = .sdr {
-        didSet {
-            guard dynamicRangeMode != oldValue, #available(tvOS 17.0, *) else {
-                return
-            }
-            try? session.configuration { _ in
+    /// 相機擷取端目前使用的動態範圍；只在 tvOS 17+ 會套用到 AVCaptureDevice format。
+    private(set) var dynamicRangeMode: DynamicRangeMode = .sdr
+
+    /// 設定相機動態範圍；相機不支援時把 VideoDeviceUnit 的錯誤原樣往上拋。
+    /// iOS 目前沒有這條相機 format 路徑，因此會直接更新狀態、不拋錯。
+    func setDynamicRangeMode(_ mode: DynamicRangeMode) throws {
+        guard mode != dynamicRangeMode else { return }
+        if #available(tvOS 17.0, *) {
+            try session.configuration { _ in
                 for capture in devices.values {
-                    try capture.setDynamicRangeMode(dynamicRangeMode)
+                    try capture.setDynamicRangeMode(mode)
                 }
             }
         }
+        dynamicRangeMode = mode
     }
 
     private lazy var videoMixer = {
@@ -131,7 +133,7 @@ final class VideoCaptureUnit: CaptureUnit {
                     throw Error.multiCamNotSupported
                 }
                 let capture = try VideoDeviceUnit(track, device: device)
-                try? capture.setDynamicRangeMode(dynamicRangeMode)
+                try capture.setDynamicRangeMode(dynamicRangeMode)
                 #if os(iOS) || os(macOS)
                 capture.videoOrientation = videoOrientation
                 #endif
