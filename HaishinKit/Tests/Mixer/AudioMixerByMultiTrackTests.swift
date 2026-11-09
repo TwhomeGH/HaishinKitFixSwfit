@@ -108,6 +108,9 @@ import Testing
         try await waitUntil { !result.outputs.isEmpty }
         #expect(!result.outputs.isEmpty)
         #expect(result.error == nil)
+        if let last = result.outputs.last {
+            #expect(AudioMixerByMultiTrack.channelRMS(last).contains { $0 > 0.001 })
+        }
     }
 
     @Test("只有 App 軌且 mainTrack 指向已移除的 mic 仍要輸出") func appOnlyWithMissingMainTrack() async throws {

@@ -94,6 +94,8 @@ public struct AudioPipelineDiagnostics: Sendable {
         public let lastAlignDiff: Int
         /// 此音軌 AVAudioConverter 的狀態與 frame 流量。
         public let converter: Converter
+        /// 此音軌最近一次轉換輸出的各聲道 RMS；空陣列代表尚未取得。
+        public let outputChannelRMS: [Float]
 
         public init(
             trackId: UInt8,
@@ -106,7 +108,8 @@ public struct AudioPipelineDiagnostics: Sendable {
             ringBufferCounts: Int,
             alignFireCount: Int,
             lastAlignDiff: Int,
-            converter: Converter = .empty
+            converter: Converter = .empty,
+            outputChannelRMS: [Float] = []
         ) {
             self.trackId = trackId
             self.outputFrames = outputFrames
@@ -119,6 +122,7 @@ public struct AudioPipelineDiagnostics: Sendable {
             self.alignFireCount = alignFireCount
             self.lastAlignDiff = lastAlignDiff
             self.converter = converter
+            self.outputChannelRMS = outputChannelRMS
         }
     }
 

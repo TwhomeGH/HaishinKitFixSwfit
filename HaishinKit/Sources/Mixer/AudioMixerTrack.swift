@@ -68,6 +68,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     private var converterLastError: String?
     private var converterInputFormat = ""
     private var converterOutputFormat = ""
+    private var outputChannelRMS: [Float] = []
     private var audioConverter: AVAudioConverter? {
         didSet {
             guard let audioConverter else {
@@ -181,6 +182,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                     converterZeroOutputCalls += 1
                 }
                 outputFrames += 1
+                outputChannelRMS = AudioMixerByMultiTrack.channelRMS(outputBuffer)
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
                 audioTime.advanced(AVAudioFramePosition(outputBuffer.frameLength))
             case .inputRanDry:
@@ -234,7 +236,8 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 lastError: converterLastError,
                 inputFormat: converterInputFormat,
                 outputFormat: converterOutputFormat
-            )
+            ),
+            outputChannelRMS: outputChannelRMS
         )
     }
 
