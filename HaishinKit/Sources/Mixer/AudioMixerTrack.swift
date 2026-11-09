@@ -54,7 +54,6 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     private(set) var resampleNoDataCount = 0
     private var converterCalls = 0
     private var converterHaveDataCalls = 0
-    private var converterNoDataNowCalls = 0
     private var converterInputRanDryCalls = 0
     private var converterEndOfStreamCalls = 0
     private var converterErrorCalls = 0
@@ -184,8 +183,6 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 outputFrames += 1
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
                 audioTime.advanced(AVAudioFramePosition(outputBuffer.frameLength))
-            case .noDataNow:
-                converterNoDataNowCalls += 1
             case .inputRanDry:
                 converterInputRanDryCalls += 1
             case .endOfStream:
@@ -222,7 +219,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             converter: AudioPipelineDiagnostics.Converter(
                 convertCalls: converterCalls,
                 haveDataCalls: converterHaveDataCalls,
-                noDataNowCalls: converterNoDataNowCalls,
+                noDataNowCalls: converterInputBlockNoDataNowCalls,
                 inputRanDryCalls: converterInputRanDryCalls,
                 endOfStreamCalls: converterEndOfStreamCalls,
                 errorCalls: converterErrorCalls,
@@ -244,7 +241,6 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     private static func converterStatusName(_ status: AVAudioConverterOutputStatus?) -> String {
         switch status {
         case .some(.haveData): return "haveData"
-        case .some(.noDataNow): return "noDataNow"
         case .some(.inputRanDry): return "inputRanDry"
         case .some(.endOfStream): return "endOfStream"
         case .some(.error): return "error"

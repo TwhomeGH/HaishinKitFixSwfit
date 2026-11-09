@@ -418,6 +418,7 @@ public final actor MediaMixer {
                 displayLink.stopRunning()
             }
         case .offscreen:
+            let displayFrameRate = self.displayFrameRate
             Task { @ScreenActor in
                 displayLink.preferredFramesPerSecond = Int(displayFrameRate)
                 displayLink.startRunning()
