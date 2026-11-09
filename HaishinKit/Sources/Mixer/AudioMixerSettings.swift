@@ -130,11 +130,14 @@ public struct AudioMixerSettings: Codable, Sendable {
         // 1／2 聲道不需要 channel layout；帶 layout 的 interleaved 2ch
         // 在部分 macOS AudioUnit 會讓 mixer input stream format 回 -10868。
         if channelCount <= 2 {
+            // 2ch 在部分 macOS AudioUnit 的 MultiChannelMixer input bus 會拒絕
+            // interleaved Float32（-10868）。1ch 沒有這個問題，2ch 改用
+            // non-interleaved；AudioRingBuffer／OutputNode 都支援。
             return .init(
                 commonFormat: Self.commonFormat,
                 sampleRate: sampleRate,
                 channels: channelCount,
-                interleaved: true
+                interleaved: channelCount == 1
             )
         }
         if let channelLayout = AVAudioUtil.makeChannelLayout(channelCount) {
