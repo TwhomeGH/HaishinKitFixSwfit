@@ -52,6 +52,23 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     // 累計診斷計數（AHealth 用）；只在 mixer 專用 queue 上寫入。
     private(set) var outputFrames = 0
     private(set) var resampleNoDataCount = 0
+    private var converterCalls = 0
+    private var converterHaveDataCalls = 0
+    private var converterNoDataNowCalls = 0
+    private var converterInputRanDryCalls = 0
+    private var converterEndOfStreamCalls = 0
+    private var converterErrorCalls = 0
+    private var converterInputFramesRequested = 0
+    private var converterInputFramesSupplied = 0
+    private var converterOutputFrames = 0
+    private var converterZeroOutputCalls = 0
+    private var converterInputBlockHaveDataCalls = 0
+    private var converterInputBlockNoDataNowCalls = 0
+    private var converterRebuilds = 0
+    private var converterLastStatus = "idle"
+    private var converterLastError: String?
+    private var converterInputFormat = ""
+    private var converterOutputFormat = ""
     private var audioConverter: AVAudioConverter? {
         didSet {
             guard let audioConverter else {
@@ -133,8 +150,10 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         let framesBefore = outputFrames
         var status: AVAudioConverterOutputStatus? = .endOfStream
         repeat {
+            converterCalls += 1
             var error: NSError?
             status = audioConverter?.convert(to: outputBuffer, error: &error) { inNumberFrames, status in
+                converterInputFramesRequested += Int(inNumberFrames)
                 // 只提供「完整幀數」：ring buffer 累積夠 inNumberFrames 才
                 // render，不足回 .noDataNow（資料留待下次 append 累積）。
                 // ⚠️ 不可改為 min(inNumberFrames, 可用) 的部分幀餵入 —
@@ -142,21 +161,38 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 // AudioMixerByMultiTrack.mix() → AudioUnitRender 用非對齊
                 // 幀數拉取 AudioRingBuffer，造成樣本錯位 → 電磁音/爆音。
                 if inNumberFrames <= ringBuffer.counts {
+                    converterInputFramesSupplied += Int(inNumberFrames)
+                    converterInputBlockHaveDataCalls += 1
                     _ = ringBuffer.render(inNumberFrames, ioData: inputBuffer.mutableAudioBufferList)
                     inputBuffer.frameLength = inNumberFrames
                     status.pointee = .haveData
                     return inputBuffer
                 } else {
+                    converterInputBlockNoDataNowCalls += 1
                     status.pointee = .noDataNow
                     return nil
                 }
             }
+            converterLastStatus = Self.converterStatusName(status)
             switch status {
             case .haveData:
+                converterHaveDataCalls += 1
+                converterOutputFrames += Int(outputBuffer.frameLength)
+                if outputBuffer.frameLength == 0 {
+                    converterZeroOutputCalls += 1
+                }
                 outputFrames += 1
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
                 audioTime.advanced(AVAudioFramePosition(outputBuffer.frameLength))
+            case .noDataNow:
+                converterNoDataNowCalls += 1
+            case .inputRanDry:
+                converterInputRanDryCalls += 1
+            case .endOfStream:
+                converterEndOfStreamCalls += 1
             case .error:
+                converterErrorCalls += 1
+                converterLastError = error?.localizedDescription
                 if let error {
                     delegate?.track(self, errorOccurred: .failedToConvert(error: error))
                 }
@@ -182,8 +218,39 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
             skipInsertedSamples: ringBuffer?.skipInsertedSamples ?? 0,
             ringBufferCounts: ringBuffer?.counts ?? 0,
             alignFireCount: ringBuffer?.alignFireCountValue ?? 0,
-            lastAlignDiff: ringBuffer?.lastAlignDiffValue ?? 0
+            lastAlignDiff: ringBuffer?.lastAlignDiffValue ?? 0,
+            converter: AudioPipelineDiagnostics.Converter(
+                convertCalls: converterCalls,
+                haveDataCalls: converterHaveDataCalls,
+                noDataNowCalls: converterNoDataNowCalls,
+                inputRanDryCalls: converterInputRanDryCalls,
+                endOfStreamCalls: converterEndOfStreamCalls,
+                errorCalls: converterErrorCalls,
+                inputFramesRequested: converterInputFramesRequested,
+                inputFramesSupplied: converterInputFramesSupplied,
+                outputFrames: converterOutputFrames,
+                zeroOutputCalls: converterZeroOutputCalls,
+                inputBlockHaveDataCalls: converterInputBlockHaveDataCalls,
+                inputBlockNoDataNowCalls: converterInputBlockNoDataNowCalls,
+                converterRebuilds: converterRebuilds,
+                lastStatus: converterLastStatus,
+                lastError: converterLastError,
+                inputFormat: converterInputFormat,
+                outputFormat: converterOutputFormat
+            )
         )
+    }
+
+    private static func converterStatusName(_ status: AVAudioConverterOutputStatus?) -> String {
+        switch status {
+        case .some(.haveData): return "haveData"
+        case .some(.noDataNow): return "noDataNow"
+        case .some(.inputRanDry): return "inputRanDry"
+        case .some(.endOfStream): return "endOfStream"
+        case .some(.error): return "error"
+        case .none: return "idle"
+        @unknown default: return "unknown"
+        }
     }
 
     private func setUp(_ inSourceFormat: CMFormatDescription?) {
@@ -199,6 +266,9 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         }
         audioTime.reset()
         lastSourceTime = nil
+        converterRebuilds += 1
+        converterInputFormat = String(describing: inputFormat)
+        converterOutputFormat = String(describing: outputFormat)
         audioConverter = .init(from: inputFormat, to: outputFormat)
     }
 }

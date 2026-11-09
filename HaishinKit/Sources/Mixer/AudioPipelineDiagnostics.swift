@@ -6,6 +6,67 @@ import Foundation
 /// 區塊計數以 buffers/s 表示，樣本計數以 samples/s 表示；兩者不能混用。
 /// 目前佇列大小、就緒狀態與 RMS 是快照值，不是累計值。
 public struct AudioPipelineDiagnostics: Sendable {
+    /// AVAudioConverter 的呼叫與輸出狀態；用來區分正常等待與真正 underrun。
+    public struct Converter: Sendable {
+        public let convertCalls: Int
+        public let haveDataCalls: Int
+        public let noDataNowCalls: Int
+        public let inputRanDryCalls: Int
+        public let endOfStreamCalls: Int
+        public let errorCalls: Int
+        public let inputFramesRequested: Int
+        public let inputFramesSupplied: Int
+        public let outputFrames: Int
+        public let zeroOutputCalls: Int
+        public let inputBlockHaveDataCalls: Int
+        public let inputBlockNoDataNowCalls: Int
+        public let converterRebuilds: Int
+        public let lastStatus: String
+        public let lastError: String?
+        public let inputFormat: String
+        public let outputFormat: String
+
+        public init(
+            convertCalls: Int = 0,
+            haveDataCalls: Int = 0,
+            noDataNowCalls: Int = 0,
+            inputRanDryCalls: Int = 0,
+            endOfStreamCalls: Int = 0,
+            errorCalls: Int = 0,
+            inputFramesRequested: Int = 0,
+            inputFramesSupplied: Int = 0,
+            outputFrames: Int = 0,
+            zeroOutputCalls: Int = 0,
+            inputBlockHaveDataCalls: Int = 0,
+            inputBlockNoDataNowCalls: Int = 0,
+            converterRebuilds: Int = 0,
+            lastStatus: String = "idle",
+            lastError: String? = nil,
+            inputFormat: String = "",
+            outputFormat: String = ""
+        ) {
+            self.convertCalls = convertCalls
+            self.haveDataCalls = haveDataCalls
+            self.noDataNowCalls = noDataNowCalls
+            self.inputRanDryCalls = inputRanDryCalls
+            self.endOfStreamCalls = endOfStreamCalls
+            self.errorCalls = errorCalls
+            self.inputFramesRequested = inputFramesRequested
+            self.inputFramesSupplied = inputFramesSupplied
+            self.outputFrames = outputFrames
+            self.zeroOutputCalls = zeroOutputCalls
+            self.inputBlockHaveDataCalls = inputBlockHaveDataCalls
+            self.inputBlockNoDataNowCalls = inputBlockNoDataNowCalls
+            self.converterRebuilds = converterRebuilds
+            self.lastStatus = lastStatus
+            self.lastError = lastError
+            self.inputFormat = inputFormat
+            self.outputFormat = outputFormat
+        }
+
+        public static let empty = Converter()
+    }
+
     /// 單一音軌的重取樣與緩衝計數。
     public struct Track: Sendable {
         /// 呼叫端指定的音軌 ID；ReplyKit 慣例為 0 = App 音訊、1 = 麥克風。
@@ -31,6 +92,8 @@ public struct AudioPipelineDiagnostics: Sendable {
         /// 最近一次對齊差距，單位為輸入樣本：position - current。
         /// 正值表示本軌起點早於 Mixer 播放位置；負值表示起點較晚。
         public let lastAlignDiff: Int
+        /// 此音軌 AVAudioConverter 的狀態與 frame 流量。
+        public let converter: Converter
 
         public init(
             trackId: UInt8,
@@ -42,7 +105,8 @@ public struct AudioPipelineDiagnostics: Sendable {
             skipInsertedSamples: Int,
             ringBufferCounts: Int,
             alignFireCount: Int,
-            lastAlignDiff: Int
+            lastAlignDiff: Int,
+            converter: Converter = .empty
         ) {
             self.trackId = trackId
             self.outputFrames = outputFrames
@@ -54,6 +118,7 @@ public struct AudioPipelineDiagnostics: Sendable {
             self.ringBufferCounts = ringBufferCounts
             self.alignFireCount = alignFireCount
             self.lastAlignDiff = lastAlignDiff
+            self.converter = converter
         }
     }
 
