@@ -47,6 +47,18 @@ def retryable(text):
             and not ("Test Case" in text and " failed" in text))
 
 
+def test_failure_reported(text):
+    """測試本身失敗（斷言／Swift Testing）不是 runner 啟動失敗。"""
+    if "test runner hung before establishing connection" in text:
+        return False
+    result = parse(text)
+    return bool(result["tests_failed"]
+                or result["issues"]
+                or result["testing_failed"]
+                or "** TEST FAILED **" in text
+                or ("Test Case '" in text and " failed" in text))
+
+
 def run(command, timeout, log):
     """有界執行並保存完整輸出；逾時終止該命令程序群，不影響其他 job。"""
     with log.open("w", encoding="utf-8") as output:
@@ -162,8 +174,15 @@ def main():
             else:
                 test_log.write_text("[CI stage] tests not started: build failed\n", encoding="utf-8")
             if status:
-                with test_log.open("a", encoding="utf-8") as output:
-                    output.write(f"[Runner infrastructure] stage={stage} exit={status}\n")
+                text = test_log.read_text(encoding="utf-8", errors="replace")
+                # xcodebuild 的測試斷言失敗也會回 65；只有沒有測試結果、
+                # 真正卡在 runner／逾時才標成 infrastructure。build-for-testing
+                # 的非逾時失敗是編譯錯誤，交給 compile summary，不誤標 runner。
+                test_failed = stage == "test-without-building" and test_failure_reported(text)
+                build_failed = stage == "build-for-testing" and status != 124
+                if not (test_failed or build_failed):
+                    with test_log.open("a", encoding="utf-8") as output:
+                        output.write(f"[Runner infrastructure] stage={stage} exit={status}\n")
 
         except (RuntimeError, subprocess.SubprocessError, OSError, ValueError, KeyError) as error:
             status = error.code if isinstance(error, StageFailure) else 1

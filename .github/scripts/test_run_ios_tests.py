@@ -29,6 +29,28 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("Runner／環境失敗 | 1", render_markdown(result))
         self.assertIn("❌ 失敗", render_markdown(result))
 
+    def test_assertion_failure_is_not_runner_infrastructure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def fake_run(command, timeout, log):
+                if command[:4] == ["xcrun", "simctl", "list", "devices"]:
+                    content = json.dumps({"devices": {"com.apple.iOS-27": [{"name": "iPhone", "isAvailable": True, "deviceTypeIdentifier": "phone"}]}})
+                elif command[:4] == ["xcrun", "simctl", "list", "runtimes"]:
+                    content = json.dumps({"runtimes": [{"identifier": "com.apple.iOS-27", "version": "27.0", "isAvailable": True}]})
+                elif command[:2] == ["xcodebuild", "test-without-building"]:
+                    content = '✘ Test "example" failed after 1 second.\n** TEST FAILED **'
+                else:
+                    content = "ok"
+                log.write_text(content, encoding="utf-8")
+                return 65 if content.startswith("✘") else 0
+            with patch.object(run_ios_tests, "run", side_effect=fake_run), \
+                 patch.object(run_ios_tests.subprocess, "check_output", return_value="UUID-A"), \
+                 patch("sys.argv", ["runner", "ExampleTests", directory]), \
+                 patch.dict("os.environ", {}, clear=True), patch("builtins.print"):
+                self.assertEqual(run_ios_tests.main(), 65)
+            text = (Path(directory) / "ios-tests.log").read_text(encoding="utf-8")
+            self.assertIn('✘ Test "example" failed', text)
+            self.assertNotIn("[Runner infrastructure]", text)
+
     def test_retry_retains_attempts_and_uses_new_device(self):
         with tempfile.TemporaryDirectory() as directory:
             calls = []
