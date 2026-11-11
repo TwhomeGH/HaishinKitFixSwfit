@@ -254,6 +254,7 @@ private actor MockStream: StreamConvertible {
     }
     func setSoundTransform(_ soundTransfrom: SoundTransform) async {}
     func setVideoInputBufferCounts(_ videoInputBufferCounts: Int) {}
+    func setVideoInputBufferLimits(bytes: Int, duration: TimeInterval) {}
     func append(_ sampleBuffer: CMSampleBuffer) {}
     func append(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) {}
     func attachAudioPlayer(_ audioPlayer: AudioPlayer?) async {}
