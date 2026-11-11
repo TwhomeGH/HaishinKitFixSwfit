@@ -1,5 +1,14 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.11 22:10 編碼輸入緩衝 API 與音訊缺口策略
+
+- `StreamConvertible` 新增 `setVideoInputBufferLimits(bytes:duration:)`，可在不直接操作 actor 屬性的情況下更新 `maxVideoBufferBytes`／`maxVideoBufferDuration`；呼叫會即時更新既有 queue。
+- `AudioRingBuffer` 的來源 PTS 缺口改為大小分流：250 ms 內補零，超過則重建來源時間軸（`rebase`）。大型缺口不再用數秒靜音塞滿環形緩衝，避免把仍在 queue 的歷史音訊擠掉。
+- 新增 `AudioPipelineDiagnostics.GapEvent` 與每軌最近 8 筆缺口：sequence、前後 PTS、gapSamples、mode、緩衝前後量與 droppedSamples；`AudioPipelineDiagnostics.Track` 增加 `zeroFill`／`rebase` 累計數。
+- `AudioMixerTrack` 在來源時間跳躍超過 0.25 秒時重建 `AudioTime` anchor，與 ring buffer 的 rebase 策略一致。
+- 新增 `AudioRingBufferTests`：大缺口保留既有音訊並 rebase、小缺口補零並記錄事件；`StreamConvertible` 測試 stub 補上新 API。
+- ReplyKit 需把 `Package.resolved` 指向本提交；App 端以 `[CaptureAudioGap]` 記錄事件。
+
 ## 2026.11.09 23:40 音訊時間軸、環形緩衝與 VT 健康
 
 - 音訊主時鐘：`AudioMixerByMultiTrack` 新增 `activeClockTrack`，只在 main 停止、接手軌停止或 main 恢復時切換；正常連續幀不再每幀覆寫 `sampleTime`。`MixClockAdvance` 新增 `mainIsActive`，main 停止後由其他軌接手。
