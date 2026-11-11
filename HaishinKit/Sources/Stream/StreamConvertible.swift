@@ -39,6 +39,10 @@ public protocol StreamConvertible: Actor, MediaMixerOutput {
     /// Used to auto-compute `videoInputBufferCounts` when no manual override is set.
     var maxVideoBufferBytes: Int { get set }
 
+    /// Sets the byte budget and maximum residence time of the raw video input queue.
+    /// Unlike `setVideoInputBufferCounts`, this is safe to call while publishing.
+    func setVideoInputBufferLimits(bytes: Int, duration: TimeInterval)
+
     /// Appends a CMSampleBuffer.
     /// - Parameters:
     ///   - sampleBuffer:The sample buffer to append.
@@ -99,6 +103,11 @@ extension _Stream {
 
     public func setVideoInputBufferCounts(_ videoInputBufferCounts: Int) {
         outgoing.setVideoInputBufferCounts(videoInputBufferCounts > 0 ? videoInputBufferCounts : nil)
+    }
+
+    public func setVideoInputBufferLimits(bytes: Int, duration: TimeInterval) {
+        outgoing.maxVideoBufferBytes = bytes
+        outgoing.maxVideoBufferDuration = duration
     }
 
     public func restartVideoEncoding(reason: String = "manual recovery") async {
