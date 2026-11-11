@@ -5,10 +5,25 @@ import CoreMedia
 import Foundation
 
 final class AudioRingBuffer: @unchecked Sendable {
+    /// 一次 PTS 缺口的診斷；event 不包含 PCM，只保留時間與樣本數。
+    struct GapEvent: Sendable {
+        let sequence: UInt64
+        let previousPTS: Double
+        let currentPTS: Double
+        let gapSamples: Int
+        let mode: String
+        let bufferedBefore: Int
+        let bufferedAfter: Int
+        let droppedSamples: Int
+    }
+
     // 容量 24×1024 = 24576 samples ≈ 557ms @44.1k（原 16×1024≈371ms）。
     // 調大吸收更多 producer 節奏抖動，減少 PTS gap 造成的 skip 補 silence
     //（斷續的聽覺來源）。直播延遲本就 ~1s，多 186ms 可忽略。
     private static let bufferCounts: UInt32 = 24
+    /// 小缺口才補零；超過此長度直接重建來源時間基準，避免用數秒靜音
+    /// 把仍在緩衝中的歷史音訊擠掉。
+    static let gapRebaseThresholdSeconds: TimeInterval = 0.25
     private static let numSamples: UInt32 = 1024
     private static let maxCapacity: Int = Int(AudioRingBuffer.numSamples * AudioRingBuffer.bufferCounts)
     /// 來源 PTS 倒退超過約 1 秒視為新的時間基準；清空舊資料，避免把新紀元
@@ -37,6 +52,10 @@ final class AudioRingBuffer: @unchecked Sendable {
     private var alignFireCount = 0
     private var lastAlignDiff = 0
     private var sampleTime: AVAudioFramePosition = 0
+    private var gapSequence: UInt64 = 0
+    private var gapZeroFillCount = 0
+    private var gapRebaseCount = 0
+    private var gapEventsStorage: [GapEvent] = []
     private var inputFormat: AVAudioFormat
     private var inputBuffer: AVAudioPCMBuffer
     private var outputBuffer: AVAudioPCMBuffer
@@ -69,6 +88,49 @@ final class AudioRingBuffer: @unchecked Sendable {
     var alignFireCountValue: Int { lock(); defer { unlock() }; return alignFireCount }
     /// 最近一次 align 看到的偏差（position - current，input 樣本單位；正=落後）。
     var lastAlignDiffValue: Int { lock(); defer { unlock() }; return lastAlignDiff }
+    /// 最近缺口事件（最多 8 筆）；供 App 週期讀取後寫出 event-level 日誌。
+    var gapEvents: [GapEvent] { lock(); defer { unlock() }; return gapEventsStorage }
+    var gapZeroFillCountValue: Int { lock(); defer { unlock() }; return gapZeroFillCount }
+    var gapRebaseCountValue: Int { lock(); defer { unlock() }; return gapRebaseCount }
+
+    /// 小缺口補零、大缺口不補零而重建來源時間軸；保留既有緩衝內容。
+    private func handleGapLocked(targetSampleTime: AVAudioFramePosition) {
+        guard targetSampleTime > sampleTime else { return }
+        let previous = sampleTime
+        let gap = Int(targetSampleTime - previous)
+        let bufferedBefore = calculateCounts()
+        let droppedBefore = overflowDropped
+        let maximumZeroFill = max(1, Int(inputFormat.sampleRate * Self.gapRebaseThresholdSeconds))
+
+        let mode: String
+        if gap > maximumZeroFill {
+            // 不用數秒靜音塞滿緩衝；直接採用新來源時間，讓仍在 queue 的
+            // 歷史音訊先被消費，而不是被 appendZeros 的 overflow 擠掉。
+            sampleTime = targetSampleTime
+            gapRebaseCount += 1
+            mode = "rebase"
+        } else {
+            appendZeros(gap)
+            skipInserted += gap
+            gapZeroFillCount += 1
+            mode = "zeroFill"
+        }
+
+        gapSequence &+= 1
+        let event = GapEvent(
+            sequence: gapSequence,
+            previousPTS: Double(previous) / inputFormat.sampleRate,
+            currentPTS: Double(targetSampleTime) / inputFormat.sampleRate,
+            gapSamples: gap,
+            mode: mode,
+            bufferedBefore: bufferedBefore,
+            bufferedAfter: calculateCounts(),
+            droppedSamples: overflowDropped - droppedBefore)
+        gapEventsStorage.append(event)
+        if gapEventsStorage.count > 8 {
+            gapEventsStorage.removeFirst(gapEventsStorage.count - 8)
+        }
+    }
 
     func isDataAvailable(_ inNumberFrames: UInt32) -> Bool {
         return inNumberFrames <= counts
@@ -120,13 +182,8 @@ final class AudioRingBuffer: @unchecked Sendable {
                 }
             }
         }
-        // PTS gap 直接以 0 樣本寫進尾端（正確位置），不再用 `skip` 搬到佇列
-        // 最前面——否則已緩衝的樣本會被整體往後推（#4 修正）。
-        let gap = max(Int(targetSampleTime - sampleTime), 0)
-        if gap > 0 {
-            appendZeros(gap)
-            skipInserted += gap
-        }
+        // 小 gap 補零；大 gap 重建來源時間軸，避免靜音 overflow 擠掉歷史音訊。
+        handleGapLocked(targetSampleTime: targetSampleTime)
         appendInternal(inputBuffer)
         unlock()
     }
@@ -148,11 +205,7 @@ final class AudioRingBuffer: @unchecked Sendable {
         }
         inputBuffer.frameLength = audioPCMBuffer.frameLength
         _ = inputBuffer.copy(audioPCMBuffer)
-        let gap = max(Int(when.sampleTime - sampleTime), 0)
-        if gap > 0 {
-            appendZeros(gap)
-            skipInserted += gap
-        }
+        handleGapLocked(targetSampleTime: when.sampleTime)
         appendInternal(inputBuffer)
         unlock()
     }

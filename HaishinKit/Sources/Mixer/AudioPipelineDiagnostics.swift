@@ -67,6 +67,31 @@ public struct AudioPipelineDiagnostics: Sendable {
         public static let empty = Converter()
     }
 
+    /// 來源 PTS 缺口事件；只保留事件摘要，不攜帶 PCM。
+    public struct GapEvent: Sendable {
+        public let sequence: UInt64
+        public let previousPTS: Double
+        public let currentPTS: Double
+        public let gapSamples: Int
+        public let mode: String
+        public let bufferedBefore: Int
+        public let bufferedAfter: Int
+        public let droppedSamples: Int
+
+        public init(sequence: UInt64, previousPTS: Double, currentPTS: Double,
+                    gapSamples: Int, mode: String, bufferedBefore: Int,
+                    bufferedAfter: Int, droppedSamples: Int) {
+            self.sequence = sequence
+            self.previousPTS = previousPTS
+            self.currentPTS = currentPTS
+            self.gapSamples = gapSamples
+            self.mode = mode
+            self.bufferedBefore = bufferedBefore
+            self.bufferedAfter = bufferedAfter
+            self.droppedSamples = droppedSamples
+        }
+    }
+
     /// 單一音軌的重取樣與緩衝計數。
     public struct Track: Sendable {
         /// 呼叫端指定的音軌 ID；ReplyKit 慣例為 0 = App 音訊、1 = 麥克風。
@@ -96,6 +121,11 @@ public struct AudioPipelineDiagnostics: Sendable {
         public let converter: Converter
         /// 此音軌最近一次轉換輸出的各聲道 RMS；空陣列代表尚未取得。
         public let outputChannelRMS: [Float]
+        /// 最近 8 筆來源 PTS 缺口；舊事件會被丟棄，避免無界成長。
+        public let gapEvents: [GapEvent]
+        /// 小缺口補零、大缺口重建時間軸的累計次數。
+        public let gapZeroFillCount: Int
+        public let gapRebaseCount: Int
 
         public init(
             trackId: UInt8,
@@ -109,7 +139,10 @@ public struct AudioPipelineDiagnostics: Sendable {
             alignFireCount: Int,
             lastAlignDiff: Int,
             converter: Converter = .empty,
-            outputChannelRMS: [Float] = []
+            outputChannelRMS: [Float] = [],
+            gapEvents: [GapEvent] = [],
+            gapZeroFillCount: Int = 0,
+            gapRebaseCount: Int = 0
         ) {
             self.trackId = trackId
             self.outputFrames = outputFrames
@@ -123,6 +156,9 @@ public struct AudioPipelineDiagnostics: Sendable {
             self.lastAlignDiff = lastAlignDiff
             self.converter = converter
             self.outputChannelRMS = outputChannelRMS
+            self.gapEvents = gapEvents
+            self.gapZeroFillCount = gapZeroFillCount
+            self.gapRebaseCount = gapRebaseCount
         }
     }
 

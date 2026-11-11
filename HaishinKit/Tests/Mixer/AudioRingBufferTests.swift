@@ -111,6 +111,41 @@ import Testing
         #expect(readInt16(read).allSatisfy { $0 == 9 })
     }
 
+    @Test("大 PTS 缺口：重建時間軸且保留既有音訊")
+    func largeGapRebasesWithoutFillingSilence() throws {
+        let format = makeInt16Format()
+        let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
+        let (old, oldTime) = makeInt16Buffer(format, sampleTime: 0, fill: 3)
+        ring.append(old, when: oldTime)
+        let (new, newTime) = makeInt16Buffer(format, sampleTime: 96_000, fill: 9)
+        ring.append(new, when: newTime)
+
+        #expect(ring.skipInsertedSamples == 0)
+        #expect(ring.gapRebaseCountValue == 1)
+        #expect(ring.gapEvents.last?.mode == "rebase")
+        #expect(ring.counts == 2048)
+
+        let read = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024))
+        #expect(ring.render(1024, ioData: read.mutableAudioBufferList) == noErr)
+        #expect(readInt16(read).allSatisfy { $0 == 3 })
+        #expect(ring.render(1024, ioData: read.mutableAudioBufferList) == noErr)
+        #expect(readInt16(read).allSatisfy { $0 == 9 })
+    }
+
+    @Test("小 PTS 缺口：仍以靜音橋接並記錄事件")
+    func smallGapFillsSilenceAndLogsEvent() throws {
+        let format = makeInt16Format()
+        let ring = try #require(AudioRingBuffer(format, bufferCounts: 3))
+        let (old, oldTime) = makeInt16Buffer(format, sampleTime: 0, fill: 3)
+        ring.append(old, when: oldTime)
+        let (new, newTime) = makeInt16Buffer(format, sampleTime: 1536, fill: 9)
+        ring.append(new, when: newTime)
+
+        #expect(ring.skipInsertedSamples == 512)
+        #expect(ring.gapZeroFillCountValue == 1)
+        #expect(ring.gapEvents.last?.mode == "zeroFill")
+    }
+
     // MARK: align(to:)
 
     @Test("align：超前補靜音") func alignAheadInsertsSilence() throws {

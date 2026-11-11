@@ -130,7 +130,8 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     /// 連續幀上覆寫，否則跨軌對齊會被反覆拉動。
     private func noteSourceTime(_ seconds: Double) {
         guard seconds.isFinite else { return }
-        if let lastSourceTime, abs(seconds - lastSourceTime) > 1 {
+        if let lastSourceTime,
+           abs(seconds - lastSourceTime) > AudioRingBuffer.gapRebaseThresholdSeconds {
             audioTime.reset()
         }
         lastSourceTime = seconds
@@ -237,7 +238,16 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 inputFormat: converterInputFormat,
                 outputFormat: converterOutputFormat
             ),
-            outputChannelRMS: outputChannelRMS
+            outputChannelRMS: outputChannelRMS,
+            gapEvents: (ringBuffer?.gapEvents ?? []).map {
+                AudioPipelineDiagnostics.GapEvent(
+                    sequence: $0.sequence, previousPTS: $0.previousPTS,
+                    currentPTS: $0.currentPTS, gapSamples: $0.gapSamples,
+                    mode: $0.mode, bufferedBefore: $0.bufferedBefore,
+                    bufferedAfter: $0.bufferedAfter, droppedSamples: $0.droppedSamples)
+            },
+            gapZeroFillCount: ringBuffer?.gapZeroFillCountValue ?? 0,
+            gapRebaseCount: ringBuffer?.gapRebaseCountValue ?? 0
         )
     }
 
