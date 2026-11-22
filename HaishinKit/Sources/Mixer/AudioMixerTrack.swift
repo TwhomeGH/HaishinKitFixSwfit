@@ -136,10 +136,19 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
     /// 連續幀上覆寫，否則跨軌對齊會被反覆拉動。
     private func noteSourceTime(_ seconds: Double) {
         guard seconds.isFinite else { return }
-        if let lastSourceTime,
-           abs(seconds - lastSourceTime) > AudioRingBuffer.gapRebaseThresholdSeconds {
-            timelineAudit.reset(reason: seconds < lastSourceTime ? "sourceRegression" : "sourceGap")
-            audioTime.reset()
+        if let lastSourceTime {
+            switch AudioTimelinePolicy.classify(seconds - lastSourceTime) {
+            case .rebaseForward:
+                timelineAudit.reset(reason: "sourceGap")
+                audioTime.reset()
+            case .resyncBackward:
+                timelineAudit.reset(reason: "sourceRegression")
+                audioTime.reset()
+            case .continuous, .zeroFillForward, .jitterBackward:
+                // 小缺口由 ring buffer 補零；小幅倒退視為抖動、保留既有時間軸，
+                // 避免 anchor 被清掉但 ring buffer 未重設而永久錯位。
+                break
+            }
         }
         lastSourceTime = seconds
     }
@@ -258,7 +267,9 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                     bufferedAfter: $0.bufferedAfter, droppedSamples: $0.droppedSamples)
             },
             gapZeroFillCount: ringBuffer?.gapZeroFillCountValue ?? 0,
-            gapRebaseCount: ringBuffer?.gapRebaseCountValue ?? 0
+            gapRebaseCount: ringBuffer?.gapRebaseCountValue ?? 0,
+            gapJitterCount: ringBuffer?.gapJitterCountValue ?? 0,
+            gapFullResetCount: ringBuffer?.gapFullResetCountValue ?? 0
         )
     }
 

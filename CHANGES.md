@@ -1,5 +1,13 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 23:17 音訊時間軸不連續門檻統一（P0）
+
+- `AudioRingBuffer` 的 `timestampResetThreshold` 由寫死 48,000 samples 改為「秒 × 實際取樣率」；44.1k／16k／96k 不再分別得到 1.09s／3s／0.5s。
+- 新增 `AudioTimelinePolicy`（`zeroFillMaxSeconds=0.25`、`resyncSeconds=1.0`），anchor、兩個 ring buffer 與 mix clock 共用分類：前向 >0.25s 重建、倒退 ≤1s 視為抖動保留時間軸、>1s 才全面重設。
+- 修正 0.25–1 秒來源倒退的「部分重設」：先前 anchor 被清但 ring buffer 未重設，`advanceMix` 會靜默略過該段；現在保留時間軸並計數。
+- 診斷新增 `gapJitterCount`／`gapFullResetCount`（Track）與 `advanceSkippedBlocks`／`advanceSkippedFrames`／`clockSwitchCount`。
+- 新增 `AudioTimelinePolicyTests` 與 `.cortexkit/verify-audio-timeline-policy.swift`（Foundation-only，Windows 16 項全通過）；Apple mixer 行為與實機 A/V 同步待 CI／實機驗收。
+
 ## 2026.11.22 22:58 二進位依賴盤點與 RTC 測試基線
 
 - 新增 `Dependencies/`（libdatachannel、libsrt、openssl 的 manifest）與 `Docs/BINARY_DEPENDENCY_AUDIT.md`：記錄版本、來源、checksum、授權與缺口；本次只盤點，未升級或替換二進位。

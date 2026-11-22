@@ -24,6 +24,9 @@ public struct AudioPipelineDiagnostics: Sendable {
     public let mixerOutputFrames: Int
     public let outputChannels: Int
     public let outputChannelRMS: [Float]
+    public let advanceSkippedBlocks: Int
+    public let advanceSkippedFrames: Int
+    public let clockSwitchCount: Int
     public static let empty: AudioPipelineDiagnostics
 }
 
@@ -52,6 +55,13 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 | `alignInsertedSamples` | `align()` 補的靜音樣本（非 main track 落後播放頭） |
 | `overflowDroppedSamples` | ring buffer 溢位丟棄的樣本（producer 超出 consumer） |
 | `skipInsertedSamples` | PTS gap 補的 0 樣本 |
+| `gapZeroFillCount` | 前向缺口 ≤ 0.25s、補零的次數 |
+| `gapRebaseCount` | 前向缺口 > 0.25s、重建時間軸的次數 |
+| `gapJitterCount` | 來源 PTS 倒退在 1s 內、視為抖動而保留時間軸的緩衝數 |
+| `gapFullResetCount` | 來源 PTS 倒退 > 1s、清空緩衝並重建的次數 |
+| `advanceSkippedBlocks` | `advanceMix` 因播放頭已在前方而略過的區塊數（先前靜默丟棄） |
+| `advanceSkippedFrames` | 上述略過區塊的樣本數 |
+| `clockSwitchCount` | 混音時鐘擁有權切換次數（main 停止／恢復） |
 | `ringBufferCounts` | 目前 ring buffer 內樣本數（**瞬時值**） |
 | `alignFireCount` | `align()` **實際動手**的次數（丟或補）。用來分辨「一次性 anchor 校正」與「每幀持續校正」 |
 | `lastAlignDiff` | 最近一次 `align()` 看到的偏差 `position - current`（input 樣本；正 = 本軌落後） |
@@ -70,6 +80,9 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
 | `resampleNoDataCount` 增加 | ring buffer underrun |
 | `overflowDroppedSamples` 增加 | producer 超出 buffer 容量，樣本被丟 |
 | `outputChannelRMS` 某聲道 ≈ 0 但來源該聲道有聲 | 該聲道在聲道映射 / 下混時被丟掉（例：stereo→mono 只取左聲道） |
+| `gapJitterCount` 持續增加但 `gapFullResetCount` 不變 | 來源時鐘持續小幅倒退；時間軸被保留，但內容可能重複 |
+| `advanceSkippedBlocks` 增加 | 播放頭領先來源；代表 anchor／消費軸曾錯位（修正後應接近 0） |
+| `clockSwitchCount` 增加 | main 軌停止／恢復導致混音時鐘換手，輸出時間原點改變 |
 
 ## 設計
 
@@ -80,6 +93,20 @@ let diag = await mediaMixer.audioPipelineDiagnostics()
   `MediaMixer` actor。
 - `align()` 死區（`alignDeadband = 256` samples ≈ 5.8ms @44.1k）內的偏差不會讓
   `alignFireCount` 增加，但仍會更新 `lastAlignDiff`（可觀察目前偏差量）。
+
+## 時間軸不連續策略
+
+`AudioTimelinePolicy`（`HaishinKit/Sources/Mixer/AudioTimelinePolicy.swift`）是三層共用的唯一門檻：
+
+| 分類 | 條件 | 動作 |
+| ------ | ------ | ------ |
+| `zeroFillForward` | 0 < Δ ≤ 0.25s | ring buffer 補零，anchor 保留 |
+| `rebaseForward` | Δ > 0.25s | 重建 ring buffer 與 anchor |
+| `jitterBackward` | −1.0s ≤ Δ < 0 | 視為抖動，保留時間軸（不部分重設） |
+| `resyncBackward` | Δ < −1.0s | 全面重設 anchor、ring buffer 與 mix clock |
+
+門檻以秒表示，換算樣本時使用實際取樣率（先前寫死 48,000 samples：44.1k 實際是 1.09s、16k 是 3s）。
+非 Apple 平台的驗證：`.cortexkit/verify-audio-timeline-policy.swift`。
 
 ## 相關
 

@@ -21,14 +21,8 @@ final class AudioRingBuffer: @unchecked Sendable {
     // 調大吸收更多 producer 節奏抖動，減少 PTS gap 造成的 skip 補 silence
     //（斷續的聽覺來源）。直播延遲本就 ~1s，多 186ms 可忽略。
     private static let bufferCounts: UInt32 = 24
-    /// 小缺口才補零；超過此長度直接重建來源時間基準，避免用數秒靜音
-    /// 把仍在緩衝中的歷史音訊擠掉。
-    static let gapRebaseThresholdSeconds: TimeInterval = 0.25
     private static let numSamples: UInt32 = 1024
     private static let maxCapacity: Int = Int(AudioRingBuffer.numSamples * AudioRingBuffer.bufferCounts)
-    /// 來源 PTS 倒退超過約 1 秒視為新的時間基準；清空舊資料，避免把新紀元
-    /// 的音訊接在舊時間軸尾端，造成混音錯位或整段靜音。
-    private static let timestampResetThreshold: Int64 = 48_000
 
     var counts: Int {
         lock()
@@ -55,6 +49,8 @@ final class AudioRingBuffer: @unchecked Sendable {
     private var gapSequence: UInt64 = 0
     private var gapZeroFillCount = 0
     private var gapRebaseCount = 0
+    private var gapJitterCount = 0
+    private var gapFullResetCount = 0
     private var gapEventsStorage: [GapEvent] = []
     private var inputFormat: AVAudioFormat
     private var inputBuffer: AVAudioPCMBuffer
@@ -92,6 +88,10 @@ final class AudioRingBuffer: @unchecked Sendable {
     var gapEvents: [GapEvent] { lock(); defer { unlock() }; return gapEventsStorage }
     var gapZeroFillCountValue: Int { lock(); defer { unlock() }; return gapZeroFillCount }
     var gapRebaseCountValue: Int { lock(); defer { unlock() }; return gapRebaseCount }
+    /// 來源 PTS 落在 resync 門檻內的倒退次數；保留時間軸、不重設。
+    var gapJitterCountValue: Int { lock(); defer { unlock() }; return gapJitterCount }
+    /// 來源 PTS 倒退超過 resync 門檻、實際清空緩衝並重建的次數。
+    var gapFullResetCountValue: Int { lock(); defer { unlock() }; return gapFullResetCount }
 
     /// 小缺口補零、大缺口不補零而重建來源時間軸；保留既有緩衝內容。
     private func handleGapLocked(targetSampleTime: AVAudioFramePosition) {
@@ -100,7 +100,8 @@ final class AudioRingBuffer: @unchecked Sendable {
         let gap = Int(targetSampleTime - previous)
         let bufferedBefore = calculateCounts()
         let droppedBefore = overflowDropped
-        let maximumZeroFill = max(1, Int(inputFormat.sampleRate * Self.gapRebaseThresholdSeconds))
+        let maximumZeroFill = max(1, Int(AudioTimelinePolicy.samples(
+            forSeconds: AudioTimelinePolicy.zeroFillMaxSeconds, rate: inputFormat.sampleRate)))
 
         let mode: String
         if gap > maximumZeroFill {
@@ -152,9 +153,7 @@ final class AudioRingBuffer: @unchecked Sendable {
             targetSampleTime = Int64(Double(sampleBuffer.presentationTimeStamp.value) * inputBuffer.format.sampleRate / Double(sampleBuffer.presentationTimeStamp.timescale))
         }
         lock()
-        if sampleTime != 0, targetSampleTime < sampleTime - Self.timestampResetThreshold {
-            resetLocked()
-        }
+        handleBackwardJumpLocked(to: targetSampleTime)
         if sampleTime == 0 {
             sampleTime = targetSampleTime
         }
@@ -192,9 +191,7 @@ final class AudioRingBuffer: @unchecked Sendable {
         let numSamples = Int(audioPCMBuffer.frameLength)
         guard numSamples <= AudioRingBuffer.maxCapacity else { return }
         lock()
-        if sampleTime != 0, when.sampleTime < sampleTime - Self.timestampResetThreshold {
-            resetLocked()
-        }
+        handleBackwardJumpLocked(to: when.sampleTime)
         if sampleTime == 0 {
             sampleTime = when.sampleTime
         }
@@ -357,6 +354,20 @@ final class AudioRingBuffer: @unchecked Sendable {
         lock()
         resetLocked()
         unlock()
+    }
+
+    /// 倒退跳躍的分流：超過 resync 門檻才清空並重建；其餘視為抖動，
+    /// 保留消費軸與 anchor，避免小倒退造成「部分重設」而永久錯位。
+    private func handleBackwardJumpLocked(to targetSampleTime: AVAudioFramePosition) {
+        guard sampleTime != 0, targetSampleTime < sampleTime else { return }
+        let resyncSamples = AudioTimelinePolicy.samples(
+            forSeconds: AudioTimelinePolicy.resyncSeconds, rate: inputFormat.sampleRate)
+        if resyncSamples > 0, targetSampleTime < sampleTime - resyncSamples {
+            resetLocked()
+            gapFullResetCount += 1
+        } else if sampleTime - targetSampleTime > Self.alignDeadband {
+            gapJitterCount += 1
+        }
     }
 
     /// 已持鎖時使用；不要在 reset() 內重複上鎖。

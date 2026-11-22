@@ -126,6 +126,10 @@ public struct AudioPipelineDiagnostics: Sendable {
         /// 小缺口補零、大缺口重建時間軸的累計次數。
         public let gapZeroFillCount: Int
         public let gapRebaseCount: Int
+        /// 來源 PTS 落在 resync 門檻內的倒退緩衝數；保留時間軸、不重設。
+        public let gapJitterCount: Int
+        /// 來源 PTS 倒退超過 resync 門檻、實際清空緩衝並重建的次數。
+        public let gapFullResetCount: Int
 
         public init(
             trackId: UInt8,
@@ -142,7 +146,9 @@ public struct AudioPipelineDiagnostics: Sendable {
             outputChannelRMS: [Float] = [],
             gapEvents: [GapEvent] = [],
             gapZeroFillCount: Int = 0,
-            gapRebaseCount: Int = 0
+            gapRebaseCount: Int = 0,
+            gapJitterCount: Int = 0,
+            gapFullResetCount: Int = 0
         ) {
             self.trackId = trackId
             self.outputFrames = outputFrames
@@ -159,6 +165,8 @@ public struct AudioPipelineDiagnostics: Sendable {
             self.gapEvents = gapEvents
             self.gapZeroFillCount = gapZeroFillCount
             self.gapRebaseCount = gapRebaseCount
+            self.gapJitterCount = gapJitterCount
+            self.gapFullResetCount = gapFullResetCount
         }
     }
 
@@ -177,6 +185,12 @@ public struct AudioPipelineDiagnostics: Sendable {
     /// 最近一次混音區塊各聲道的 RMS，陣列索引對應聲道。
     /// 可用單側測試訊號檢查下混或聲道遺失；非零值本身不能證明遠端播放正常。
     public let outputChannelRMS: [Float]
+    /// `advanceMix` 因播放頭已在前方而略過的區塊累計數。
+    public let advanceSkippedBlocks: Int
+    /// 上述略過區塊對應的樣本數。
+    public let advanceSkippedFrames: Int
+    /// 混音時鐘擁有權切換次數（main 恢復、main 停止或接手軌改變）。
+    public let clockSwitchCount: Int
 
     public init(
         tracks: [Track],
@@ -184,7 +198,10 @@ public struct AudioPipelineDiagnostics: Sendable {
         mixerReady: Bool = false,
         lastError: String? = nil,
         outputChannels: Int = 0,
-        outputChannelRMS: [Float] = []
+        outputChannelRMS: [Float] = [],
+        advanceSkippedBlocks: Int = 0,
+        advanceSkippedFrames: Int = 0,
+        clockSwitchCount: Int = 0
     ) {
         self.tracks = tracks
         self.mixerOutputFrames = mixerOutputFrames
@@ -192,6 +209,9 @@ public struct AudioPipelineDiagnostics: Sendable {
         self.lastError = lastError
         self.outputChannels = outputChannels
         self.outputChannelRMS = outputChannelRMS
+        self.advanceSkippedBlocks = advanceSkippedBlocks
+        self.advanceSkippedFrames = advanceSkippedFrames
+        self.clockSwitchCount = clockSwitchCount
     }
 
     public static let empty = AudioPipelineDiagnostics(tracks: [], mixerOutputFrames: 0)

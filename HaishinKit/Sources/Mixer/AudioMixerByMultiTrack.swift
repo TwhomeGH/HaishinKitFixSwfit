@@ -111,6 +111,11 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
     private var outputNode: OutputNode?
     // 累計混合輸出區塊數（AHealth 診斷用）。
     private var mixerOutputFrames = 0
+    // 播放頭已在前方而略過的區塊／樣本數；先前靜默 return，無法察覺倒退後掉音。
+    private var advanceSkippedBlocks = 0
+    private var advanceSkippedFrames = 0
+    // 混音時鐘擁有權切換次數；切換會改變輸出時間原點，需可觀測。
+    private var clockSwitchCount = 0
     // 最近一次 setup／render 失敗原因（診斷用）。錯誤原本會被 AudioCaptureUnit 吞掉，
     // 這裡保留以便透過 AudioPipelineDiagnostics 顯示在 host 端日誌。
     private var lastError: String?
@@ -196,7 +201,10 @@ final class AudioMixerByMultiTrack: AudioMixer, @unchecked Sendable {
             mixerReady: mixerNode != nil && outputNode != nil,
             lastError: lastError,
             outputChannels: Int(outputFormat?.channelCount ?? 0),
-            outputChannelRMS: outputChannelRMS
+            outputChannelRMS: outputChannelRMS,
+            advanceSkippedBlocks: advanceSkippedBlocks,
+            advanceSkippedFrames: advanceSkippedFrames,
+            clockSwitchCount: clockSwitchCount
         )
         diagnosticsLock.lock()
         diagnosticsCache = snapshot
@@ -452,11 +460,15 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
         } else {
             clockTrackChanged = false
         }
+        if clockTrackChanged {
+            clockSwitchCount += 1
+        }
         let clockTrack = activeClockTrack
         // 來源端可能主動送新的 PTS（例如網路時鐘校正或 track 重建）。只有
         // 時鐘擁有者改變，或時鐘軌本身出現 >1 秒的不連續時才重設播放頭；
         // 正常連續幀不可反覆覆寫 sampleTime，否則兩軌混音會被切碎。
-        let jumpThreshold = Int64(outputFormat?.sampleRate ?? 48_000)
+        let jumpThreshold = AudioTimelinePolicy.samples(
+            forSeconds: AudioTimelinePolicy.resyncSeconds, rate: outputFormat?.sampleRate ?? 48_000)
         let timestampJumped = previousOutputPosition.map {
             abs(when.sampleTime - $0) > jumpThreshold
         } ?? false
@@ -500,7 +512,10 @@ extension AudioMixerByMultiTrack: AudioMixerTrackDelegate {
             anchor = when
         }
         guard endPosition > sampleTime else {
-            return  // 此幀位置已被其他軌渲染過，避免重複混音。
+            // 此幀位置已被其他軌渲染過；仍要記錄被略過的量，避免靜默丟棄。
+            advanceSkippedBlocks += 1
+            advanceSkippedFrames += Int(min(max(0, sampleTime - endPosition), Int64(Int.max)))
+            return
         }
         while sampleTime < endPosition {
             let frames = AVAudioFrameCount(min(Int64(kAudioMixerTrack_frameCapacity), endPosition - sampleTime))
