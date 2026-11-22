@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.23 02:30 逐幀過濾原因診斷（P2）
+
+- `VideoCodec.useFrame` 改為回傳 `VideoFrameFilterReason?`（beforeStart／nonMonotonic／adaptiveThrottle／frameInterval）；被過濾時記錄原因、PTS、最後接受 PTS、delta 與 uptime。
+- 新增 `VideoFrameFilterState`（Foundation-only）：固定理由計數、連續／最長連續過濾影格數；接受影格只歸零連續數。
+- `VideoPipelineEventsSnapshot` 新增 `filteredFrames`（optional，舊 JSON 相容）；`VideoPipelineSnapshot` 同步暴露並在摘要加 `filteredDetail{...}`。
+- 新增 `VideoFrameFilterStateTests` 與 `.cortexkit/verify-video-frame-filter.swift`（Windows 13 項全通過）；Apple CI 與實機日誌待驗收。
+
 ## 2026.11.22 23:34 入口幀間隔與到達漂移診斷（P1）
 
 - `SourceTimeAudit` 在有效性之外新增有效 PTS 之間的間隔：lastDelta、minDelta／maxDelta、negativeDeltas、duplicateDeltas、gapsOverHalfSecond（0.5–2s）、gapsOverTwoSeconds（≥2s）。

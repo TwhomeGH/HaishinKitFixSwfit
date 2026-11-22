@@ -144,6 +144,8 @@ public struct VideoEncoderHealth: Codable, Sendable {
     public let ptsResets: UInt64
     public let pendingFrames: Int?
     public let lastErrorCode: Int32?
+    /// 被 useFrame 過濾的影格原因、最後一筆與連續長度；舊 JSON 為 nil。
+    public let filteredFrames: VideoFrameFilterSnapshot?
 
     public init(events: VideoPipelineEventsSnapshot?, pendingFrames: Int?) {
         let snapshot = events
@@ -171,6 +173,7 @@ public struct VideoEncoderHealth: Codable, Sendable {
         self.sampledAt = sampledAt
         self.pendingFrames = pendingFrames
         lastErrorCode = snapshot?.lastErrorCode
+        filteredFrames = snapshot?.filteredFrames
 
         if recent(.encoderFailure) {
             state = .failure
@@ -190,7 +193,7 @@ public struct VideoEncoderHealth: Codable, Sendable {
     }
 
     public var summary: String {
-        "state=\(state.rawValue) pending=\(pendingFrames.map(String.init) ?? "unknown") submitted=\(submitted) delivered=\(delivered) dropped=\(dropped) filtered=\(filtered) suppressed=\(keyFrameSuppressed) yieldRejected=\(yieldRejected) failures=\(failures) ptsReset=\(ptsResets) lastError=\(lastErrorCode.map(String.init) ?? "none")"
+        "state=\(state.rawValue) pending=\(pendingFrames.map(String.init) ?? "unknown") submitted=\(submitted) delivered=\(delivered) dropped=\(dropped) filtered=\(filtered) suppressed=\(keyFrameSuppressed) yieldRejected=\(yieldRejected) failures=\(failures) ptsReset=\(ptsResets) lastError=\(lastErrorCode.map(String.init) ?? "none") filteredDetail{\(filteredFrames?.summary ?? "none")}"
     }
 }
 

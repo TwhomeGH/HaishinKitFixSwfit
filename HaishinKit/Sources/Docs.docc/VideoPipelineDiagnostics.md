@@ -116,6 +116,7 @@ socket 本機完成資訊需另外呼叫 `RTMPConnection.transportDiagnostics()`
 - `sampledAt: Double`：單調時鐘秒數。
 - `events: [String: VideoPipelineEventValue]`：固定事件集合，僅包含已發生事件。每筆含 `count: UInt64` 及 `lastAt: Double`。
 - `lastErrorCode: Int32?`：最後觀察到的 VT 失敗碼，保留歷史值，恢復成功不會清除。
+- `filteredFrames: VideoFrameFilterSnapshot?`：被 useFrame 過濾的影格原因、最後一筆與連續長度；舊 JSON 為 nil。
 - `idle(for:) -> Double?`：距離指定事件最後發生的秒數；從未發生回傳 nil。
 
 ### encoder 事件名稱
@@ -129,7 +130,7 @@ socket 本機完成資訊需另外呼叫 `RTMPConnection.transportDiagnostics()`
 | encoderDropped | 有效 session 的 VT 丟幀或回呼樣本無效／未就緒 |
 | encoderFailure | 有效 session 記錄 VT 同步或非同步失敗碼 |
 | encoderRecovery | append 捕捉錯誤，進入 session 重建流程；包含建立 session 失敗 |
-| encoderFiltered | useFrame 節流／篩選未接受影格 |
+| encoderFiltered | useFrame 篩選未接受影格；原因與 PTS 差見 `filteredFrames` |
 | encoderUnavailable | 編碼器未運行，或 session／continuation 不可用 |
 | encoderSessionChanged | session 屬性變更，包含重建、清除 |
 | encoderKeyFrameSuppressed | 等待關鍵幀期間擋下非關鍵幀 |
@@ -137,6 +138,22 @@ socket 本機完成資訊需另外呼叫 `RTMPConnection.transportDiagnostics()`
 
 事件是觀察次數，不一定等同唯一影格數：同步丟幀與回呼丟幀可能指向同一幀；失敗與重建也可以來自同一事件。不可把
 所有事件相加當成丟幀總數。舊 session 作廢後的回呼不加入有效回呼／交付計數。
+
+### 過濾原因（filteredFrames）
+
+`filteredFrames.last` 保存最近一筆被過濾影格的 `reason`、`pts`、`lastAccepted`、`delta` 與 `uptime`；
+`reasonCounts` 是固定理由的累計次數，`consecutive`／`maxConsecutive` 是目前與最長連續過濾數。
+接受一筆影格只把 `consecutive` 歸零，不抹掉 `maxConsecutive`。
+
+| reason | 條件 |
+| --- | --- |
+| beforeStart | 影格 PTS 早於本次啟動基準 |
+| nonMonotonic | PTS 未大於最後一次被接受的影格（重複或倒退） |
+| adaptiveThrottle | adaptiveFrameThrottle 的 dropRatio 未選中此影格 |
+| frameInterval | frameInterval 幀率上限未達 |
+
+`delta = pts - lastAccepted`：正值是被過濾後仍前進的內容時間，可看出「內容停了但時間軸前進」；
+負值保留給 nonMonotonic。Delta 不是丟棄總量，也不能單獨證明掉幀原因。
 
 ### output 事件名稱
 

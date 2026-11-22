@@ -31,6 +31,8 @@ final class VideoCodec {
     let diagnostics = VideoPipelineEventTracker()
     private lazy var encoderOutputState = VideoEncoderOutputState(diagnostics: diagnostics)
     private var presentationTimeStamp: CMTime = .zero
+    /// 是否已有影格通過 useFrame；用來區分「首筆」與真正的 PTS 倒退。
+    private var hasAcceptedFrame = false
     private(set) var isRunning = false
     private(set) var inputFormat: CMFormatDescription? {
         didSet {
@@ -126,6 +128,7 @@ final class VideoCodec {
         }
         outputFormat = nil
         presentationTimeStamp = .zero
+        hasAcceptedFrame = false
         dropRatio = 1
         frameCounter = 0
         lastThrottleTime = .distantPast
@@ -214,7 +217,15 @@ final class VideoCodec {
             if sampleBuffer.formatDescription?.isCompressed == true {
                 try session.convert(sampleBuffer, forceKeyFrame: false, continuation: continuation, outputState: encoderOutputState)
             } else {
-                if useFrame(sampleBuffer.presentationTimeStamp) {
+                if let reason = useFrame(sampleBuffer.presentationTimeStamp) {
+                    diagnostics.recordFiltered(
+                        reason: reason,
+                        presentationTime: sampleBuffer.presentationTimeStamp.seconds,
+                        lastAcceptedPresentationTime: hasAcceptedFrame ? presentationTimeStamp.seconds : nil,
+                        uptime: ProcessInfo.processInfo.systemUptime)
+                    logger.debug("VideoCodec frame filtered by useFrame reason=\(reason.rawValue)", sampleBuffer.presentationTimeStamp)
+                } else {
+                    diagnostics.recordAccepted()
                     // forceKeyFrame 由 state 決定：開場 / GOP 斷點後為 true，
                     // 之後依 interval 週期性要求。
                     let forceKeyFrame = shouldForceKeyFrame(sampleBuffer.presentationTimeStamp)
@@ -226,9 +237,7 @@ final class VideoCodec {
                     }
                     updateAdaptiveDropRatio()
                     presentationTimeStamp = sampleBuffer.presentationTimeStamp
-                } else {
-                    diagnostics.record(.encoderFiltered)
-                    logger.debug("VideoCodec frame filtered by useFrame", sampleBuffer.presentationTimeStamp)
+                    hasAcceptedFrame = true
                 }
             }
         } catch {
@@ -274,23 +283,24 @@ final class VideoCodec {
         }
     }
 
-    private func useFrame(_ presentationTimeStamp: CMTime) -> Bool {
+    /// - Returns: nil 代表接受；否則是被過濾的原因，供診斷記錄。
+    private func useFrame(_ presentationTimeStamp: CMTime) -> VideoFrameFilterReason? {
         guard startedAt <= presentationTimeStamp else {
-            return false
+            return .beforeStart
         }
         guard self.presentationTimeStamp < presentationTimeStamp else {
-            return false
+            return .nonMonotonic
         }
         if 1 < dropRatio {
             frameCounter += 1
-            return frameCounter % dropRatio == 0
+            return frameCounter % dropRatio == 0 ? nil : .adaptiveThrottle
         }
         // 以 sample buffer 實際 PTS 為準。只有 frameInterval > 0
         // （用戶手動設定）才過濾。expectedFrameRate 僅作為 VT 提示，不做幀率上限。
         guard 0 < frameInterval else {
-            return true
+            return nil
         }
-        return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds
+        return frameInterval <= presentationTimeStamp.seconds - self.presentationTimeStamp.seconds ? nil : .frameInterval
     }
 
     private func shouldForceKeyFrame(_ presentationTimeStamp: CMTime) -> Bool {
@@ -316,6 +326,7 @@ extension VideoCodec: Runner {
         outputStream = stream
         outputContinuation = continuation
         startedAt = passthrough ? .zero : CMClockGetTime(CMClockGetHostTimeClock())
+        hasAcceptedFrame = false
         isRunning = true
     }
 
@@ -329,6 +340,7 @@ extension VideoCodec: Runner {
         inputFormat = nil
         outputFormat = nil
         presentationTimeStamp = .zero
+        hasAcceptedFrame = false
         outputContinuation?.finish()
         outputContinuation = nil
         startedAt = .zero

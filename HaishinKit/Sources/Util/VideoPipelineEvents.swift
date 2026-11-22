@@ -76,6 +76,8 @@ public struct VideoPipelineEventsSnapshot: Codable, Sendable {
     public var firstEncoderTiming: VideoEncoderTimingSample?
     /// 目前 VT session 最新成功回呼的同幀時間；不是最大耗時或端到端延遲。
     public var lastEncoderTiming: VideoEncoderTimingSample?
+    /// 被 useFrame 過濾影格的原因、最後一筆與連續長度；舊 JSON 缺欄位時為 nil。
+    public var filteredFrames: VideoFrameFilterSnapshot?
     /// 距指定事件最後一次發生的秒數；從未觀察到時為 nil。
     public func idle(for event: VideoPipelineEvent) -> TimeInterval? {
         events[event.rawValue].map { max(0, sampledAt - $0.lastAt) }
@@ -85,7 +87,7 @@ public struct VideoPipelineEventsSnapshot: Codable, Sendable {
         events.keys.sorted().map { key in
             let value = events[key]!
             return "\(key)=\(value.count) idle=\(max(0, sampledAt - value.lastAt))"
-        }.joined(separator: " ") + " lastError=\(lastErrorCode.map(String.init) ?? "none") encoderFirst{\(firstEncoderTiming?.summary ?? "unknown")} encoderLast{\(lastEncoderTiming?.summary ?? "unknown")}"
+        }.joined(separator: " ") + " lastError=\(lastErrorCode.map(String.init) ?? "none") encoderFirst{\(firstEncoderTiming?.summary ?? "unknown")} encoderLast{\(lastEncoderTiming?.summary ?? "unknown")} filtered{\(filteredFrames?.summary ?? "none")}"
     }
 }
 
@@ -100,6 +102,8 @@ package final class VideoPipelineEventTracker: @unchecked Sendable {
     private var timingHistory: [VideoEncoderTimingSample] = []
     private var lastTimingReport: Double?
     private var worstTiming: VideoEncoderTimingSample?
+    /// 被 useFrame 過濾的影格狀態；只保留計數與數值，不持有畫面。
+    private var filterState = VideoFrameFilterState()
 
 
     /// 只在 encoder state 鎖內呼叫；不反向取得 encoder 鎖。
@@ -137,12 +141,31 @@ package final class VideoPipelineEventTracker: @unchecked Sendable {
     }
     package func record(_ event: VideoPipelineEvent, errorCode: Int32? = nil) {
         lock.lock(); defer { lock.unlock() }
-        let key = event.rawValue
-        events[key] = VideoPipelineEventValue(count: (events[key]?.count ?? 0) &+ 1, lastAt: clock())
+        recordEventLocked(event)
         if let errorCode { lastErrorCode = errorCode }
+    }
+
+    /// 記錄一次被 useFrame 過濾的影格；`encoderFiltered` 事件同時累加。
+    package func recordFiltered(reason: VideoFrameFilterReason, presentationTime: Double,
+                                lastAcceptedPresentationTime: Double?, uptime: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        recordEventLocked(.encoderFiltered, at: uptime)
+        filterState.filtered(reason: reason, presentationTime: presentationTime,
+                             lastAcceptedPresentationTime: lastAcceptedPresentationTime, uptime: uptime)
+    }
+
+    /// 過濾器接受一筆影格：連續過濾計數歸零，maxConsecutive 保留。
+    package func recordAccepted() {
+        lock.lock(); defer { lock.unlock() }
+        filterState.accepted()
+    }
+
+    private func recordEventLocked(_ event: VideoPipelineEvent, at: TimeInterval? = nil) {
+        let key = event.rawValue
+        events[key] = VideoPipelineEventValue(count: (events[key]?.count ?? 0) &+ 1, lastAt: at ?? clock())
     }
     package func snapshot() -> VideoPipelineEventsSnapshot {
         lock.lock(); defer { lock.unlock() }
-        return VideoPipelineEventsSnapshot(id: id, sampledAt: clock(), events: events, lastErrorCode: lastErrorCode, firstEncoderTiming: firstEncoderTiming, lastEncoderTiming: lastEncoderTiming)
+        return VideoPipelineEventsSnapshot(id: id, sampledAt: clock(), events: events, lastErrorCode: lastErrorCode, firstEncoderTiming: firstEncoderTiming, lastEncoderTiming: lastEncoderTiming, filteredFrames: filterState.snapshot)
     }
 }
