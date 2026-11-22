@@ -285,10 +285,34 @@ duplicateDelta、gapOver500ms、gapOver2s 或 arrivalDrift），其後異常最�
 多載；也不能以沒有這類日誌推論所有來源時間正常。
 
 間隔與漂移是入口量測，不代表內容同步或 mixer 輸出；`clockComparison=unverified`、
-`contentSync=notMeasured` 的界線不變。漂移門檻 1 秒可能受主執行緒排程影響，需與
+`contentSync=notMeasured` 的界線不變（內容同步改由下節 `ContentSyncAudit` 在有來源抓幀時間時量測）。漂移門檻 1 秒可能受主執行緒排程影響，需與
 arrivalUptime 一起判讀，不能直接當成 A/V 偏移。
 
 目前處置為 action=forwardedUnchanged、timestampFallback=none、downstreamAcceptance=unknown：
 入口只觀測，維持既有交付行為；下游是否接受或丟棄不能從入口計數推定。需另外設計
 拒收／推估策略，不能把觀測功能當成已修復無效時間。摘要使用既有 info logger，
 主 App 更新套件後應在診斷匯出搜尋 SourceTimeAudit，驗證 info logger 確實留存。
+
+## 音視訊配對與內容年齡（ContentSyncAudit）
+
+`[ContentSyncAudit]` 在 MediaMixer 入口以**到達時間**配對主視訊軌與主音訊軌：只有
+arrival 相差在 50ms 內才視為同一時間窗，避免用「最新音訊 vs 最新影片」捏造 offset。
+每次 startRunning 重設 session；停止時補一則摘要；正常每 30 秒最多一則，
+`contentOffset` 或 `ageSkew` 首次超過 1 秒時立即回報 `event=contentLag`。
+
+- `handedOffset`：兩軌實際交給 mixer 的 PTS 差（video − audio）。
+- `contentOffset`：優先用 `VideoFrameTrace.sourcePTS`（加工前抓幀時間）計算；
+  沒有來源時間時退化成 `handedOffset`，摘要標示 `captureTime=missing`。
+- `videoAge`／`audioAge`：`arrival − 抓幀時間`；`ageSkew = videoAge − audioAge`。
+  正值代表影片內容比音訊舊（聲音早、畫面晚）。
+- `slopePerMin`：最近最多 600 對樣本的線性斜率；可看出偏移是固定還是持續惡化。
+
+**要偵測「PTS 看起來正常、內容卻落後」**，上游必須在
+`VideoFrameTrace(sourcePTS:handedPTS:)` 填入真正的抓幀時間。若 PTS 直到編碼時才產生，
+`videoAge` 會接近 0，摘要顯示 `captureTime=missing`——這不是「同步正常」，而是
+「沒有可用的抓幀時間」，不能拿來宣稱內容同步已量測。離屏合成或其他未攜帶 trace 的
+路徑同樣顯示 missing。
+
+`MediaMixer.contentSyncDiagnostics()` 可隨需求取得同一份摘要。此審計只觀測，
+不改 PTS/DTS，也不丟幀；`action=observeOnly`、`timestampChanged=none`、
+`clockComparison=unverified`。

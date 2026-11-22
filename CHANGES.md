@@ -1,5 +1,14 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.23 04:06 音視訊配對與內容年齡診斷（P2-2）
+
+- 新增 Foundation-only `AVContentSyncAudit`：以 arrival 50ms 窗口配對主視訊／主音訊軌，記錄 `handedOffset`、`contentOffset`、`videoAge`／`audioAge`、`ageSkew` 與斜率。
+- `contentOffset` 優先用 `VideoFrameTrace.sourcePTS`（加工前抓幀時間）；沒有時退化成 `handedOffset` 並標示 `captureTime=missing`，避免把「沒有抓幀時間」誤判為同步正常。
+- `MediaMixer` 入口接入並輸出 `[ContentSyncAudit]`（30 秒節流、`contentLag` 首次超 1 秒立即回報、停止時補摘要）；新增 `contentSyncDiagnostics()`。
+- 新增 `HaishinKitTests/Mixer/AVContentSyncAuditTests.swift`、`.cortexkit/verify-av-content-sync.swift`；CI harness 增為 10 個。
+- 文件：`VideoPipelineDiagnostics.md` 新增配對／年齡語意與 trace 契約。
+- 驗證：Windows harness 17 項全通過、runner 測試通過；Swift Testing 與 `MediaMixer` 實機接線待 Apple CI／實機。
+
 ## 2026.11.23 03:35 抽出 AudioRingBufferAlignment 純決策（align 真碼驗證）
 
 - `AudioRingBuffer.align(to:)` 的死區、丟棄上限、pending silence 先消耗決策抽成 Foundation-only `AudioRingBufferAlignment.decide`；`align` 只負責套用與計數。

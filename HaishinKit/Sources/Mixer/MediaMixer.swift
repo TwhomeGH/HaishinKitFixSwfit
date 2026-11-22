@@ -130,6 +130,9 @@ public final actor MediaMixer {
     // key 由兩種媒體及 UInt8 軌號組成，最多 512 組，不保存 sampleBuffer。
     private var sourceTimeAudits: [String: SourceTimeAudit] = [:]
     private var sourceTimeAuditSession = UUID()
+    /// 音視訊入口配對與內容年齡；只觀測，不修改時間戳。
+    private var contentSyncAudit = AVContentSyncAudit()
+    private var contentSyncSession = UUID()
     private var outputs: [any MediaMixerOutput] = []
     private var subscriptions: [Task<Void, Never>] = []
     private var isInBackground = false
@@ -275,9 +278,15 @@ public final actor MediaMixer {
         switch sampleBuffer.formatDescription?.mediaType {
         case .audio?:
             auditSourceTime(sampleBuffer, media: "audio", track: track)
+            if track == audioMixerSettings.mainTrack {
+                auditContentSync(sampleBuffer, media: .audio, track: track)
+            }
             audioIO.append(track, buffer: sampleBuffer)
         case .video?:
             auditSourceTime(sampleBuffer, media: "video", track: track)
+            if track == videoMixerSettings.mainTrack {
+                auditContentSync(sampleBuffer, media: .video, track: track, capturePTS: videoTrace?.sourcePTS)
+            }
             if let videoTrace {
                 videoTrace.attachReceived(to: sampleBuffer)
             } else {
@@ -311,6 +320,34 @@ public final actor MediaMixer {
         if let report {
             logger.info("[SourceTimeAudit] session=\(sourceTimeAuditSession) stage=mixerEntry media=\(media) track=\(track) \(report)")
         }
+    }
+
+    /// 在 mixer 入口配對音視訊；只觀測，不修改時間戳。
+    private func auditContentSync(
+        _ buffer: CMSampleBuffer,
+        media: AVContentSyncAudit.Kind,
+        track: UInt8,
+        capturePTS: Double? = nil
+    ) {
+        let time = buffer.presentationTimeStamp
+        guard time.isValid, time.seconds.isFinite else {
+            return
+        }
+        let report = contentSyncAudit.observe(
+            kind: media,
+            handedPTS: time.seconds,
+            capturePTS: capturePTS,
+            arrival: ProcessInfo.processInfo.systemUptime
+        )
+        guard let report else {
+            return
+        }
+        logger.info("[ContentSyncAudit] session=\(contentSyncSession) stage=mixerEntry media=\(media.rawValue) track=\(track) \(report)")
+    }
+
+    /// 音視訊配對與內容年齡摘要；只觀測，不修改時間戳。
+    public func contentSyncDiagnostics() -> String {
+        contentSyncAudit.summary
     }
 
     /// Cumulative audio pipeline diagnostics for host-side telemetry (AHealth).
@@ -683,6 +720,8 @@ extension MediaMixer: AsyncRunner {
         }
         sourceTimeAudits.removeAll(keepingCapacity: true)
         sourceTimeAuditSession = UUID()
+        contentSyncAudit = AVContentSyncAudit()
+        contentSyncSession = UUID()
         isRunning = true
         setVideoRenderingMode(videoMixerSettings.mode)
         if #available(tvOS 17.0, *) {
@@ -768,6 +807,7 @@ extension MediaMixer: AsyncRunner {
                 logger.info("[SourceTimeAudit] session=\(sourceTimeAuditSession) stage=stopping mediaTrack=\(key) \(audit.summary)")
             }
         }
+        logger.info("[ContentSyncAudit] session=\(contentSyncSession) stage=stopping \(contentSyncAudit.summary)")
         audioIO.finish()
         videoIO.finish()
         subscriptions.forEach { $0.cancel() }

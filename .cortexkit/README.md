@@ -36,6 +36,7 @@ CI 的 `verify-foundation` job（Ubuntu ＋ `swift:6.0` 容器）會執行同一
 | `verify-audio-timeline-policy` | `HaishinKit/Sources/Mixer/AudioTimelinePolicy.swift` |
 | `verify-source-time-interval` | `HaishinKit/Sources/Util/SourceTimeAudit.swift` |
 | `verify-video-frame-filter` | `HaishinKit/Sources/Util/VideoFrameFilterState.swift` |
+| `verify-av-content-sync` | `HaishinKit/Sources/Mixer/AVContentSyncAudit.swift` |
 | `verify-handshake` | `RTMPHaishinKit/Sources/RTMP/RTMPHandshake.swift` |
 | `verify-keepalive` | `RTMPHaishinKit/Sources/RTMP/RTMPKeepAlive.swift` |
 | `verify-cts` | `RTMPHaishinKit/Sources/RTMP/RTMPVideoCompositionTime.swift` |
