@@ -1,5 +1,10 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.23 04:50 修正 AudioRingBufferAlignmentTests 的死區案例
+
+- 「無可用樣本仍回報丟棄決策」原本用 `behind=100`（小於 deadband 256），`decide` 正確回 `.none`；改為 `behind=300` 才落在丟棄分支。
+- macOS／iOS CI 只此一項失敗；RTC 的 `Sendable` 修正與其餘 195 項測試均通過。
+
 ## 2026.11.23 04:20 RTCLogger.Level 改為 Sendable（修正 macOS CI data race）
 
 - `RTCLogger.Level` 是 public enum，跨模組送到 `RTCLogger` actor 時 Swift 6 會報 `sending 'level' risks causing data races`；加上 `Sendable`。

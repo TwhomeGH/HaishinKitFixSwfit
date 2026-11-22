@@ -42,7 +42,7 @@ struct AudioRingBufferAlignmentTests {
     @Test("無可用樣本仍回報丟棄決策，由呼叫端計數")
     func noAvailableSamples() {
         #expect(AudioRingBufferAlignment.decide(
-            behind: 100, available: 0, pendingSilence: 0, deadband: 256)
+            behind: 300, available: 0, pendingSilence: 0, deadband: 256)
             == .drop(total: 0, fromSkip: 0, fromStored: 0))
     }
 }
