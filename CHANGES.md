@@ -1,5 +1,13 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.23 02:41 非 Apple 驗證 harness 納入 CI（A）
+
+- 新增 `.github/scripts/run_verify_harnesses.py`：統一編譯並執行 `.cortexkit/verify-*.swift`；缺檔、未列清單、編譯或執行失敗皆回非零，並提供 `--list`／`--only`／`--verbose`。
+- CI 新增 `verify-foundation`（Ubuntu + `swift:6.0`）：在真正非 Apple 環境執行 9 個 Foundation-only harness。
+- 修正 `verify-keepalive` 的過期斷言：pong 對端需連續 3 次未回應才 `declareDead`，與 2026-10-20 的 `maxUnansweredProbes` 契約一致；這是 harness 漂移，原始碼正確。
+- 新增 `.cortexkit/README.md` 說明孿生規則與執行入口；`.gitignore` 保留 README。
+- 新增 runner 的 unittest（來源存在、無孤兒腳本、名稱唯一）；本機 Windows Swift 6.3 執行 9 個 harness 全通過。
+
 ## 2026.11.23 02:30 逐幀過濾原因診斷（P2）
 
 - `VideoCodec.useFrame` 改為回傳 `VideoFrameFilterReason?`（beforeStart／nonMonotonic／adaptiveThrottle／frameInterval）；被過濾時記錄原因、PTS、最後接受 PTS、delta 與 uptime。

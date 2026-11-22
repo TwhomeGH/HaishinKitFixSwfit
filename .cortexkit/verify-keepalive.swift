@@ -44,15 +44,19 @@ struct VerifyKeepAlive {
             expect(k.tick(now: t0.addingTimeInterval(40), inboundBytes: 0) == .probe(2), "probe(2) next interval")
         }
 
-        // 3. Pong-capable peer that stops answering => declareDead.
+        // 3. Pong-capable peer that stops answering => declareDead after
+        //    maxUnansweredProbes consecutive unanswered probes (default 3).
         do {
             var k = RTMPKeepAlive(interval: 20, pongTimeout: 5, maxUnansweredProbes: 3)
             k.reset(now: t0)
             _ = k.tick(now: t0.addingTimeInterval(20), inboundBytes: 0) // probe(1)
             k.onPong()
             _ = k.tick(now: t0.addingTimeInterval(40), inboundBytes: 0) // probe(2)
-            // No inbound and no pong within pongTimeout => dead.
-            expect(k.tick(now: t0.addingTimeInterval(45), inboundBytes: 0) == .declareDead, "declareDead on pong timeout")
+            expect(k.tick(now: t0.addingTimeInterval(45), inboundBytes: 0) == .none, "1st unanswered after pong => none")
+            _ = k.tick(now: t0.addingTimeInterval(60), inboundBytes: 0) // probe(3)
+            expect(k.tick(now: t0.addingTimeInterval(65), inboundBytes: 0) == .none, "2nd unanswered after pong => none")
+            _ = k.tick(now: t0.addingTimeInterval(80), inboundBytes: 0) // probe(4)
+            expect(k.tick(now: t0.addingTimeInterval(85), inboundBytes: 0) == .declareDead, "3rd unanswered after pong => dead")
         }
 
         // 4. Inbound-only liveness (no pong): a probe that sees inbound bytes is

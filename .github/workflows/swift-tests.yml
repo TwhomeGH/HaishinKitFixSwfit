@@ -85,6 +85,28 @@ jobs:
             .build/test-results/ci-summary.md
           if-no-files-found: error
 
+  # 非 Apple 平台的孿生驗證器；與 Swift Testing 互補，不是 swift test 的一部分。
+  verify-foundation:
+    name: Foundation-only verification harnesses
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Ensure python3
+        shell: bash
+        run: |
+          if ! command -v python3 >/dev/null 2>&1; then
+            apt-get update && apt-get install -y python3
+          fi
+
+      - name: Run verify harnesses
+        shell: bash
+        run: python3 .github/scripts/run_verify_harnesses.py
+
   # RTC 目前沒有任何 CI 覆蓋；這裡先建立基線，升級 libdatachannel 後才有回歸訊號。
   rtc-tests:
     name: RTCHaishinKit build + tests
