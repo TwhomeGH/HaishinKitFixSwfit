@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-11-22",
+  "status": "inventory-only",
+  "runtimeVerified": false,
+  "securityReview": "pending",
+  "reproducibleBuildVerified": false,
+  "name": "libsrt",
+  "consumers": [
+    "SRTHaishinKit"
+  ],
+  "distribution": {
+    "repository": "https://github.com/HaishinKit/libsrt-xcframework",
+    "tag": "v1.5.4",
+    "commit": "d4f3ced379fd5ec2e2717b51342e81c14b139e1b",
+    "url": "https://github.com/HaishinKit/libsrt-xcframework/releases/download/v1.5.4/libsrt.xcframework.zip",
+    "sha256": "76879e2802e45ce043f52871a0a6764d57f833bdb729f2ba6663f4e31d658c4a",
+    "sizeBytes": 34090902
+  },
+  "source": {
+    "repository": "https://github.com/Haivision/srt",
+    "tag": "v1.5.4",
+    "commit": null,
+    "evidence": "https://github.com/HaishinKit/libsrt-xcframework/blob/v1.5.4/build-clone.sh",
+    "binaryProvenanceVerified": false
+  },
+  "integrity": {
+    "sha256Matches": true,
+    "zipCRCValid": true,
+    "checkedAt": "2026-11-22"
+  },
+  "build": {
+    "toolchainVersion": null,
+    "optionsEvidence": "https://github.com/HaishinKit/libsrt-xcframework/blob/v1.5.4/build-ios.sh"
+  },
+  "patches": [],
+  "licenses": {
+    "reviewStatus": "pending",
+    "evidence": "https://github.com/HaishinKit/libsrt-xcframework/blob/v1.5.4/README.md"
+  },
+  "dependencies": {
+    "openssl": {
+      "packagingRepository": "https://github.com/krzyzanowskim/OpenSSL",
+      "packagingTag": null,
+      "actualBinaryVersion": null,
+      "linkage": "statically-merged",
+      "pinning": "not-pinned-in-published-build-script"
+    }
+  }
+}

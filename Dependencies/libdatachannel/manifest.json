@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-11-22",
+  "status": "inventory-only",
+  "runtimeVerified": false,
+  "securityReview": "pending",
+  "reproducibleBuildVerified": false,
+  "name": "libdatachannel",
+  "consumers": [
+    "RTCHaishinKit"
+  ],
+  "distribution": {
+    "repository": "https://github.com/HaishinKit/libdatachannel-xcframework",
+    "tag": "v0.24.0",
+    "commit": "679ac6e6b10413f91c9021aa3dcf45b41817909f",
+    "url": "https://github.com/HaishinKit/libdatachannel-xcframework/releases/download/v0.24.0/libdatachannel.xcframework.zip",
+    "sha256": "52163eed2c9d652d913b20d1fd5a1925c5982b1dcdf335fd916c72ffa385bb26",
+    "sizeBytes": 66901500
+  },
+  "source": {
+    "repository": "https://github.com/paullouisageneau/libdatachannel",
+    "tag": "v0.24.0",
+    "commit": null,
+    "evidence": "https://github.com/HaishinKit/libdatachannel-xcframework/blob/v0.24.0/build-clone.sh",
+    "binaryProvenanceVerified": false
+  },
+  "integrity": {
+    "sha256Matches": true,
+    "zipCRCValid": true,
+    "checkedAt": "2026-11-22"
+  },
+  "build": {
+    "toolchainVersion": null,
+    "optionsEvidence": "https://github.com/HaishinKit/libdatachannel-xcframework/blob/v0.24.0/build-ios.sh"
+  },
+  "patches": [],
+  "licenses": {
+    "reviewStatus": "pending",
+    "evidence": "https://github.com/HaishinKit/libdatachannel-xcframework/blob/v0.24.0/README.md"
+  },
+  "dependencies": {
+    "openssl": {
+      "packagingRepository": "https://github.com/krzyzanowskim/OpenSSL",
+      "packagingTag": "3.3.3001",
+      "actualBinaryVersion": null,
+      "linkage": "statically-merged"
+    },
+    "ios-cmake": {
+      "tag": "4.5.0"
+    },
+    "sourceSubmodules": {
+      "libjuice": "5948a4162d37bc213d6051b67ee2876ccc5a99a6",
+      "libsrtp": "ee1a77c9f9dc02c42bda9901038c500c5efe4cfa",
+      "usrsctp": "fec583d54493f879d2ae44a743423bf8a04371ab",
+      "plog": "94899e0b926ac1b0f4750bfbd495167b4a6ae9ef",
+      "json": "55f93686c01528224f448c19128836e7df245f72"
+    }
+  }
+}

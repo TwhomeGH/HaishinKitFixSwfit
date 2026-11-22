@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-11-22",
+  "status": "inventory-only",
+  "runtimeVerified": false,
+  "securityReview": "pending",
+  "reproducibleBuildVerified": false,
+  "name": "openssl",
+  "upstreamRepository": "https://github.com/openssl/openssl",
+  "managedAsStandaloneArtifact": false,
+  "artifacts": [
+    {
+      "embeddedIn": "libdatachannel v0.24.0",
+      "packagingTag": "3.3.3001",
+      "actualBinaryVersion": null
+    },
+    {
+      "embeddedIn": "libsrt v1.5.4",
+      "packagingTag": null,
+      "actualBinaryVersion": null
+    }
+  ],
+  "resolution": "pending-version-and-linkage-audit"
+}

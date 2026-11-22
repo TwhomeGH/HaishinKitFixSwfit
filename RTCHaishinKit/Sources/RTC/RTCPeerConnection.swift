@@ -132,7 +132,12 @@ a=fmtp:98 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
     private(set) var localDescription: String = ""
 
     /// Creates a peerConnection instance.
-    public init(_ config: (some RTCConfigurationConvertible)? = nil) throws {
+    ///
+    /// - Parameter config: The configuration to apply. Omit it to use an empty configuration.
+    ///
+    /// `any` rather than `some` is required so the default `nil` can be inferred;
+    /// an opaque parameter type cannot be defaulted.
+    public init(_ config: (any RTCConfigurationConvertible)? = nil) throws {
         if let config {
             connection = config.createPeerConnection()
         } else {

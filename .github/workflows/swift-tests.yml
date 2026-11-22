@@ -85,6 +85,90 @@ jobs:
             .build/test-results/ci-summary.md
           if-no-files-found: error
 
+  # RTC 目前沒有任何 CI 覆蓋；這裡先建立基線，升級 libdatachannel 後才有回歸訊號。
+  rtc-tests:
+    name: RTCHaishinKit build + tests
+    runs-on: xcode-27
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Print toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      # 只建置 RTC 目標：可單獨暴露 libdatachannel 標頭／符號漂移，不必等整個測試流程。
+      - name: Build RTCHaishinKit for macOS
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .build/rtc-test-results
+          swift build --target RTCHaishinKit 2>&1 | tee .build/rtc-test-results/rtc-macos-build.log
+          status=${PIPESTATUS[0]}
+          echo "${status}" > .build/rtc-test-results/build-exit-code
+          if [ "${status}" -ne 0 ]; then
+            echo "::error title=RTCHaishinKit macOS Build::swift build --target RTCHaishinKit failed"
+          fi
+          exit "${status}"
+
+      - name: Run RTCHaishinKit tests
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .build/rtc-test-results
+          : > .build/rtc-test-results/summary.md
+          : > .build/rtc-test-results/failures.md
+          python3 .github/scripts/run_ios_tests.py RTCHaishinKitTests .build/rtc-test-results \
+            2>&1 | bash .github/scripts/colorize-test-log.sh
+          status=${PIPESTATUS[0]}
+          if [ "${status}" -eq 0 ]; then
+            echo "- PASS: RTCHaishinKit iOS test suite" >> .build/rtc-test-results/summary.md
+          else
+            {
+              echo "- FAIL: RTCHaishinKit iOS test suite, exit code \`${status}\`"
+              echo
+              echo "#### Diagnostics"
+              grep -n -E "^error:|^fatal error:|^/.+:[0-9]+:[0-9]+: error:|No such module|cannot find" .build/rtc-test-results/ios-tests.log | head -n 80 || true
+              grep -n -E "Test Case '-\\[.*\\]' failed|failed:|Failure|Issue recorded|Test Suite .* failed|Failing tests:" .build/rtc-test-results/ios-tests.log | head -n 120 || true
+            } >> .build/rtc-test-results/failures.md
+          fi
+          echo "${status}" > .build/rtc-test-results/exit-code
+          exit "${status}"
+
+      - name: Summarize RTCHaishinKit results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### RTCHaishinKit build + tests"
+            echo
+            echo "- macOS build exit: \`$(cat .build/rtc-test-results/build-exit-code 2>/dev/null || echo missing)\`"
+            echo "- iOS tests exit: \`$(cat .build/rtc-test-results/exit-code 2>/dev/null || echo missing)\`"
+            echo
+            if [ -s .build/rtc-test-results/summary.md ]; then cat .build/rtc-test-results/summary.md; fi
+            if [ -s .build/rtc-test-results/failures.md ]; then cat .build/rtc-test-results/failures.md; fi
+            echo
+            echo "<details><summary>Last 120 log lines</summary>"
+            echo
+            echo '```text'
+            tail -n 120 .build/rtc-test-results/ios-tests.log 2>/dev/null || true
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload RTCHaishinKit logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rtc-test-logs
+          path: .build/rtc-test-results
+          if-no-files-found: error
+
   rtmp-tests:
     needs: macos-build
     name: RTMPHaishinKit iOS tests

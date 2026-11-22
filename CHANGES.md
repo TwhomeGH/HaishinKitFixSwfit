@@ -1,5 +1,14 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 22:58 二進位依賴盤點與 RTC 測試基線
+
+- 新增 `Dependencies/`（libdatachannel、libsrt、openssl 的 manifest）與 `Docs/BINARY_DEPENDENCY_AUDIT.md`：記錄版本、來源、checksum、授權與缺口；本次只盤點，未升級或替換二進位。
+- 第二輪核對：v0.24.6 起兩包改為 SwiftPM package、OpenSSL 改共享 `OpenSSL-Package`（不再內嵌），必須成對升級；arm64 自 v0.24.0 即為唯一架構，實際平台調升只有 visionOS 1.3。
+- CI 新增 `RTCHaishinKit build + tests`（macOS 建置＋iOS 模擬器），為 RTC 首次納入 CI。
+- 新增 `RTCPeerConnectionLifecycleTests`：offer／close、configuration 欄位映射、反覆建立與釋放、logger 全等級。
+- 修正 `RTCPeerConnection` 預設初始化：`some` → `any`，`RTCPeerConnection()` 才能使用；原本 `RTCConfiguration.empty` 分支是死碼。
+- 驗證：Swift 6.3 最小範例（`any`＋預設 `nil`、Optional 具體→存在型別）、`swiftc -parse`、CI YAML 解析均通過；Apple 編譯與 RTC 測試待 CI 首次執行。
+
 ## 2026.11.22 無效來源 PTS 入口診斷
 
 - MediaMixer 的 CMSampleBuffer 入口新增 SourceTimeAudit，分影音軌記錄有效性、連續異常、恢復及首末異常原始 CMTime；到達單調時間獨立保留，不當成來源 PTS。
