@@ -74,6 +74,13 @@ struct RTMPTimestampDiagnostics {
         return lastSourceSeconds - firstSourceSeconds - generatedSeconds
     }
 
+    /// 比較兩軌最近觀測的來源偏移與 wire 偏移；未配對內容，不是感知音畫同步量測。
+    /// 正值表示 wire 的 video-minus-audio 比來源更大；不同時鐘域時不可解讀為校正量。
+    func relativeOffsetError(comparedTo audio: RTMPTimestampDiagnostics) -> Double? {
+        guard let videoSource = lastSourceSeconds, let audioSource = audio.lastSourceSeconds else { return nil }
+        return (generatedSeconds - audio.generatedSeconds) - (videoSource - audioSource)
+    }
+
     /// 供既有低頻診斷日誌使用；未收到樣本的欄位明確顯示 unknown。
     var logDescription: String {
         func number(_ value: Double?) -> String {
@@ -89,6 +96,8 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
     private(set) var updatedAt = kRTMPTimestamp_defaultTimeInterval
     /// 來源時間基準；與 wire `updatedAt` 分離，避免把來源跳變和輸出節奏混在一起。
     private var lastSourceSeconds: TimeInterval?
+    /// 音訊來源倒退後的時鐘位移；累積誤差比較不得把舊時鐘域的差距補回。
+    private var preferredSourceOffset: TimeInterval = 0
     private var timedeltaFraction: TimeInterval = kRTMPTimestamp_defaultTimeInterval
     private var lastRawTimestamp: UInt32 = 0
     private var rolloverCount: UInt64 = 0
@@ -115,8 +124,13 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
             logger.warn("RTMPTimestamp invalid: \(source) non-finite source")
             return 0
         }
+        if let preferredDelta, !preferredDelta.isFinite || preferredDelta <= 0 || preferredDelta * 1000 > Double(UInt32.max) - 1 {
+            logger.warn("RTMPTimestamp invalid: \(source) invalid packet duration")
+            return 0
+        }
         let usesPreferredDelta = preferredDelta != nil
-        if startedAt == 0 {
+        // 零秒是合法來源 PTS，不能用它判斷是否尚未收到首筆。
+        if lastSourceSeconds == nil {
             startedAt = value.seconds
             updatedAt = value.seconds
             lastSourceSeconds = value.seconds
@@ -148,20 +162,26 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         if let preferredDelta {
             let preferredTimedelta = preferredDelta * 1000
             let drift = sourceTimedelta - preferredTimedelta
+            // 比較同一軌「來源經過時間」與「下一包預計 wire 時間」，包含尚未輸出的毫秒餘數。
+            // 只看相鄰來源 delta 會漏掉每包都很小、但整場累積成秒的速差。
+            let cumulativeDrift = (value.seconds - startedAt - preferredSourceOffset - cumulativeTime) * 1000
+                - timedeltaFraction - preferredTimedelta
             if sourceTimedelta < -kRTMPTimestamp_preferredDeltaDriftTolerance {
                 // 來源時鐘倒退：視為新的來源基準，wire 仍以正常封包節奏前進。
                 rebased = true
                 corrected = true
                 timedelta = preferredTimedelta
+                preferredSourceOffset = value.seconds - startedAt - cumulativeTime
+                    - (timedeltaFraction + preferredTimedelta) / 1000
             } else if allowJump && kRTMPTimestamp_preferredDeltaDriftTolerance < drift {
                 // 真正的向前缺口：保留來源 gap，避免把音訊時間軸壓縮掉。
                 corrected = true
                 timedelta = sourceTimedelta
-            } else if kRTMPTimestamp_preferredDeltaDriftTolerance < abs(drift) {
+            } else if kRTMPTimestamp_preferredDeltaDriftTolerance < abs(cumulativeDrift) {
                 corrected = true
                 let correction = max(
                     -kRTMPTimestamp_preferredDeltaMaxCorrection,
-                    min(kRTMPTimestamp_preferredDeltaMaxCorrection, drift * kRTMPTimestamp_preferredDeltaCorrectionRatio)
+                    min(kRTMPTimestamp_preferredDeltaMaxCorrection, cumulativeDrift * kRTMPTimestamp_preferredDeltaCorrectionRatio)
                 )
                 timedelta = max(0, preferredTimedelta + correction)
             } else {
@@ -240,6 +260,7 @@ struct RTMPTimestamp<T: RTMPTimeConvertible> {
         startedAt = kRTMPTimestamp_defaultTimeInterval
         updatedAt = kRTMPTimestamp_defaultTimeInterval
         lastSourceSeconds = nil
+        preferredSourceOffset = 0
         timedeltaFraction = kRTMPTimestamp_defaultTimeInterval
         lastRawTimestamp = 0
         rolloverCount = 0

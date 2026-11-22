@@ -1396,6 +1396,14 @@ extension RTMPStream: _Stream {
         return String(format: "%.6f", video - audio)
     }
 
+    /// 固定大小的偏移診斷，不依另一軌輸出時間重標媒體，也不做自動補償。
+    private var relativeOffsetErrorDescription: String {
+        guard let error = videoTimestamp.diagnostics.relativeOffsetError(comparedTo: audioTimestamp.diagnostics) else {
+            return "unknown"
+        }
+        return String(format: "%.6f", error)
+    }
+
     public func dispatch(_ event: NetworkMonitorEvent) async {
         switch event {
         case .reset:
@@ -1459,7 +1467,7 @@ extension RTMPStream: _Stream {
                 publishThroughputLogCount += 1
                 if publishThroughputLogCount % 30 == 0 {
                     await connection?.log(.debug, "publish timeline",
-                        detail: "schema=2 generation=\(publishGeneration) alignment=audioRebase origins=perTrackFirstSample units=seconds sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=\(audioTimestamp.diagnostics.sourceRebases) video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
+                        detail: "schema=2 generation=\(publishGeneration) alignment=audioRebase origins=perTrackFirstSample units=seconds clockComparison=unverified contentSync=notMeasured relativeOffsetError=\(relativeOffsetErrorDescription) sourceStartOffset=\(sourceStartOffsetDescription) generatedAVOffset=\(videoTimestamp.cumulativeTime - audioTimestamp.cumulativeTime) videoCompensation=0 audioResyncs=\(audioTimestamp.diagnostics.sourceRebases) video{\(videoTimestamp.diagnostics.logDescription)} audio{\(audioTimestamp.diagnostics.logDescription)}")
                     await connection?.log(.debug, "publish media timing",
                         detail: "schema=1 generation=\(publishGeneration) boundary=messageQueue units=seconds \(encodingTracker.timingLogDescription)")
                     await connection?.log(.debug, "publish throughput",

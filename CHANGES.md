@@ -1,5 +1,14 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 15:32 音訊累積速差與來源偏移診斷
+
+- 修正來源 PTS 為零時第二筆再次被當成首筆的問題；改用已接收來源狀態判定初始化。
+- preferredDelta 改以同音軌來源經過時間與 wire 累計時間（含毫秒餘數）比較，避免每包低於 80 ms 門檻的小速差無限累積。維持 80 ms 容忍範圍及每包最多 5 ms 修正，不參考另一軌完成順序。
+- 來源時鐘大幅倒退時重建累積比較位移，避免後續正常音訊持續償還舊時鐘差；拒絕非有限、非正值或超出範圍的標稱封包時長。
+- publish timeline 新增 relativeOffsetError：wire 的 video-minus-audio 減去來源的 video-minus-audio。標記 clockComparison=unverified、contentSync=notMeasured，不當作實際內容同步或自動校正量。
+- 新增零起點／重設、兩軌交付順序、長時間正負速差、倒退後恢復及無效封包時長測試。Windows Swift 語法檢查通過，Apple SDK 編譯與測試執行待 CI。
+- 尚未切換共同起播原點；各軌首筆各自歸零仍是已知限制，需另做有界起播協調。此修正未證明能解決實測的數秒畫面落後。
+
 ## 2026.11.11 22:10 編碼輸入緩衝 API 與音訊缺口策略
 
 - `StreamConvertible` 新增 `setVideoInputBufferLimits(bytes:duration:)`，可在不直接操作 actor 屬性的情況下更新 `maxVideoBufferBytes`／`maxVideoBufferDuration`；呼叫會即時更新既有 queue。

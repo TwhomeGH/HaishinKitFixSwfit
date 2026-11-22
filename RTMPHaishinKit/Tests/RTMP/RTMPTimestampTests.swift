@@ -4,6 +4,70 @@ import Foundation
 import Testing
 
 @Suite struct RTMPTimestampTests {
+    /// 零秒起點不得讓第二筆再次歸零；清除後也必須保留同樣行為。
+    @Test func zeroOriginPreservesFirstIntervalAfterReset() {
+        var timestamp = RTMPTimestamp<CMTime>()
+        for _ in 0..<2 {
+            _ = timestamp.update(.zero, preserveForwardGaps: true)
+            let delta = timestamp.update(CMTime(value: 33, timescale: 1000), preserveForwardGaps: true)
+            #expect(delta == 33)
+            #expect(timestamp.diagnostics.firstSourceSeconds == 0)
+            timestamp.clear()
+        }
+    }
+
+    /// 明確揭露起始差被抹除的既有限制；交付先後不能改變診斷結果。
+    @Test(arguments: [true, false]) func reportsLostStartupOffset(videoFirst: Bool) {
+        var video = RTMPTimestamp<CMTime>()
+        var audio = RTMPTimestamp<CMTime>()
+        let v = CMTime(value: 100200, timescale: 1000)
+        let a = CMTime(value: 100000, timescale: 1000)
+        if videoFirst { _ = video.update(v) }
+        _ = audio.update(a)
+        if !videoFirst { _ = video.update(v) }
+        let error = video.diagnostics.relativeOffsetError(comparedTo: audio.diagnostics)
+        #expect(abs((error ?? 999) + 0.2) < 0.000001)
+        video.clear()
+        #expect(video.diagnostics.relativeOffsetError(comparedTo: audio.diagnostics) == nil)
+    }
+
+    /// 每包偏差小於門檻仍需追蹤累積誤差，正負速差均不得無限累積。
+    @Test(arguments: [0.02134, 0.021326]) func boundsAccumulatedSubthresholdAudioDrift(step: Double) {
+        var video = RTMPTimestamp<CMTime>()
+        var audio = RTMPTimestamp<CMTime>()
+        for i in 0...100000 {
+            let time = CMTime(seconds: 100 + Double(i) * step, preferredTimescale: 1_000_000)
+            _ = video.update(time, preserveForwardGaps: true)
+            _ = audio.update(time, allowJump: true, preferredDelta: 1024.0 / 48000)
+        }
+        let error = video.diagnostics.relativeOffsetError(comparedTo: audio.diagnostics)
+        #expect(abs(error ?? 999) < 0.082)
+        #expect(audio.diagnostics.correctionCount > 0)
+    }
+
+    /// 時鐘倒退採用新來源基準後，後續正常封包不能被累積誤差持續拉慢。
+    @Test func backwardRebaseDoesNotCreateCorrectionDebt() {
+        var audio = RTMPTimestamp<CMTime>()
+        let step = 1024.0 / 48000
+        _ = audio.update(CMTime(seconds: 100, preferredTimescale: 1_000_000), preferredDelta: step)
+        _ = audio.update(CMTime(seconds: 90, preferredTimescale: 1_000_000), preferredDelta: step)
+        for i in 1...1000 {
+            _ = audio.update(CMTime(seconds: 90 + Double(i) * step, preferredTimescale: 1_000_000), preferredDelta: step)
+        }
+        #expect(audio.diagnostics.sourceRebases == 1)
+        #expect(audio.diagnostics.correctionCount == 1)
+        #expect(abs(audio.cumulativeTime - 1001 * step) < 0.002)
+    }
+
+    @Test func invalidPacketDurationDoesNotAdvanceState() {
+        var audio = RTMPTimestamp<CMTime>()
+        for duration in [Double.nan, Double.infinity, -1, 0] {
+            let result = audio.update(.zero, preferredDelta: duration)
+            #expect(result == 0)
+            #expect(audio.diagnostics.firstSourceSeconds == nil)
+        }
+    }
+
     /// 同一組來源樣本即使以不同跨軌順序交付，也不得依另一軌進度重標。
     @Test func deliveryOrderDoesNotChangePerTrackTimeline() {
         func run(_ videoFirst: Bool) -> (Double, Double) {
