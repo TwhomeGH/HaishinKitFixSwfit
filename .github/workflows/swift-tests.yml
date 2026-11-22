@@ -80,10 +80,13 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: rtmp-macos-build-log
-          path: .build/test-results/macos-build.log
+          path: |
+            .build/test-results/macos-build.log
+            .build/test-results/ci-summary.md
           if-no-files-found: error
 
   rtmp-tests:
+    needs: macos-build
     name: RTMPHaishinKit iOS tests
     runs-on: xcode-27
     timeout-minutes: 65
@@ -235,8 +238,9 @@ jobs:
     name: HaishinKit iOS tests
     runs-on: xcode-27
     timeout-minutes: 65
-    needs: rtmp-tests
-    if: always()
+    needs: [macos-build, rtmp-tests]
+    # RTMP 測試失敗仍收集其他 suite；快速編譯失敗或取消則不啟動。
+    if: ${{ !cancelled() && needs.macos-build.result == 'success' }}
 
     steps:
       - name: Checkout
@@ -382,6 +386,7 @@ jobs:
           if-no-files-found: error
 
   haishinkit-macos-tests:
+    needs: macos-build
     name: HaishinKit macOS tests
     runs-on: xcode-27
     timeout-minutes: 30
@@ -534,8 +539,8 @@ jobs:
     name: HaishinKit tests (Thread Sanitizer, ${{ matrix.platform }})
     runs-on: xcode-27
     timeout-minutes: 30
-    needs: [rtmp-tests, haishinkit-tests]
-    if: always()
+    # 一般測試通過才投入 TSan；job 內的 always() 摘要仍保留。
+    needs: [macos-build, rtmp-tests, haishinkit-tests, haishinkit-macos-tests]
     strategy:
       fail-fast: false
       matrix:

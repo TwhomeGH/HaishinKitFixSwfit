@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 CI 編譯關卡與錯誤來源摘要
+
+- macOS 快速編譯作為一般測試前置關卡；iOS suites 保留串行，TSan 改為所有一般測試成功後啟動，失敗摘要與產物收集仍會執行。
+- 編譯錯誤清單去除 ANSI、去重來源診斷並以位置／原因呈現；排除 driver 附帶的巨量命令，缺來源診斷時明確標示未知，完整原始 log 仍保存。
+- 新增摘要解析回歸案例；GitHub runner 實際排程與跳過行為待 CI 驗收。
+
+
 ## 2026.11.22 修正同幀追蹤的 CoreMedia 編譯錯誤
 
 - VideoFrameTrace 改用 kCMAttachmentMode_ShouldPropagate；CMAttachmentMode 是 UInt32 別名，不能使用 CoreVideo 的 .shouldPropagate 寫法。

@@ -57,7 +57,7 @@ def console_endgroup() -> None:
 # --- parsing ----------------------------------------------------------------
 
 LOC_RE = re.compile(
-    r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+):\s+(?P<kind>error|warning):\s+(?P<msg>.+)$"
+    r"^\s*(?P<path>.+?):(?P<line>\d+):(?P<col>\d+):\s+(?P<kind>error|warning):\s+(?P<msg>.+)$"
 )
 ANY_ERR_RE = re.compile(r"\berror:\s")
 ANY_WARN_RE = re.compile(r"\bwarning:\s")
@@ -107,7 +107,9 @@ def parse(log_text: str):
     exec_line: str | None = None
     testing_failed_block: list[str] = []
 
-    lines = log_text.splitlines()
+    # ANSI 顏色不屬於診斷文字；否則檔名與 error 關鍵字可能無法辨識。
+    lines = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", log_text).splitlines()
+    seen_errors = set()
     runner_errors = list(dict.fromkeys(line.strip() for line in lines
         if "The test runner hung before establishing connection." in line
         or "[Runner infrastructure]" in line))
@@ -130,6 +132,8 @@ def parse(log_text: str):
             in_failed_block = True
             testing_failed_block.append(line.strip())
             continue
+        if in_failed_block and LOC_RE.match(line):
+            in_failed_block = False
         if in_failed_block:
             if "TEST FAILED" in line or "BUILD FAILED" in line or "ARCHIVE FAILED" in line:
                 in_failed_block = False
@@ -153,7 +157,10 @@ def parse(log_text: str):
         m = LOC_RE.match(line)
         if m:
             if m.group("kind") == "error":
-                errors.append(Finding(m.group("path"), m.group("line"), m.group("msg")))
+                key = (m.group("path"), m.group("line"), m.group("col"), m.group("msg"))
+                if key not in seen_errors:
+                    seen_errors.add(key)
+                    errors.append(Finding(m.group("path"), m.group("line"), m.group("msg")))
             else:
                 msg = m.group("msg").strip()
                 if _ignored_warning(msg):
@@ -187,7 +194,12 @@ def parse(log_text: str):
             continue
 
         if ANY_ERR_RE.search(line) and not line.lstrip().startswith("//"):
-            other_errors.append(line.strip())
+            # swift driver 可能把數萬字命令附在同一行；完整命令留在原始 log。
+            message = line.strip().split("Command line:", 1)[0].rstrip()
+            if len(message) > 1200:
+                message = message[:1200] + " …（完整內容見原始 log）"
+            if message not in other_errors:
+                other_errors.append(message)
         elif ANY_WARN_RE.search(line) and not line.lstrip().startswith("//"):
             msg = line.split("warning:", 1)[1].strip()
             if _ignored_warning(msg):
@@ -297,8 +309,15 @@ def render_markdown(result) -> str:
     if errors or other_errors or result["testing_failed"]:
         out.append("## ❌ Errors")
         out.append("")
-        for f in errors:
-            out.append(f"- `{f.path}:{f.line}` {f.msg}")
+        if errors:
+            out.extend(["### 編譯錯誤來源（已去重）", "", "| 位置 | 原因 |", "| --- | --- |"])
+            for f in errors:
+                location = f"{f.path}:{f.line}".replace("|", "\\|").replace("`", "")
+                message = f.msg.replace("|", "\\|").replace("\n", " ")
+                out.append(f"| `{location}` | {message} |")
+            out.append("")
+        elif other_errors:
+            out.extend(["未取得含檔名與行號的編譯診斷；以下僅為失敗摘要，請查看原始 log。", ""])
         for line in other_errors:
             out.append(f"- {line}")
         if result["testing_failed"]:
