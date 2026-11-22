@@ -247,7 +247,7 @@ inputPTS → outputPTS，以及 handoffWaitSeconds、receivedToEncoderSeconds、
 主 App 必須先更新套件版本再接入 trace 參數。未接入前編碼耗時仍可記錄，
 上游交付識別為 unknown；請勿把只有底層通過 CI 標為端到端驗收完成。
 
-## 無效來源 PTS 的入口診斷
+## 無效來源 PTS 與幀間隔的入口診斷
 
 `[SourceTimeAudit]` 觀測 MediaMixer 的 CMSampleBuffer 交付入口，分 audio／video 與
 track 記錄 received、invalid、consecutiveInvalid、longestInvalidRun、recoveries。
@@ -255,10 +255,21 @@ firstBad／lastBad 保留原因（invalidCMTime、indefiniteCMTime、nonFinitePT
 CMTime value／timescale／flags／epoch 與入口 arrivalUptime；lastValidPTS 與到達時間分開。
 此處 arrivalUptime 是底層 mixer 入口時間，不是擷取回呼時間；不能拿來替代來源 PTS。
 
-每軌首次觀測及首次異常即回報，其後最多每 30 秒一則；停止時另補摘要，避免節流
-期間的尾端異常或恢復消失。每次 startRunning 重設診斷 session，無獨立 timer，
-只有固定計數及首末異常，不保留媒體。此觀測尚未涵蓋 AVCapture 內部輸入或
-AVAudioBuffer／AVAudioTime 多載，不能以沒有這類日誌推論所有來源時間正常。
+有效 PTS 之間另記 lastDelta、minDelta／maxDelta、negativeDeltas、duplicateDeltas、
+gapsOverHalfSecond（0.5–2s）、gapsOverTwoSeconds（≥2s），以及來源前進量與到達時間
+前進量的 lastDrift／maxAbsDrift。負向與重複 PTS 分開計數，且不納入 min／max；無效
+PTS 不中斷前一筆有效值，因此跨過無效區段的間隔會完整反映在 delta。
+
+首次觀測、首次無效異常、首次間隔／漂移異常即回報（訊息帶 event=negativeDelta、
+duplicateDelta、gapOver500ms、gapOver2s 或 arrivalDrift），其後異常最多每 30 秒
+一則；正常入口也有低頻摘要。停止時另補摘要，避免節流期間的尾端異常或恢復消失。
+每次 startRunning 重設診斷 session，無獨立 timer，只有固定計數及首末異常，不保留媒體。
+此觀測涵蓋 CMSampleBuffer 入口，不涵蓋 AVCapture 內部輸入或 AVAudioBuffer／AVAudioTime
+多載；也不能以沒有這類日誌推論所有來源時間正常。
+
+間隔與漂移是入口量測，不代表內容同步或 mixer 輸出；`clockComparison=unverified`、
+`contentSync=notMeasured` 的界線不變。漂移門檻 1 秒可能受主執行緒排程影響，需與
+arrivalUptime 一起判讀，不能直接當成 A/V 偏移。
 
 目前處置為 action=forwardedUnchanged、timestampFallback=none、downstreamAcceptance=unknown：
 入口只觀測，維持既有交付行為；下游是否接受或丟棄不能從入口計數推定。需另外設計

@@ -1,5 +1,13 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 23:34 入口幀間隔與到達漂移診斷（P1）
+
+- `SourceTimeAudit` 在有效性之外新增有效 PTS 之間的間隔：lastDelta、minDelta／maxDelta、negativeDeltas、duplicateDeltas、gapsOverHalfSecond（0.5–2s）、gapsOverTwoSeconds（≥2s）。
+- 新增來源前進量與入口到達時間差的 lastDrift／maxAbsDrift；漂移門檻 1 秒，僅作觀測，不當成 A/V 偏移。
+- 首次間隔／漂移異常即回報（event=negativeDelta／duplicateDelta／gapOver500ms／gapOver2s／arrivalDrift），其後異常限頻 30 秒；正常入口摘要保留。
+- 負向與重複 PTS 分開計數且不納入 min／max；無效 PTS 不中斷前一筆有效值，跨無效區段的 delta 會完整反映。
+- 新增 SourceTimeAuditTests 4 案例與 `.cortexkit/verify-source-time-interval.swift`（Windows 17 項全通過）；Apple CI 與實機日誌匯出待驗收。
+
 ## 2026.11.22 23:17 音訊時間軸不連續門檻統一（P0）
 
 - `AudioRingBuffer` 的 `timestampResetThreshold` 由寫死 48,000 samples 改為「秒 × 實際取樣率」；44.1k／16k／96k 不再分別得到 1.09s／3s／0.5s。
