@@ -127,6 +127,9 @@ public final actor MediaMixer {
 
     public private(set) var isRunning = false
 
+    // key 由兩種媒體及 UInt8 軌號組成，最多 512 組，不保存 sampleBuffer。
+    private var sourceTimeAudits: [String: SourceTimeAudit] = [:]
+    private var sourceTimeAuditSession = UUID()
     private var outputs: [any MediaMixerOutput] = []
     private var subscriptions: [Task<Void, Never>] = []
     private var isInBackground = false
@@ -271,8 +274,10 @@ public final actor MediaMixer {
     public func append(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0, videoTrace: VideoFrameTrace?) {
         switch sampleBuffer.formatDescription?.mediaType {
         case .audio?:
+            auditSourceTime(sampleBuffer, media: "audio", track: track)
             audioIO.append(track, buffer: sampleBuffer)
         case .video?:
+            auditSourceTime(sampleBuffer, media: "video", track: track)
             if let videoTrace {
                 videoTrace.attachReceived(to: sampleBuffer)
             } else {
@@ -281,6 +286,30 @@ public final actor MediaMixer {
             videoIO.append(track, buffer: sampleBuffer)
         default:
             break
+        }
+    }
+
+    /// 在交付下游之前觀測原始 CMTime；到達時間只做診斷，不能冒充來源 PTS。
+    private func auditSourceTime(_ buffer: CMSampleBuffer, media: String, track: UInt8) {
+        let time = buffer.presentationTimeStamp
+        let seconds = time.seconds
+        let reason: String?
+        if !time.isValid {
+            reason = "invalidCMTime"
+        } else if time.isIndefinite {
+            reason = "indefiniteCMTime"
+        } else if !seconds.isFinite {
+            reason = "nonFinitePTS"
+        } else {
+            reason = nil
+        }
+        let key = "\(media):\(track)"
+        // 有效幀不建立明細字串；異常僅保留首筆及最新一筆。
+        let detail = reason == nil ? "" : "value=\(time.value) timescale=\(time.timescale) flags=\(time.flags.rawValue) epoch=\(time.epoch)"
+        let report = sourceTimeAudits[key, default: SourceTimeAudit()].observe(
+            pts: seconds, reason: reason, detail: detail, now: ProcessInfo.processInfo.systemUptime)
+        if let report {
+            logger.info("[SourceTimeAudit] session=\(sourceTimeAuditSession) stage=mixerEntry media=\(media) track=\(track) \(report)")
         }
     }
 
@@ -652,6 +681,8 @@ extension MediaMixer: AsyncRunner {
         guard !isRunning else {
             return
         }
+        sourceTimeAudits.removeAll(keepingCapacity: true)
+        sourceTimeAuditSession = UUID()
         isRunning = true
         setVideoRenderingMode(videoMixerSettings.mode)
         if #available(tvOS 17.0, *) {
@@ -731,6 +762,11 @@ extension MediaMixer: AsyncRunner {
         }
         if #available(tvOS 17.0, *) {
             stopCapturing()
+        }
+        for key in sourceTimeAudits.keys.sorted() {
+            if let audit = sourceTimeAudits[key] {
+                logger.info("[SourceTimeAudit] session=\(sourceTimeAuditSession) stage=stopping mediaTrack=\(key) \(audit.summary)")
+            }
         }
         audioIO.finish()
         videoIO.finish()

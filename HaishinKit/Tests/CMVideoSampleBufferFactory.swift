@@ -43,7 +43,14 @@ enum CMVideoSampleBufferFactory {
         return sampleBuffer
     }
 
-    static func makeSampleBuffer(width: Int, height: Int) -> CMSampleBuffer? {
+    /// 建立測試影格；預設維持未知 PTS，時間軸測試應明確傳入有效時間。
+    /// - Parameters:
+    ///   - width: 像素寬度。
+    ///   - height: 像素高度。
+    ///   - presentationTimeStamp: 來源 PTS；預設無效，不假造零起點。
+    /// - Returns: 建立成功的影格，CoreMedia 建立失敗時為 nil。
+    static func makeSampleBuffer(width: Int, height: Int,
+                                 presentationTimeStamp: CMTime = .invalid) -> CMSampleBuffer? {
         var pixelBuffer: CVPixelBuffer?
         CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
         guard let pixelBuffer else {
@@ -58,7 +65,9 @@ enum CMVideoSampleBufferFactory {
         guard let outputFormat else {
             return nil
         }
-        var timingInfo = CMSampleTimingInfo()
+        var timingInfo = CMSampleTimingInfo(duration: .invalid,
+                                            presentationTimeStamp: presentationTimeStamp,
+                                            decodeTimeStamp: .invalid)
         var sampleBuffer: CMSampleBuffer?
         guard CMSampleBufferCreateReadyWithImageBuffer(
             allocator: kCFAllocatorDefault,

@@ -1,5 +1,18 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 無效來源 PTS 入口診斷
+
+- MediaMixer 的 CMSampleBuffer 入口新增 SourceTimeAudit，分影音軌記錄有效性、連續異常、恢復及首末異常原始 CMTime；到達單調時間獨立保留，不當成來源 PTS。
+- 首次觀測／首次異常即回報，後續每 30 秒限頻，停止補摘要，啟動另開 session；不保留媒體、不新增 timer。明示 forwardedUnchanged／timestampFallback=none，不改原媒體處置。
+- 新增限頻、異常計數、恢復與零 PTS 測試；Windows 純數值執行與語法檢查通過，Apple CI 及主 App 日誌匯出驗收待執行。
+
+
+## 2026.11.22 修正同幀追蹤測試的無效 PTS 資料
+
+- 測試影格工廠新增可指定 PTS 的參數，預設仍保持 invalid；正常交付測試明確使用 12 秒，分別驗證來源 10 秒、交付 11 秒與接收 12 秒，避免以 nil 與 NaN 比較。
+- 新增無效來源／接收 PTS 保持未知及 JSON 可編碼案例；正式診斷邏輯不變。Windows 語法與差異檢查通過，Apple 測試待 CI 重跑。
+
+
 ## 2026.11.22 CI 編譯關卡與錯誤來源摘要
 
 - macOS 快速編譯作為一般測試前置關卡；iOS suites 保留串行，TSan 改為所有一般測試成功後啟動，失敗摘要與產物收集仍會執行。

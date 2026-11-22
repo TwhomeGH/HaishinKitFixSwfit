@@ -246,3 +246,21 @@ inputPTS → outputPTS，以及 handoffWaitSeconds、receivedToEncoderSeconds、
 
 主 App 必須先更新套件版本再接入 trace 參數。未接入前編碼耗時仍可記錄，
 上游交付識別為 unknown；請勿把只有底層通過 CI 標為端到端驗收完成。
+
+## 無效來源 PTS 的入口診斷
+
+`[SourceTimeAudit]` 觀測 MediaMixer 的 CMSampleBuffer 交付入口，分 audio／video 與
+track 記錄 received、invalid、consecutiveInvalid、longestInvalidRun、recoveries。
+firstBad／lastBad 保留原因（invalidCMTime、indefiniteCMTime、nonFinitePTS）、原始
+CMTime value／timescale／flags／epoch 與入口 arrivalUptime；lastValidPTS 與到達時間分開。
+此處 arrivalUptime 是底層 mixer 入口時間，不是擷取回呼時間；不能拿來替代來源 PTS。
+
+每軌首次觀測及首次異常即回報，其後最多每 30 秒一則；停止時另補摘要，避免節流
+期間的尾端異常或恢復消失。每次 startRunning 重設診斷 session，無獨立 timer，
+只有固定計數及首末異常，不保留媒體。此觀測尚未涵蓋 AVCapture 內部輸入或
+AVAudioBuffer／AVAudioTime 多載，不能以沒有這類日誌推論所有來源時間正常。
+
+目前處置為 action=forwardedUnchanged、timestampFallback=none、downstreamAcceptance=unknown：
+入口只觀測，維持既有交付行為；下游是否接受或丟棄不能從入口計數推定。需另外設計
+拒收／推估策略，不能把觀測功能當成已修復無效時間。摘要使用既有 info logger，
+主 App 更新套件後應在診斷匯出搜尋 SourceTimeAudit，驗證 info logger 確實留存。
