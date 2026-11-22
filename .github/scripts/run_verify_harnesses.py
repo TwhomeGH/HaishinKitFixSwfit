@@ -59,7 +59,10 @@ HARNESSES: dict[str, list[str]] = {
         ".cortexkit/verify-aec.swift",
     ],
     # Pure integer mirror of AudioRingBuffer.align(to:), which needs AVFoundation.
-    "align": [".cortexkit/verify-align.swift"],
+    "align": [
+        "HaishinKit/Sources/Mixer/AudioRingBufferAlignment.swift",
+        ".cortexkit/verify-align.swift",
+    ],
 }
 
 
@@ -86,7 +89,7 @@ def run_one(swiftc: str, name: str, work: Path, verbose: bool) -> bool:
 
     suffix = ".exe" if os.name == "nt" else ""
     executable = work / f"{name}{suffix}"
-    command = [swiftc, *(str(source) for source in sources), "-o", str(executable)]
+    command = [swiftc, "-O", *(str(source) for source in sources), "-o", str(executable)]
     print(f"== {name} ==")
     try:
         compiled = subprocess.run(command, capture_output=True, text=True,
@@ -102,7 +105,7 @@ def run_one(swiftc: str, name: str, work: Path, verbose: bool) -> bool:
 
     try:
         result = subprocess.run([str(executable)], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=120)
+                                encoding="utf-8", errors="replace", timeout=300)
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"FAIL {name}: run failed: {error}", file=sys.stderr)
         return False
@@ -117,7 +120,16 @@ def run_one(swiftc: str, name: str, work: Path, verbose: bool) -> bool:
     return True
 
 
+def configure_stdio() -> None:
+    """Keep harness output readable on Windows consoles (cp950 cannot encode ✓)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> int:
+    configure_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="list harness names")
     parser.add_argument("--only", action="append", default=[],

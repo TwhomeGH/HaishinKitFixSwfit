@@ -40,4 +40,4 @@ CI 的 `verify-foundation` job（Ubuntu ＋ `swift:6.0` 容器）會執行同一
 | `verify-keepalive` | `RTMPHaishinKit/Sources/RTMP/RTMPKeepAlive.swift` |
 | `verify-cts` | `RTMPHaishinKit/Sources/RTMP/RTMPVideoCompositionTime.swift` |
 | `verify-aec` | `HaishinKit/Sources/Mixer/AudioEchoCanceler.swift` |
-| `verify-align` | 純整數鏡射 `AudioRingBuffer.align(to:)` |
+| `verify-align` | `HaishinKit/Sources/Mixer/AudioRingBufferAlignment.swift`（buffer 模擬僅用於端到端情境） |

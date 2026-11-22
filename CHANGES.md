@@ -1,5 +1,13 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.23 03:35 抽出 AudioRingBufferAlignment 純決策（align 真碼驗證）
+
+- `AudioRingBuffer.align(to:)` 的死區、丟棄上限、pending silence 先消耗決策抽成 Foundation-only `AudioRingBufferAlignment.decide`；`align` 只負責套用與計數。
+- `alignDropped` 維持只累計真正丟棄的資料樣本（不含 skip 補零）；trace 日誌改印實際丟棄量與 skip 拆分。
+- `.cortexkit/verify-align.swift` 改為編譯真實的 `AudioRingBufferAlignment.swift`，保留 7 個端到端 buffer 情境；新增 `AudioRingBufferAlignmentTests`（Swift Testing）。
+- `run_verify_harnesses.py` 的 align harness 來源同步更新；runner 改用 `-O` 編譯、UTF-8 stdio、執行逾時 300 秒，避免 AEC 在 Windows 除錯版過慢。
+- 驗證：本機 9 個 harness 全通過（66 秒）；Apple CI 的實際 `align` mutation 待驗收。
+
 ## 2026.11.23 02:41 非 Apple 驗證 harness 納入 CI（A）
 
 - 新增 `.github/scripts/run_verify_harnesses.py`：統一編譯並執行 `.cortexkit/verify-*.swift`；缺檔、未列清單、編譯或執行失敗皆回非零，並提供 `--list`／`--only`／`--verbose`。

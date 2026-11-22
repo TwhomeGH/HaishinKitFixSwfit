@@ -88,6 +88,13 @@ actor 忙碌時**靜默丟棄音訊幀**。mic 與 app 若**非相關性掉幀**
 `MediaMixer.audioPipelineDiagnostics()` 觀察是否仍在持續動手
 （見 [音訊管線診斷](doc:AUDIO_PIPELINE_DIAGNOSTICS)）。
 
+**實作位置（2026-11 抽出）**：死區、丟棄上限（`min(behind, counts)`）與「先消耗
+pending silence 再丟資料」的決策集中在 Foundation-only
+`AudioRingBufferAlignment.decide(behind:available:pendingSilence:deadband:)`；
+`align(to:)` 只負責套用，並累計 `alignDropped`（只計真正丟棄的資料樣本，不含
+skip 補零）與 `alignInserted`。抽出的目的，是讓非 Apple 平台能編譯真碼驗證
+（`.cortexkit/verify-align.swift`），不再維護一份鏡射實作。
+
 ### 2. `AudioMixerByMultiTrack.render()`（非 main track 對齊）
 
 ```swift

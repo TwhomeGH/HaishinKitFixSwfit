@@ -227,39 +227,41 @@ final class AudioRingBuffer: @unchecked Sendable {
     func align(to position: Int64) {
         lock()
         defer { unlock() }
-        let current = sampleTime - Int64(calculateCounts())
-        // behind > 0：本軌緩衝區起點落後播放頭（要補靜音）；
-        // behind < 0：超前（要丟 stale）。
+        let available = calculateCounts()
+        let current = sampleTime - Int64(available)
+        // behind > 0：本軌緩衝區起點落後播放頭（要丟 stale）；
+        // behind < 0：超前（要補靜音）。
         let behind = position - current
         lastAlignDiff = Int(behind)
-        // Deadband：門檻內視為量測抖動，不修正，避免每幀微丟/微補造成細碎斷音。
-        if behind > Self.alignDeadband {
-            // behind > 0：播放頭在資料起點之後 → 本軌過期 → 丟棄 stale。
-            // 先消耗 pending silence（skip），再消耗資料。上限鎖在目前可丟的
-            // counts，避免 behind 超過實際資料量時把 storedSamples 扣成負值。
-            var toDrop = min(behind, Int64(calculateCounts()))
-            let skipToDrop = min(Int64(skip), toDrop)
-            skip -= Int(skipToDrop)
-            toDrop -= skipToDrop
-            while 0 < toDrop {
-                let numSamples = min(Int(toDrop), Int(outputBuffer.frameCapacity) - tail)
+        // Deadband 與丟棄上限的決策集中在 AudioRingBufferAlignment，
+        // 讓非 Apple 平台能編譯真碼驗證；這裡只負責套用。
+        switch AudioRingBufferAlignment.decide(
+            behind: behind, available: available, pendingSilence: skip, deadband: Self.alignDeadband) {
+        case .none:
+            break
+        case .insertSilence(let samples):
+            skip += samples
+            alignInserted += samples
+            alignFireCount += 1
+            if Self.alignLogThreshold <= Int64(samples), logger.isEnabledFor(level: .trace) {
+                logger.trace("AudioRingBuffer.align: inserted \(samples) silence to align at \(position)")
+            }
+        case .drop(let total, let fromSkip, let fromStored):
+            // 先消耗 pending silence（skip），再消耗資料；上限由決策鎖在
+            // 目前可丟的 counts，避免 storedSamples 被扣成負值。
+            // alignDropped 只累計真正丟棄的樣本，不含補零的 skip。
+            skip -= fromSkip
+            alignDropped += fromStored
+            var remaining = fromStored
+            while 0 < remaining {
+                let numSamples = min(remaining, Int(outputBuffer.frameCapacity) - tail)
                 tail = (tail + numSamples) % Int(outputBuffer.frameCapacity)
                 storedSamples -= numSamples
-                alignDropped += numSamples
-                toDrop -= Int64(numSamples)
+                remaining -= numSamples
             }
             alignFireCount += 1
             if Self.alignLogThreshold <= behind, logger.isEnabledFor(level: .trace) {
-                logger.trace("AudioRingBuffer.align: dropped \(behind) stale samples to align at \(position)")
-            }
-        } else if behind < -Self.alignDeadband {
-            // behind < 0：播放頭在資料起點之前 → 有空隙 → 補 silence。
-            let lead = -behind
-            skip += Int(lead)
-            alignInserted += Int(lead)
-            alignFireCount += 1
-            if Self.alignLogThreshold <= lead, logger.isEnabledFor(level: .trace) {
-                logger.trace("AudioRingBuffer.align: inserted \(lead) silence to align at \(position)")
+                logger.trace("AudioRingBuffer.align: dropped \(total) stale samples (skip \(fromSkip)) to align at \(position)")
             }
         }
     }
