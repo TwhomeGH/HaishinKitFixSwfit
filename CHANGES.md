@@ -1,5 +1,11 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.23 04:20 RTCLogger.Level 改為 Sendable（修正 macOS CI data race）
+
+- `RTCLogger.Level` 是 public enum，跨模組送到 `RTCLogger` actor 時 Swift 6 會報 `sending 'level' risks causing data races`；加上 `Sendable`。
+- 新增編譯期回歸測試 `loggerLevelIsSendable`，避免之後移除 conformance。
+- 本機 Swift 6.3 未重現該診斷（工具鏈差異），以 macOS CI 為驗收。
+
 ## 2026.11.23 04:06 音視訊配對與內容年齡診斷（P2-2）
 
 - 新增 Foundation-only `AVContentSyncAudit`：以 arrival 50ms 窗口配對主視訊／主音訊軌，記錄 `handedOffset`、`contentOffset`、`videoAge`／`audioAge`、`ageSkew` 與斜率。

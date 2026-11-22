@@ -3,7 +3,9 @@ import libdatachannel
 /// An actor for writing interpolated string messages to `libdatachannel` logging system.
 public actor RTCLogger {
     /// Defines the logging severity levels supported by `libdatachannel`.
-    public enum Level {
+    /// `Sendable` so a stored level can cross the `RTCLogger` actor boundary
+    /// (Swift 6 rejects sending a non-Sendable enum from a nonisolated caller).
+    public enum Level: Sendable {
         /// No logs will be emitted.
         case none
         /// Fatal errors.

@@ -55,4 +55,11 @@ import Testing
         }
         await RTCLogger.shared.setLevel(.none)
     }
+
+    /// 編譯期回歸：`Level` 若不是 Sendable，跨模組送到 `RTCLogger` actor 會在
+    /// Swift 6 觸發 sending data-race 診斷（CI 曾在 setLevel 迴圈遇到）。
+    @Test func loggerLevelIsSendable() {
+        func requireSendable<T: Sendable>(_ value: T) {}
+        requireSendable(RTCLogger.Level.info)
+    }
 }
