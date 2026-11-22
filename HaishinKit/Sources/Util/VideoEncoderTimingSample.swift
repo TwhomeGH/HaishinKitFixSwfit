@@ -4,6 +4,8 @@ import Foundation
 public struct VideoEncoderTimingSample: Codable, Sendable {
     /// 實際 VT 狀態實例識別；重建後改變，不等同發布世代或格式 revision。
     public let session: UUID
+    /// 同一次 VT 提交捕捉的上游交付識別；舊資料或無附件路徑為 nil。
+    public let trace: VideoFrameTrace?
     /// 提交給 VT 的 PTS 秒數；不是螢幕原始擷取時間的保證。
     public let inputPTSSeconds: Double?
     /// VT 回呼壓縮樣本的 PTS 秒數。
@@ -19,9 +21,21 @@ public struct VideoEncoderTimingSample: Codable, Sendable {
         max(0, completedUptimeSeconds - submittedUptimeSeconds) * 1000
     }
 
+    /// 上游交付到 mixer 入口的等待秒數；只比較同程序單調時鐘。
+    public var handoffWaitSeconds: Double? {
+        guard let trace, let received = trace.receivedUptime else { return nil }
+        return received - trace.handedUptime
+    }
+
+    /// mixer 收到到送入 VT 的等待秒數，包含底層排程及佇列等待。
+    public var receivedToEncoderSeconds: Double? {
+        trace?.receivedUptime.map { submittedUptimeSeconds - $0 }
+    }
+
     /// 建立純數值觀測；無效媒體時間轉為 nil，確保 JSON 可編碼。
     init(session: UUID, inputPTS: Double, outputPTS: Double, outputDTS: Double?,
-         submitted: Double, completed: Double) {
+         submitted: Double, completed: Double, trace: VideoFrameTrace? = nil) {
+        self.trace = trace
         self.session = session
         inputPTSSeconds = inputPTS.isFinite ? inputPTS : nil
         outputPTSSeconds = outputPTS.isFinite ? outputPTS : nil
@@ -32,6 +46,6 @@ public struct VideoEncoderTimingSample: Codable, Sendable {
 
     /// 既有低頻事件摘要使用的同幀對照。
     var summary: String {
-        "session=\(session) inputPTS=\(inputPTSSeconds.map(String.init(describing:)) ?? "unknown") outputPTS=\(outputPTSSeconds.map(String.init(describing:)) ?? "unknown") outputDTS=\(outputDTSSeconds.map(String.init(describing:)) ?? "unknown") submitted=\(submittedUptimeSeconds) completed=\(completedUptimeSeconds) elapsedMs=\(elapsedMilliseconds)"
+        "session=\(session) inputPTS=\(inputPTSSeconds.map(String.init(describing:)) ?? "unknown") outputPTS=\(outputPTSSeconds.map(String.init(describing:)) ?? "unknown") outputDTS=\(outputDTSSeconds.map(String.init(describing:)) ?? "unknown") submitted=\(submittedUptimeSeconds) completed=\(completedUptimeSeconds) elapsedMs=\(elapsedMilliseconds) handoffWaitSeconds=\(handoffWaitSeconds.map(String.init(describing:)) ?? "unknown") receivedToEncoderSeconds=\(receivedToEncoderSeconds.map(String.init(describing:)) ?? "unknown") trace{\(trace?.summary ?? "unknown")}"
     }
 }

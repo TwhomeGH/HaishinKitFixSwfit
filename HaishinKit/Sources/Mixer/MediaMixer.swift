@@ -260,10 +260,24 @@ public final actor MediaMixer {
     ///   - sampleBuffer:The sample buffer to append.
     ///   - track: Track number used for mixing
     public func append(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0) {
+        append(sampleBuffer, track: track, videoTrace: nil)
+    }
+
+    /// 交付媒體並攜帶同幀診斷；保留原 append API 供既有呼叫端使用。
+    /// - Parameters:
+    ///   - sampleBuffer: 待交付樣本；診斷附件會在此入口寫入。
+    ///   - track: 混音／混合軌號。
+    ///   - videoTrace: 上游同幀識別；僅影片使用，未提供時不猜測來源。
+    public func append(_ sampleBuffer: CMSampleBuffer, track: UInt8 = 0, videoTrace: VideoFrameTrace?) {
         switch sampleBuffer.formatDescription?.mediaType {
         case .audio?:
             audioIO.append(track, buffer: sampleBuffer)
         case .video?:
+            if let videoTrace {
+                videoTrace.attachReceived(to: sampleBuffer)
+            } else {
+                VideoFrameTrace.clear(from: sampleBuffer)
+            }
             videoIO.append(track, buffer: sampleBuffer)
         default:
             break

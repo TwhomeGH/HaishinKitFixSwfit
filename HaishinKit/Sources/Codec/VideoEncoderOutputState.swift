@@ -18,12 +18,12 @@ final class VideoEncoderOutputState: @unchecked Sendable {
 
     /// 成功回呼時保存捕捉自同一次 VT 提交的數值；舊 session 回呼不污染新觀測。
     func recordTiming(inputPTS: Double, outputPTS: Double, outputDTS: Double?,
-                      submitted: Double, completed: Double) {
+                      submitted: Double, completed: Double, trace: VideoFrameTrace? = nil) {
         lock.lock(); defer { lock.unlock() }
         guard active else { return }
         diagnostics.recordEncoderTiming(VideoEncoderTimingSample(session: timingSession,
             inputPTS: inputPTS, outputPTS: outputPTS, outputDTS: outputDTS,
-            submitted: submitted, completed: completed))
+            submitted: submitted, completed: completed, trace: trace))
     }
 
     private let diagnostics: VideoPipelineEventTracker

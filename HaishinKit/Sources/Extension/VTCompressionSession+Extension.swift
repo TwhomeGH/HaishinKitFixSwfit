@@ -25,6 +25,7 @@ extension VTCompressionSession: VTSessionConvertible {
         ] as CFDictionary : nil
         outputState.submitted()
         // 捕捉數值而非輸入 sampleBuffer，避免診斷額外延長像素緩衝區生命週期。
+        let trace = VideoFrameTrace.read(from: sampleBuffer)
         let inputPTS = sampleBuffer.presentationTimeStamp.seconds
         let submittedUptime = ProcessInfo.processInfo.systemUptime
         let status = VTCompressionSessionEncodeFrame(
@@ -56,7 +57,7 @@ extension VTCompressionSession: VTSessionConvertible {
                 outputState.recordTiming(inputPTS: inputPTS,
                     outputPTS: sampleBuffer.presentationTimeStamp.seconds,
                     outputDTS: sampleBuffer.decodeTimeStamp.isValid ? sampleBuffer.decodeTimeStamp.seconds : nil,
-                    submitted: submittedUptime, completed: completedUptime)
+                    submitted: submittedUptime, completed: completedUptime, trace: trace)
                 // 交棒給 consumer。deliver 只在狀態允許（active、無失敗、
                 // 若在等 keyframe 則必須是 keyframe）時才呼叫 yield；
                 // yield 回傳 .enqueued 才算真正成功，否則視同丟棄。

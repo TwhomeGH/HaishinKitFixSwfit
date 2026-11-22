@@ -43,6 +43,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         }
     }
     private var audioTime = AudioTime()
+    private var timelineAudit = AudioTimelineAudit()
     // 來源 PTS 的最後值（秒）。只有真正的不連續才重建 anchor；正常連續幀
     // 不再每幀覆寫時間，避免兩軌混音時播放頭被反覆拉動。
     private var lastSourceTime: Double?
@@ -110,6 +111,9 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         if !audioTime.hasAnchor {
             audioTime.anchor(sampleBuffer.presentationTimeStamp, sampleRate: outputFormat.sampleRate)
         }
+        timelineAudit.input(pts: sampleBuffer.presentationTimeStamp.seconds,
+                            frames: CMSampleBufferGetNumSamples(sampleBuffer),
+                            rate: inputFormat?.sampleRate ?? 0)
         ringBuffer?.append(sampleBuffer)
         resample()
     }
@@ -122,6 +126,8 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         if !audioTime.hasAnchor {
             audioTime.anchor(when)
         }
+        timelineAudit.input(pts: when.isSampleTimeValid ? Double(when.sampleTime) / when.sampleRate : .nan,
+                            frames: Int(audioBuffer.frameLength), rate: audioBuffer.format.sampleRate)
         ringBuffer?.append(audioBuffer, when: when)
         resample()
     }
@@ -132,6 +138,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         guard seconds.isFinite else { return }
         if let lastSourceTime,
            abs(seconds - lastSourceTime) > AudioRingBuffer.gapRebaseThresholdSeconds {
+            timelineAudit.reset(reason: seconds < lastSourceTime ? "sourceRegression" : "sourceGap")
             audioTime.reset()
         }
         lastSourceTime = seconds
@@ -182,6 +189,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 if outputBuffer.frameLength == 0 {
                     converterZeroOutputCalls += 1
                 }
+                timelineAudit.output(frames: Int(outputBuffer.frameLength), rate: outputFormat.sampleRate)
                 outputFrames += 1
                 outputChannelRMS = AudioMixerByMultiTrack.channelRMS(outputBuffer)
                 delegate?.track(self, didOutput: outputBuffer.muted(settings.isMuted), when: audioTime.at)
@@ -200,6 +208,9 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
                 break
             }
         } while(status == .haveData)
+        if let report = timelineAudit.report(now: ProcessInfo.processInfo.systemUptime) {
+            logger.info("[AudioTimelineAudit] track=\(id) \(report) bufferedSamples=\(ringBuffer.counts) alignDropped=\(ringBuffer.alignDroppedSamples) alignInserted=\(ringBuffer.alignInsertedSamples) overflowDropped=\(ringBuffer.overflowDroppedSamples) skipInserted=\(ringBuffer.skipInsertedSamples)")
+        }
         // 此 append 完全沒產出 = ring buffer 來不及提供完整輸入塊（underrun）。
         if outputFrames == framesBefore {
             resampleNoDataCount += 1
@@ -273,6 +284,7 @@ final class AudioMixerTrack<T: AudioMixerTrackDelegate> {
         if logger.isEnabledFor(level: .info) {
             logger.info("inputFormat:", inputFormat, ", outputFormat:", outputFormat)
         }
+        timelineAudit.reset(reason: "formatChanged")
         audioTime.reset()
         lastSourceTime = nil
         converterRebuilds += 1

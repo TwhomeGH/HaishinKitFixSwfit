@@ -221,3 +221,28 @@ accepted／rejected 事件，因此兩端差值不能直接當成排隊數。
 - ``VideoQueueSnapshot``
 - ``VideoQueueRates``
 - ``VideoPipelineEventsSnapshot``
+
+## 上游同幀交付追蹤
+
+上游在來源回呼分配工作階段與單調遞增序號；加工時保留該識別，交付前建立
+`VideoFrameTrace(session:sequence:sourcePTS:handedPTS:)`，透過
+`MediaMixer.append(_:track:videoTrace:)` 交給底層。不要拿最新兩筆樣本猜測配對。
+`sourcePTS` 填加工前的原始 PTS，`handedPTS` 填實際交付 buffer 的 PTS；
+`handedUptime` 使用同程序 `ProcessInfo.processInfo.systemUptime`，不能填來源 PTS。
+
+Mixer 入口記錄 receivedPTS／receivedUptime。VT 提交捕捉同一 buffer 的純數值 trace，
+成功回呼保留於 VideoEncoderTimingSample；可核對 source → handed → received →
+inputPTS → outputPTS，以及 handoffWaitSeconds、receivedToEncoderSeconds、elapsedMilliseconds。
+附件未傳遞的離屏合成路徑會顯示 unknown，不拿另一張影格補上。這一版不追蹤 RTMP
+接收端解碼，也不宣稱重複內容或感知同步已量測。丟棄幀仍以既有事件計數回報，
+完整逐幀丟棄原因與離屏來源繼承另待接入。
+
+`[VideoFrameAudit]` 每 30 秒最多一則，保留區間最慢編碼樣本與最多 8 筆週期歷史。
+`[AudioTimelineAudit]` 以實際輸入／輸出樣本數計算秒數，報告來源跨度減輸入時長、
+輸入減輸出時長、緩衝量及補零／丟棄計數。格式變更或來源大跳時另開世代並保留
+重設前摘要；不跨世代拼接差值。這些差值可能含正常緩衝或缺口，不是自動補償值。
+兩者沿用底層 info logger，不依賴 App 特定進階診斷開關；沒有新資料時不啟動 timer，
+因此停流後沒有新的摘要不等於延遲歸零。
+
+主 App 必須先更新套件版本再接入 trace 參數。未接入前編碼耗時仍可記錄，
+上游交付識別為 unknown；請勿把只有底層通過 CI 標為端到端驗收完成。

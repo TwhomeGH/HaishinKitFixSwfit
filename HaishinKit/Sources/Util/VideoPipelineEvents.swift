@@ -97,12 +97,29 @@ package final class VideoPipelineEventTracker: @unchecked Sendable {
     private var lastErrorCode: Int32?
     private var firstEncoderTiming: VideoEncoderTimingSample?
     private var lastEncoderTiming: VideoEncoderTimingSample?
+    private var timingHistory: [VideoEncoderTimingSample] = []
+    private var lastTimingReport: Double?
+    private var worstTiming: VideoEncoderTimingSample?
+
 
     /// 只在 encoder state 鎖內呼叫；不反向取得 encoder 鎖。
     func recordEncoderTiming(_ sample: VideoEncoderTimingSample) {
         lock.lock(); defer { lock.unlock() }
         if firstEncoderTiming?.session != sample.session { firstEncoderTiming = sample }
         lastEncoderTiming = sample
+        if worstTiming == nil || sample.elapsedMilliseconds > worstTiming!.elapsedMilliseconds {
+            worstTiming = sample
+        }
+        let now = clock()
+        if let lastTimingReport, now - lastTimingReport >= 30 {
+            logger.info("[VideoFrameAudit] latest{\(sample.summary)} worst{\(worstTiming?.summary ?? "unknown")} previous{\(timingHistory.map(\.summary).joined(separator: " | "))} contentSync=notMeasured")
+            self.lastTimingReport = now
+            timingHistory.append(sample)
+            if timingHistory.count > 8 { timingHistory.removeFirst(timingHistory.count - 8) }
+            worstTiming = nil
+        } else if lastTimingReport == nil {
+            lastTimingReport = now
+        }
     }
 
     /// session 作廢時清除同幀觀測，累計事件保持原契約。
@@ -111,6 +128,8 @@ package final class VideoPipelineEventTracker: @unchecked Sendable {
         guard lastEncoderTiming?.session == session else { return }
         firstEncoderTiming = nil
         lastEncoderTiming = nil
+        worstTiming = nil
+        timingHistory.removeAll(keepingCapacity: true)
     }
 
     package init(clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
