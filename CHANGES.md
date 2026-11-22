@@ -1,5 +1,10 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.22 修正同幀追蹤的 CoreMedia 編譯錯誤
+
+- VideoFrameTrace 改用 kCMAttachmentMode_ShouldPropagate；CMAttachmentMode 是 UInt32 別名，不能使用 CoreVideo 的 .shouldPropagate 寫法。
+- Windows 語法與差異檢查通過；Apple SDK 型別檢查仍待 CI 重跑。
+
 ## 2026.11.22 同幀交付與音軌樣本時間稽核
 
 - 新增 VideoFrameTrace 與保留舊簽名的 mixer 交付入口，按工作階段／影格序號保留來源、交付、底層接收與同次 VT 輸入／輸出 PTS；未提供追蹤時清除舊附件，未知不猜測。

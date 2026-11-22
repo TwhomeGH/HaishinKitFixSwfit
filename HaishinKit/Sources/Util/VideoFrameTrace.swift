@@ -40,7 +40,9 @@ public struct VideoFrameTrace: Codable, Sendable {
         values["handedPTS"] = handedPTS
         let pts = buffer.presentationTimeStamp.seconds
         if pts.isFinite { values["receivedPTS"] = pts }
-        CMSetAttachment(buffer, key: Self.key, value: values as CFDictionary, attachmentMode: .shouldPropagate)
+        // CoreMedia 的 attachment mode 是 UInt32 常數，不同於 CoreVideo 的 enum。
+        CMSetAttachment(buffer, key: Self.key, value: values as CFDictionary,
+                        attachmentMode: kCMAttachmentMode_ShouldPropagate)
     }
 
     /// 未提供追蹤時移除舊附件，避免 buffer 重用後誤套上一筆交付識別。
