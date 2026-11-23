@@ -133,6 +133,9 @@ public final actor MediaMixer {
     /// 音視訊入口配對與內容年齡；只觀測，不修改時間戳。
     private var contentSyncAudit = AVContentSyncAudit()
     private var contentSyncSession = UUID()
+    /// 混音輸出（真正送進 encoder）的配對；與入口分開，避免把單軌延遲當成輸出 offset。
+    private var outputContentSyncAudit = AVContentSyncAudit()
+    private var outputContentSyncSession = UUID()
     private var outputs: [any MediaMixerOutput] = []
     private var subscriptions: [Task<Void, Never>] = []
     private var isInBackground = false
@@ -322,6 +325,53 @@ public final actor MediaMixer {
         }
     }
 
+    /// 在 mixer 輸出配對混音後的音視訊；只觀測，不修改時間戳。
+    private func auditContentSyncOutput(_ buffer: CMSampleBuffer) {
+        let time = buffer.presentationTimeStamp
+        guard time.isValid, time.seconds.isFinite else {
+            return
+        }
+        let capturePTS = VideoFrameTrace.read(from: buffer)?.sourcePTS
+        let report = outputContentSyncAudit.observe(
+            kind: .video,
+            handedPTS: time.seconds,
+            capturePTS: capturePTS,
+            arrival: ProcessInfo.processInfo.systemUptime
+        )
+        logContentSyncOutput(report, media: "video")
+    }
+
+    /// 在 mixer 輸出配對混音後的音視訊；`when` 是輸出音訊的實際時間。
+    private func auditContentSyncOutput(_ when: AVAudioTime) {
+        guard let seconds = seconds(from: when) else {
+            return
+        }
+        let report = outputContentSyncAudit.observe(
+            kind: .audio,
+            handedPTS: seconds,
+            capturePTS: nil,
+            arrival: ProcessInfo.processInfo.systemUptime
+        )
+        logContentSyncOutput(report, media: "audio")
+    }
+
+    private func seconds(from when: AVAudioTime) -> Double? {
+        if when.isHostTimeValid {
+            return AVAudioTime.seconds(forHostTime: when.hostTime)
+        }
+        if when.isSampleTimeValid, 0 < when.sampleRate {
+            return Double(when.sampleTime) / when.sampleRate
+        }
+        return nil
+    }
+
+    private func logContentSyncOutput(_ report: String?, media: String) {
+        guard let report else {
+            return
+        }
+        logger.info("[ContentSyncAudit] session=\(outputContentSyncSession) stage=mixerOutput media=\(media) \(report)")
+    }
+
     /// 在 mixer 入口配對音視訊；只觀測，不修改時間戳。
     private func auditContentSync(
         _ buffer: CMSampleBuffer,
@@ -348,6 +398,11 @@ public final actor MediaMixer {
     /// 音視訊配對與內容年齡摘要；只觀測，不修改時間戳。
     public func contentSyncDiagnostics() -> String {
         contentSyncAudit.summary
+    }
+
+    /// 混音輸出的配對摘要；這才是真正送進 encoder 的 A/V 關係。
+    public func outputContentSyncDiagnostics() -> String {
+        outputContentSyncAudit.summary
     }
 
     /// Cumulative audio pipeline diagnostics for host-side telemetry (AHealth).
@@ -722,6 +777,8 @@ extension MediaMixer: AsyncRunner {
         sourceTimeAuditSession = UUID()
         contentSyncAudit = AVContentSyncAudit()
         contentSyncSession = UUID()
+        outputContentSyncAudit = AVContentSyncAudit()
+        outputContentSyncSession = UUID()
         isRunning = true
         setVideoRenderingMode(videoMixerSettings.mode)
         if #available(tvOS 17.0, *) {
@@ -747,6 +804,7 @@ extension MediaMixer: AsyncRunner {
         }
         Task {
             for await video in videoIO.output {
+                auditContentSyncOutput(video)
                 for output in outputs where await output.videoTrackId == UInt8.max {
                     output.mixer(self, didOutput: video)
                 }
@@ -754,6 +812,7 @@ extension MediaMixer: AsyncRunner {
         }
         Task {
             for await audio in audioIO.output {
+                auditContentSyncOutput(audio.1)
                 for output in outputs where await output.audioTrackId == UInt8.max {
                     output.mixer(self, didOutput: audio.0, when: audio.1)
                 }
@@ -808,6 +867,7 @@ extension MediaMixer: AsyncRunner {
             }
         }
         logger.info("[ContentSyncAudit] session=\(contentSyncSession) stage=stopping \(contentSyncAudit.summary)")
+        logger.info("[ContentSyncAudit] session=\(outputContentSyncSession) stage=stopping stageName=mixerOutput \(outputContentSyncAudit.summary)")
         audioIO.finish()
         videoIO.finish()
         subscriptions.forEach { $0.cancel() }

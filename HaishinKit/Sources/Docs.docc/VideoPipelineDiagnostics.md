@@ -295,12 +295,18 @@ arrivalUptime 一起判讀，不能直接當成 A/V 偏移。
 
 ## 音視訊配對與內容年齡（ContentSyncAudit）
 
-`[ContentSyncAudit]` 在 MediaMixer 入口以**到達時間**配對主視訊軌與主音訊軌：只有
-arrival 相差在 50ms 內才視為同一時間窗，避免用「最新音訊 vs 最新影片」捏造 offset。
-每次 startRunning 重設 session；停止時補一則摘要；正常每 30 秒最多一則，
-`contentOffset` 或 `ageSkew` 首次超過 1 秒時立即回報 `event=contentLag`。
+`[ContentSyncAudit]` 以**到達時間**配對影音：只有 arrival 相差在 50ms 內才視為同一
+時間窗，避免用「最新音訊 vs 最新影片」捏造 offset。每次 startRunning 重設 session；
+停止時補一則摘要；正常每 30 秒最多一則，`contentOffset` 或 `ageSkew` 首次超過 1 秒時
+立即回報 `event=contentLag`。
 
-- `handedOffset`：兩軌實際交給 mixer 的 PTS 差（video − audio）。
+兩個階段分開累計：
+
+- `stage=mixerInput`：MediaMixer 入口的**主視訊軌與主音訊軌**。這裡的 offset 會包含
+  單軌延遲（例如 mic 的 80ms 緩衝），不是最終輸出。
+- `stage=mixerOutput`：混音後真正送進 encoder 的影音。要判斷輸出 A/V，看這一個。
+
+- `handedOffset`：兩軌實際交給 mixer／encoder 的 PTS 差（video − audio）。
 - `contentOffset`：優先用 `VideoFrameTrace.sourcePTS`（加工前抓幀時間）計算；
   沒有來源時間時退化成 `handedOffset`，摘要標示 `captureTime=missing`。
 - `videoAge`／`audioAge`：`arrival − 抓幀時間`；`ageSkew = videoAge − audioAge`。
@@ -308,11 +314,12 @@ arrival 相差在 50ms 內才視為同一時間窗，避免用「最新音訊 vs
 - `slopePerMin`：最近最多 600 對樣本的線性斜率；可看出偏移是固定還是持續惡化。
 
 **要偵測「PTS 看起來正常、內容卻落後」**，上游必須在
-`VideoFrameTrace(sourcePTS:handedPTS:)` 填入真正的抓幀時間。若 PTS 直到編碼時才產生，
-`videoAge` 會接近 0，摘要顯示 `captureTime=missing`——這不是「同步正常」，而是
-「沒有可用的抓幀時間」，不能拿來宣稱內容同步已量測。離屏合成或其他未攜帶 trace 的
-路徑同樣顯示 missing。
+`VideoFrameTrace(sourcePTS:handedPTS:)` 填入真正的抓幀時間。若 PTS 直到編碼／交付時才
+產生，`videoAge` 會接近 0——這不是「同步正常」，而是「沒有可用的抓幀時間」，不能拿來
+宣稱內容同步已量測。輸出階段只有在 trace 附件沿著 mixer 傳遞時才會顯示
+`captureTime=sourcePTS`；遺失時同樣是 missing。離屏合成或其他未攜帶 trace 的路徑亦然。
 
-`MediaMixer.contentSyncDiagnostics()` 可隨需求取得同一份摘要。此審計只觀測，
+`MediaMixer.contentSyncDiagnostics()` 回傳入口摘要；
+`MediaMixer.outputContentSyncDiagnostics()` 回傳混音輸出摘要。此審計只觀測，
 不改 PTS/DTS，也不丟幀；`action=observeOnly`、`timestampChanged=none`、
 `clockComparison=unverified`。

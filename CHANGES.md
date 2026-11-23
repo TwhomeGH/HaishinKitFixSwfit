@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.24 02:34 ContentSyncAudit 新增 mixer 輸出階段
+
+- `MediaMixer` 在 `videoIO.output`／`audioIO.output` 以 `stage=mixerOutput` 配對混音後影音，量真正送進 encoder 的 A/V；入口維持 `stage=mixerInput`。
+- 新增 `outputContentSyncDiagnostics()`；輸入／輸出分開累計、停止時各自補摘要。
+- 輸出階段只有 `VideoFrameTrace` 附件沿 mixer 傳遞時才有來源抓幀時間；遺失時 `captureTime=missing`。
+- 文件更新兩階段語意；純 audit 邏輯不變，Apple 端輸出接線由 CI 驗證。
+
 ## 2026.11.23 04:50 修正 AudioRingBufferAlignmentTests 的死區案例
 
 - 「無可用樣本仍回報丟棄決策」原本用 `behind=100`（小於 deadband 256），`decide` 正確回 `.none`；改為 `behind=300` 才落在丟棄分支。
