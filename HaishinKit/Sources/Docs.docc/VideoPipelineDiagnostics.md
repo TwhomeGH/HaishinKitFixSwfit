@@ -55,8 +55,7 @@ socket 本機完成資訊需另外呼叫 `RTMPConnection.transportDiagnostics()`
 
 ## 頂層回傳欄位
 
-目前 `schemaVersion = 2`。型別均遵循 `Codable`、`Sendable`。`encoder`／`output` 為可選欄位，舊版 JSON 缺少時可
-解碼為 `nil`。
+目前 `schemaVersion = 4`。型別均遵循 `Codable`、`Sendable`。`encoder`／`output`／`encoderHealth`／`encoderPressure` 為可選欄位，舊版 JSON 缺少時可解碼為 `nil`。
 
 | 欄位 | 型別 | 意義 |
 | --- | --- | --- |
@@ -69,6 +68,8 @@ socket 本機完成資訊需另外呼叫 `RTMPConnection.transportDiagnostics()`
 | lastPTS | Double? | 最後橋接影格的有效非負 PTS；無資料時 nil |
 | encoder | VideoPipelineEventsSnapshot? | 編碼器事件 |
 | output | VideoPipelineEventsSnapshot? | RTMP 出站事件 |
+| encoderHealth | VideoEncoderHealth? | VT 狀態、pending frames 與事件摘要 |
+| encoderPressure | VideoEncoderPressureSnapshot? | 送交／回呼／交付、積壓與延遲的組合判讀 |
 
 `VideoMixerSnapshot` 的 `input`、`output` 均為 `VideoQueueStageSnapshot`。
 
@@ -155,6 +156,32 @@ socket 本機完成資訊需另外呼叫 `RTMPConnection.transportDiagnostics()`
 `delta = pts - lastAccepted`：正值是被過濾後仍前進的內容時間，可看出「內容停了但時間軸前進」；
 負值保留給 nonMonotonic。Delta 不是丟棄總量，也不能單獨證明掉幀原因。
 
+### 編碼壓力（encoderPressure）
+
+`encoderPressure` 把「我們送了多少、VT 回了多少、目前哪裡積壓」合成一個狀態；它只讀取既有事件與佇列快照，
+不會觸發編碼或網路傳送。
+
+| 欄位 | 意義 |
+| --- | --- |
+| state | `normal`、`queueBacklog`、`vtBacklog`、`callbackSlow`、`throttling`、`dropping`、`unavailable` |
+| submitted / callbacks / delivered | 送入 VT／VT 回呼／下游接受的累計次數 |
+| outstandingSubmissions | `submitted − callbacks`，只作趨勢；跨 session 重建可能被放大 |
+| undeliveredCallbacks | `callbacks − delivered`，回呼但未被下游接受 |
+| pendingFrames / highWatermark / lowWatermark | VT 目前 pending、判定高水位與解除低水位 |
+| queued / oldestAgeSeconds / maxWaitSeconds | 編碼前原始影格佇列的目前深度與等待時間 |
+| lastElapsedMilliseconds | 最近一筆 VT 提交到回呼的耗時 |
+| lastHandoffWaitSeconds / lastReceivedToEncoderSeconds | mixer 交付到 queue、mixer 收到到送入 VT 的等待 |
+| isBehind / shouldPauseRepeats | 是否處於任何壓力狀態；補幀機制應在此時暫停 |
+
+狀態優先序：`dropping` → `vtBacklog` → `queueBacklog` → `callbackSlow` → `throttling` → `normal`。
+高水位預設為 `max(2, ceil(expectedFrameRate / 12))`，若使用者設定 `maxFrameDelayCount` 則優先使用；
+回呼耗時上限為 `max(50ms, 3 × 單幀時間)`。
+
+限制：累計次數建立在事件追蹤器生命週期上，session 重建不會歸零；`outstandingSubmissions` 不是即時 VT 佇列深度，
+請以 `pendingFrames`、`queued`、`oldestAgeSeconds` 判讀目前積壓。`unavailable` 代表沒有資料，不可當成零壓力。
+壓力分類只依 VT 回呼、pending、編碼前佇列與最近 5 秒事件判定；它不代表 RTMP 網路已送出，也不能取代
+`SocketBackpressure` 的待送位元組。
+
 ### output 事件名稱
 
 | 名稱 | 記錄時機 |
@@ -191,7 +218,7 @@ accepted／rejected 事件，因此兩端差值不能直接當成排隊數。
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
   "sampledAt": 120,
   "encoderInput": {"availability": "unavailable", "generation": 0, "missingDrops": 0},
   "bridgeReceived": 0,
@@ -238,6 +265,9 @@ accepted／rejected 事件，因此兩端差值不能直接當成排隊數。
 - ``VideoQueueSnapshot``
 - ``VideoQueueRates``
 - ``VideoPipelineEventsSnapshot``
+- ``VideoEncoderHealth``
+- ``VideoEncoderPressureSnapshot``
+- ``VideoEncoderTimingSample``
 
 ## 上游同幀交付追蹤
 

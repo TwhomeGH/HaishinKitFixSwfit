@@ -190,11 +190,12 @@ private final class QueueTestClock: @unchecked Sendable {
             encoderInput: VideoQueueStageSnapshot(availability: .ownerLockBusy),
             bridgeReceived: 10, pressureDrops: 2, lastPTS: nil)
         let decoded = try JSONDecoder().decode(VideoPipelineSnapshot.self, from: JSONEncoder().encode(pipeline))
-        #expect(decoded.schemaVersion == 3)
+        #expect(decoded.schemaVersion == 4)
         #expect(decoded.encoderInput.availability == .ownerLockBusy)
         #expect(decoded.mixer == nil)
         #expect(decoded.lastPTS == nil)
         #expect(decoded.pressureDrops == 2)
+        #expect(decoded.encoderPressure == nil)
     }
     @Test func legacySnapshotDecodesWithoutEvents() throws {
         let json = #"{"schemaVersion":1,"sampledAt":1,"encoderInput":{"availability":"unavailable"},"bridgeReceived":0,"pressureDrops":0}"#

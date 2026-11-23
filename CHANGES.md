@@ -1,5 +1,14 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.24 06:42 新增編碼壓力快照（encoderPressure）
+
+- 新增 Foundation-only `VideoEncoderPressureSnapshot`：把 `submitted`／`callbacks`／`delivered`、VT `pendingFrames`、編碼前佇列深度與等待、最近回呼耗時，合成 `normal`／`queueBacklog`／`vtBacklog`／`callbackSlow`／`throttling`／`dropping`／`unavailable`。
+- `VideoPipelineSnapshot` 升為 `schemaVersion=4`，新增 optional `encoderPressure`；`summary` 同步輸出 `encoderPressure{...}`，舊 JSON 仍可解碼。
+- 高水位預設 `max(2, ceil(expectedFrameRate / 12))`，使用者設定 `maxFrameDelayCount` 時優先；回呼耗時上限為 `max(50ms, 3 × 單幀時間)`。
+- `outstandingSubmissions`／`undeliveredCallbacks` 是事件累計差值，跨 session 重建可能被放大，不能當即時 VT 佇列深度；目前積壓以 `pendingFrames`、`queued`、`oldestAgeSeconds` 為準。
+- 新增 `HaishinKitTests/Util/VideoEncoderPressureSnapshotTests.swift`、`.cortexkit/verify-encoder-pressure.swift`；harness 增為 11 個。
+- 驗證：Windows harness 23 項全通過、6 個改動檔 `swiftc -parse` 通過；Apple CI 與實機 VT 壓力情境待驗收。
+
 ## 2026.11.24 02:34 ContentSyncAudit 新增 mixer 輸出階段
 
 - `MediaMixer` 在 `videoIO.output`／`audioIO.output` 以 `stage=mixerOutput` 配對混音後影音，量真正送進 encoder 的 A/V；入口維持 `stage=mixerInput`。

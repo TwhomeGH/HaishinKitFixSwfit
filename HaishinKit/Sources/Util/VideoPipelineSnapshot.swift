@@ -205,7 +205,7 @@ public struct VideoEncoderHealth: Codable, Sendable {
 /// 時間採單調時鐘；累計量的生命週期依佇列／事件 tracker／橋接器而不同。
 /// 請以 queue.id、事件 id 與上游串流實例分別判斷是否可比較。
 public struct VideoPipelineSnapshot: Codable, Sendable {
-    /// 快照資料結構版本，目前為 3（新增 encoderHealth）；不是套件版本或連線世代。
+    /// 快照資料結構版本，目前為 4（新增 encoderPressure）；不是套件版本或連線世代。
     public let schemaVersion: Int
     /// 彙總快照的單調時鐘秒數；各子快照另有自己的取樣時間。
     public let sampledAt: TimeInterval
@@ -228,16 +228,26 @@ public struct VideoPipelineSnapshot: Codable, Sendable {
     public let output: VideoPipelineEventsSnapshot?
     /// VT 編碼器健康摘要（含 pending frames）；舊快照沒有此欄位時為 nil。
     public let encoderHealth: VideoEncoderHealth?
+    /// 編碼壓力（送交、回呼、交付、積壓與延遲）；舊快照沒有此欄位時為 nil。
+    public let encoderPressure: VideoEncoderPressureSnapshot?
 
     /// 組合呼叫端已取得的診斷資料；不會觸發擷取、編碼或網路傳送。
     public init(sampledAt: TimeInterval, mixer: VideoMixerSnapshot?, encoderInput: VideoQueueStageSnapshot,
                 bridgeReceived: Int, pressureDrops: Int, lastPTS: Double?,
                 encoder: VideoPipelineEventsSnapshot? = nil,
                 encoderPendingFrames: Int? = nil,
-                output: VideoPipelineEventsSnapshot? = nil) {
-        schemaVersion = 3
+                output: VideoPipelineEventsSnapshot? = nil,
+                expectedFrameRate: Double? = nil,
+                maxFrameDelayCount: Int? = nil) {
+        schemaVersion = 4
         self.encoder = encoder; self.output = output
-        encoderHealth = VideoEncoderHealth(events: encoder, pendingFrames: encoderPendingFrames)
+        let health = VideoEncoderHealth(events: encoder, pendingFrames: encoderPendingFrames)
+        encoderHealth = health
+        let pressureInput = VideoEncoderPressureSnapshot.input(
+            events: encoder, encoderInput: encoderInput, pendingFrames: encoderPendingFrames,
+            expectedFrameRate: expectedFrameRate, maxFrameDelayCount: maxFrameDelayCount)
+        encoderPressure = pressureInput.hasData
+            ? VideoEncoderPressureSnapshot(input: pressureInput) : nil
         self.sampledAt = sampledAt; self.mixer = mixer; self.encoderInput = encoderInput
         self.bridgeReceived = bridgeReceived; self.pressureDrops = pressureDrops
         self.lastPTS = lastPTS
@@ -247,6 +257,6 @@ public struct VideoPipelineSnapshot: Codable, Sendable {
     /// - Parameter previous: 同一觀察來源的前次快照；不同 queue.id 不計算速率。
     /// - Returns: 日誌文字，格式不適合作為穩定的機器解析接口；UI 應直接讀欄位。
     public func summary(since previous: Self? = nil) -> String {
-        "schema=\(schemaVersion) encoderHealth{\(encoderHealth?.summary ?? "unavailable")} encoder{\(encoder?.summary ?? "unavailable")} output{\(output?.summary ?? "unavailable")} encoderInput{\(encoderInput.summary(since: previous?.encoderInput))} bridge{received=\(bridgeReceived) pressureDrop=\(pressureDrops) lastPTS=\(lastPTS ?? -1)} mixer{input{\(mixer?.input.summary(since: previous?.mixer?.input) ?? "unavailable")} output{\(mixer?.output.summary(since: previous?.mixer?.output) ?? "unavailable")}}"
+        "schema=\(schemaVersion) encoderHealth{\(encoderHealth?.summary ?? "unavailable")} encoderPressure{\(encoderPressure?.summary ?? "unavailable")} encoder{\(encoder?.summary ?? "unavailable")} output{\(output?.summary ?? "unavailable")} encoderInput{\(encoderInput.summary(since: previous?.encoderInput))} bridge{received=\(bridgeReceived) pressureDrop=\(pressureDrops) lastPTS=\(lastPTS ?? -1)} mixer{input{\(mixer?.input.summary(since: previous?.mixer?.input) ?? "unavailable")} output{\(mixer?.output.summary(since: previous?.mixer?.output) ?? "unavailable")}}"
     }
 }

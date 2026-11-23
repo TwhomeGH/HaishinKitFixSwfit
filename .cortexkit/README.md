@@ -11,8 +11,9 @@ Foundation-only 原始碼 ＋ 斷言」編成一支程式，靠 exit code 判定
 
 - 每個 harness 都必須有對應的 Swift Testing 測試。
 - 修改純邏輯時，兩邊都要更新。
-- 只有 `verify-align.swift` 是例外：它是 `AudioRingBuffer.align(to:)` 的純整數
-  鏡射（真實檔案需要 AVFoundation），必須手動保持同步。
+- 只有 `verify-align.swift` 是例外：它編譯真實的
+  `AudioRingBufferAlignment.swift` 決策函式；buffer 的實際 mutation 仍以模擬呈現，
+  端到端佇列行為需由 Apple 端測試覆蓋。
 
 ## 執行
 
@@ -36,6 +37,7 @@ CI 的 `verify-foundation` job（Ubuntu ＋ `swift:6.0` 容器）會執行同一
 | `verify-audio-timeline-policy` | `HaishinKit/Sources/Mixer/AudioTimelinePolicy.swift` |
 | `verify-source-time-interval` | `HaishinKit/Sources/Util/SourceTimeAudit.swift` |
 | `verify-video-frame-filter` | `HaishinKit/Sources/Util/VideoFrameFilterState.swift` |
+| `verify-encoder-pressure` | `HaishinKit/Sources/Util/VideoEncoderPressureSnapshot.swift` |
 | `verify-av-content-sync` | `HaishinKit/Sources/Mixer/AVContentSyncAudit.swift` |
 | `verify-handshake` | `RTMPHaishinKit/Sources/RTMP/RTMPHandshake.swift` |
 | `verify-keepalive` | `RTMPHaishinKit/Sources/RTMP/RTMPKeepAlive.swift` |
