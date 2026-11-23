@@ -34,6 +34,31 @@ struct VideoFrameTraceTests {
         #expect(VideoFrameTrace.read(from: buffer) == nil)
     }
 
+    @Test("抓幀時間與來源可跨附件保留；沒有 host time 時標為 unknown")
+    func preservesCaptureHostTime() throws {
+        let buffer = try #require(CMVideoSampleBufferFactory.makeSampleBuffer(
+            width: 16, height: 16, presentationTimeStamp: CMTime(value: 12, timescale: 1)))
+        let trace = VideoFrameTrace(
+            session: "source", sequence: 7, sourcePTS: 12, handedPTS: 12,
+            handedUptime: 104, captureHostTime: 100, captureTimeSource: .displayTime)
+        trace.attachReceived(to: buffer)
+        let received = try #require(VideoFrameTrace.read(from: buffer))
+        #expect(received.captureHostTime == 100)
+        #expect(received.captureTimeSource == .displayTime)
+
+        let missing = VideoFrameTrace(
+            session: "source", sequence: 8, sourcePTS: 12, handedPTS: 12,
+            handedUptime: 104, captureHostTime: nil, captureTimeSource: .displayTime)
+        #expect(missing.captureHostTime == nil)
+        #expect(missing.captureTimeSource == .unknown)
+
+        let invalid = VideoFrameTrace(
+            session: "source", sequence: 9, sourcePTS: 12, handedPTS: 12,
+            handedUptime: 104, captureHostTime: .nan, captureTimeSource: .displayTime)
+        #expect(invalid.captureHostTime == nil)
+        #expect(invalid.captureTimeSource == .unknown)
+    }
+
     @Test("無效來源與接收 PTS 保持未知，不假造零或比較 NaN")
     func invalidPTSRemainUnknown() throws {
         let buffer = try #require(CMVideoSampleBufferFactory.makeSampleBuffer(width: 16, height: 16))
@@ -48,6 +73,16 @@ struct VideoFrameTraceTests {
         let decoded = try JSONDecoder().decode(VideoFrameTrace.self, from: JSONEncoder().encode(received))
         #expect(decoded.receivedPTS == nil)
         #expect(decoded.sequence == 1)
+    }
+
+    @Test("舊 trace JSON 缺少抓幀時間欄位仍可解碼")
+    func legacyTraceJSONDecodes() throws {
+        let json = #"{"session":"s","sequence":1,"sourcePTS":10,"handedPTS":11,"handedUptime":100}"#
+        let trace = try JSONDecoder().decode(VideoFrameTrace.self, from: Data(json.utf8))
+        #expect(trace.captureHostTime == nil)
+        #expect(trace.captureTimeSource == .unknown)
+        #expect(trace.sourcePTS == 10)
+        #expect(trace.handedUptime == 100)
     }
 
     @Test("舊編碼摘要缺少 trace 時保持未知")

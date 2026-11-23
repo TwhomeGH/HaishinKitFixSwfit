@@ -60,6 +60,36 @@ struct AVContentSyncAuditTests {
         #expect(abs(slope - 0.06) < 1e-6)
     }
 
+    @Test("媒體 PTS 對齊但抓幀時間較舊：contentOffset 為 0，videoAge 仍揭露內容延遲")
+    func hostTimeRevealsContentLagWhenMediaPTSAligns() {
+        var audit = AVContentSyncAudit(pairingWindow: 0.05)
+        // 內容在 100s 抓到，104s 才交給 mixer；媒體 PTS 已被標成 104s。
+        _ = audit.observe(kind: .video, handedPTS: 104, capturePTS: 104,
+                          captureHostTime: 100, captureTimeSource: .displayTime,
+                          arrival: 104)
+        _ = audit.observe(kind: .audio, handedPTS: 104, capturePTS: nil, arrival: 104.01)
+
+        #expect(abs((audit.lastHandedOffset ?? .nan)) < 1e-9)
+        #expect(abs((audit.lastContentOffset ?? .nan)) < 1e-9)
+        #expect(abs((audit.lastVideoAge ?? .nan) - 4) < 1e-9)
+        #expect(abs((audit.lastAgeSkew ?? .nan) - 3.99) < 1e-6)
+        #expect(audit.videoHostTimeSamples == 1)
+        #expect(audit.summary.contains("captureTime=hostTime"))
+        #expect(audit.summary.contains("captureTimeSources{displayTime=1}"))
+    }
+
+    @Test("抓幀時間優先於 sourcePTS 計算 videoAge")
+    func hostTimeTakesPrecedenceOverSourcePTS() {
+        var audit = AVContentSyncAudit(pairingWindow: 0.05)
+        _ = audit.observe(kind: .video, handedPTS: 104, capturePTS: 103,
+                          captureHostTime: 100, captureTimeSource: .presentationTime,
+                          arrival: 104)
+        _ = audit.observe(kind: .audio, handedPTS: 104, capturePTS: nil, arrival: 104.01)
+
+        #expect(abs((audit.lastContentOffset ?? .nan) - (-1)) < 1e-9)
+        #expect(abs((audit.lastVideoAge ?? .nan) - 4) < 1e-9)
+    }
+
     @Test("沒有來源抓幀時間時標示 captureTime=missing")
     func missingCaptureTime() {
         var audit = AVContentSyncAudit(pairingWindow: 0.05)
@@ -67,6 +97,7 @@ struct AVContentSyncAuditTests {
         _ = audit.observe(kind: .audio, handedPTS: 10, capturePTS: nil, arrival: 100.01)
 
         #expect(audit.videoCaptureTimeSamples == 0)
+        #expect(audit.videoHostTimeSamples == 0)
         #expect(audit.summary.contains("captureTime=missing"))
     }
 

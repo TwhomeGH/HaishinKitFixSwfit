@@ -268,6 +268,7 @@ accepted／rejected 事件，因此兩端差值不能直接當成排隊數。
 - ``VideoEncoderHealth``
 - ``VideoEncoderPressureSnapshot``
 - ``VideoEncoderTimingSample``
+- ``VideoFrameCaptureTimeSource``
 
 ## 上游同幀交付追蹤
 
@@ -337,17 +338,30 @@ arrivalUptime 一起判讀，不能直接當成 A/V 偏移。
 - `stage=mixerOutput`：混音後真正送進 encoder 的影音。要判斷輸出 A/V，看這一個。
 
 - `handedOffset`：兩軌實際交給 mixer／encoder 的 PTS 差（video − audio）。
-- `contentOffset`：優先用 `VideoFrameTrace.sourcePTS`（加工前抓幀時間）計算；
-  沒有來源時間時退化成 `handedOffset`，摘要標示 `captureTime=missing`。
-- `videoAge`／`audioAge`：`arrival − 抓幀時間`；`ageSkew = videoAge − audioAge`。
-  正值代表影片內容比音訊舊（聲音早、畫面晚）。
+- `contentOffset`：用媒體時間軸上的 `sourcePTS` 計算（video − audio）；
+  它證明兩條軌對齊，**不代表畫面內容是新的**。
+- `videoAge`／`audioAge`：`arrival − 抓幀時間`。`videoAge` 優先使用
+  `VideoFrameTrace.captureHostTime`（真正的抓幀／顯示時間），沒有時才退回
+  `sourcePTS`；`ageSkew = videoAge − audioAge`，正值代表影片內容比音訊舊。
 - `slopePerMin`：最近最多 600 對樣本的線性斜率；可看出偏移是固定還是持續惡化。
 
+摘要的 `captureTime` 有三種值：
+
+| 值 | 意義 |
+| --- | --- |
+| `hostTime` | 有真正的抓幀時間；`videoAge`／`ageSkew` 可信 |
+| `sourcePTS` | 只有媒體 PTS；可算 A/V 對齊，但**不能**據此宣稱內容同步 |
+| `missing` | 沒有可用時間；必須視為警告，不是「同步正常」 |
+
+`captureTimeSources{displayTime=…,presentationTime=…,handed=…,unknown=…}` 記錄每個來源
+的樣本數；`captureHostTimeSamples` 是真正有 host time 的影片樣本數。
+
 **要偵測「PTS 看起來正常、內容卻落後」**，上游必須在
-`VideoFrameTrace(sourcePTS:handedPTS:)` 填入真正的抓幀時間。若 PTS 直到編碼／交付時才
-產生，`videoAge` 會接近 0——這不是「同步正常」，而是「沒有可用的抓幀時間」，不能拿來
-宣稱內容同步已量測。輸出階段只有在 trace 附件沿著 mixer 傳遞時才會顯示
-`captureTime=sourcePTS`；遺失時同樣是 missing。離屏合成或其他未攜帶 trace 的路徑亦然。
+`VideoFrameTrace(captureHostTime:captureTimeSource:)` 填入真正的抓幀時間。若 PTS 直到
+編碼／交付時才產生，`videoAge` 會接近 0——這不是「同步正常」，而是「沒有可用的抓幀時間」。
+`sourcePTS` 只作為媒體 PTS 與 A/V 配對，不可拿來冒充抓幀時間。輸出階段只有在 trace
+附件沿著 mixer 傳遞時才會顯示 `captureTime=hostTime`；遺失時同樣是 missing／sourcePTS。
+離屏合成或其他未攜帶 trace 的路徑亦然。
 
 `MediaMixer.contentSyncDiagnostics()` 回傳入口摘要；
 `MediaMixer.outputContentSyncDiagnostics()` 回傳混音輸出摘要。此審計只觀測，

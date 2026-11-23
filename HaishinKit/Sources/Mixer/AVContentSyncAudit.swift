@@ -7,13 +7,15 @@ import Foundation
 /// 捏造 offset。
 ///
 /// - `handedOffset`：兩軌實際交給 mixer 的 PTS 差（video − audio）。
-/// - `contentOffset`：優先用 `VideoFrameTrace.sourcePTS`（加工前來源時間）計算；
-///   沒有來源時間時退化成 `handedOffset`，並在摘要標示 `captureTime=missing`。
+/// - `contentOffset`：用媒體時間軸上的 `sourcePTS` 計算（video − audio）；
+///   沒有來源媒體 PTS 時退化成 `handedOffset`。
+/// - `videoAge`：優先用真正的抓幀時間 `captureHostTime`（與 arrival 同一 systemUptime
+///   時鐘）；沒有時才退回 `sourcePTS`，並在摘要標示來源。
 /// - `ageSkew`：`videoAge − audioAge`，正值代表影片內容比音訊舊（聲音早、畫面晚）。
 ///
-/// 要偵測「PTS 看起來正常、內容卻落後」的延遲，上游必須把真正的抓幀時間放進
-/// `VideoFrameTrace.sourcePTS`。若 PTS 是在編碼時才產生，`videoAge` 會接近 0，
-/// 這個審計無法從時間戳看出內容延遲——那正是 `captureTime=missing` 的訊號。
+/// PTS 看起來正常不代表畫面是新的：`sourcePTS` 只證明兩條軌對齊；內容延遲要看
+/// `captureHostTime`。上游若沒有提供真正的抓幀時間，這個審計只能標示
+/// `captureTime=missing`，不能宣稱內容同步。
 struct AVContentSyncAudit {
     enum Kind: String {
         case video
@@ -50,6 +52,8 @@ struct AVContentSyncAudit {
     private(set) var unpairedVideo: UInt64 = 0
     private(set) var unpairedAudio: UInt64 = 0
     private(set) var videoCaptureTimeSamples: UInt64 = 0
+    private(set) var videoHostTimeSamples: UInt64 = 0
+    private(set) var captureTimeSourceCounts: [VideoFrameCaptureTimeSource: UInt64] = [:]
     private(set) var lastHandedOffset: Double?
     private(set) var lastContentOffset: Double?
     private(set) var lastVideoAge: Double?
@@ -59,6 +63,8 @@ struct AVContentSyncAudit {
     private struct Sample {
         let handedPTS: Double
         let capturePTS: Double?
+        let captureHostTime: Double?
+        let captureTimeSource: VideoFrameCaptureTimeSource
         let arrival: Double
     }
 
@@ -84,17 +90,24 @@ struct AVContentSyncAudit {
     /// 觀測一筆入口樣本。
     /// - Parameters:
     ///   - kind: 影片或音訊。
-    ///   - handedPTS: 實際交給 mixer 的 PTS（秒）。
-    ///   - capturePTS: 加工前來源時間；只有影片的 `VideoFrameTrace.sourcePTS` 會提供。
+    ///   - handedPTS: 實際交給 mixer 的媒體 PTS（秒）。
+    ///   - capturePTS: 加工前來源媒體 PTS；只有影片的 `VideoFrameTrace.sourcePTS` 會提供。
+    ///   - captureHostTime: 真正的抓幀／顯示時間，必須與 `arrival` 同時鐘。
+    ///   - captureTimeSource: `captureHostTime` 的來源；沒有值時為 `.unknown`。
     ///   - arrival: 同一程序的單調到達時間（秒）。
     /// - Returns: 需要輸出日誌時的摘要；其餘回傳 nil。
-    mutating func observe(kind: Kind, handedPTS: Double, capturePTS: Double?, arrival: Double) -> String? {
+    mutating func observe(kind: Kind, handedPTS: Double, capturePTS: Double?,
+                          captureHostTime: Double? = nil,
+                          captureTimeSource: VideoFrameCaptureTimeSource = .unknown,
+                          arrival: Double) -> String? {
         guard handedPTS.isFinite, arrival.isFinite else {
             return nil
         }
         let sample = Sample(
             handedPTS: handedPTS,
             capturePTS: capturePTS.flatMap { $0.isFinite ? $0 : nil },
+            captureHostTime: captureHostTime.flatMap { $0.isFinite ? $0 : nil },
+            captureTimeSource: captureTimeSource,
             arrival: arrival
         )
 
@@ -104,6 +117,10 @@ struct AVContentSyncAudit {
             if sample.capturePTS != nil {
                 videoCaptureTimeSamples &+= 1
             }
+            if sample.captureHostTime != nil {
+                videoHostTimeSamples &+= 1
+            }
+            captureTimeSourceCounts[sample.captureTimeSource, default: 0] &+= 1
             expireVideo(now: arrival)
             if let index = bestAudioIndex(for: arrival) {
                 record(video: sample, audio: audioPending.remove(at: index))
@@ -145,7 +162,13 @@ struct AVContentSyncAudit {
     var ageSkewStats: Stats? { stats(\.ageSkew) }
 
     var summary: String {
-        "paired=\(paired) videoSamples=\(videoSamples) audioSamples=\(audioSamples) unpairedVideo=\(unpairedVideo) unpairedAudio=\(unpairedAudio) pairingWindow=\(String(format: "%.4f", pairingWindow)) captureTime=\(videoCaptureTimeSamples > 0 ? "sourcePTS" : "missing") handedOffset{\(handedOffsetStats?.description ?? "unknown")} contentOffset{\(contentOffsetStats?.description ?? "unknown")} videoAge{\(videoAgeStats?.description ?? "unknown")} audioAge{\(audioAgeStats?.description ?? "unknown")} ageSkew{\(ageSkewStats?.description ?? "unknown")} action=observeOnly timestampChanged=none clockComparison=unverified"
+        let sources = captureTimeSourceCounts.keys
+            .sorted { $0.rawValue < $1.rawValue }
+            .map { "\($0.rawValue)=\(captureTimeSourceCounts[$0]!)" }
+            .joined(separator: ",")
+        let captureTime = videoHostTimeSamples > 0
+            ? "hostTime" : (videoCaptureTimeSamples > 0 ? "sourcePTS" : "missing")
+        return "paired=\(paired) videoSamples=\(videoSamples) audioSamples=\(audioSamples) unpairedVideo=\(unpairedVideo) unpairedAudio=\(unpairedAudio) pairingWindow=\(String(format: "%.4f", pairingWindow)) captureTime=\(captureTime) captureHostTimeSamples=\(videoHostTimeSamples) captureTimeSources{\(sources)} handedOffset{\(handedOffsetStats?.description ?? "unknown")} contentOffset{\(contentOffsetStats?.description ?? "unknown")} videoAge{\(videoAgeStats?.description ?? "unknown")} audioAge{\(audioAgeStats?.description ?? "unknown")} ageSkew{\(ageSkewStats?.description ?? "unknown")} action=observeOnly timestampChanged=none clockComparison=unverified"
     }
 
     private func stats(_ keyPath: KeyPath<Pair, Double>) -> Stats? {
@@ -174,14 +197,14 @@ struct AVContentSyncAudit {
     }
 
     private mutating func record(video: Sample, audio: Sample) {
-        let videoCapture = video.capturePTS ?? video.handedPTS
+        let videoCapturePTS = video.capturePTS ?? video.handedPTS
         let audioCapture = audio.capturePTS ?? audio.handedPTS
-        let videoAge = video.arrival - videoCapture
+        let videoAge = video.arrival - (video.captureHostTime ?? videoCapturePTS)
         let audioAge = audio.arrival - audioCapture
         let pair = Pair(
             time: (video.arrival + audio.arrival) / 2,
             handedOffset: video.handedPTS - audio.handedPTS,
-            contentOffset: videoCapture - audioCapture,
+            contentOffset: videoCapturePTS - audioCapture,
             videoAge: videoAge,
             audioAge: audioAge,
             ageSkew: videoAge - audioAge

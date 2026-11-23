@@ -47,6 +47,7 @@ HARNESSES: dict[str, list[str]] = {
         ".cortexkit/verify-encoder-pressure.swift",
     ],
     "av-content-sync": [
+        "HaishinKit/Sources/Util/VideoFrameCaptureTimeSource.swift",
         "HaishinKit/Sources/Mixer/AVContentSyncAudit.swift",
         ".cortexkit/verify-av-content-sync.swift",
     ],

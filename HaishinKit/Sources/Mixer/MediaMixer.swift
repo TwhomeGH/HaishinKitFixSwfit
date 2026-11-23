@@ -288,7 +288,10 @@ public final actor MediaMixer {
         case .video?:
             auditSourceTime(sampleBuffer, media: "video", track: track)
             if track == videoMixerSettings.mainTrack {
-                auditContentSync(sampleBuffer, media: .video, track: track, capturePTS: videoTrace?.sourcePTS)
+                auditContentSync(sampleBuffer, media: .video, track: track,
+                                 capturePTS: videoTrace?.sourcePTS,
+                                 captureHostTime: videoTrace?.captureHostTime,
+                                 captureTimeSource: videoTrace?.captureTimeSource ?? .unknown)
             }
             if let videoTrace {
                 videoTrace.attachReceived(to: sampleBuffer)
@@ -377,7 +380,9 @@ public final actor MediaMixer {
         _ buffer: CMSampleBuffer,
         media: AVContentSyncAudit.Kind,
         track: UInt8,
-        capturePTS: Double? = nil
+        capturePTS: Double? = nil,
+        captureHostTime: Double? = nil,
+        captureTimeSource: VideoFrameCaptureTimeSource = .unknown
     ) {
         let time = buffer.presentationTimeStamp
         guard time.isValid, time.seconds.isFinite else {
@@ -387,6 +392,8 @@ public final actor MediaMixer {
             kind: media,
             handedPTS: time.seconds,
             capturePTS: capturePTS,
+            captureHostTime: captureHostTime,
+            captureTimeSource: captureTimeSource,
             arrival: ProcessInfo.processInfo.systemUptime
         )
         guard let report else {

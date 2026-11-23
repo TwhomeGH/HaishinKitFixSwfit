@@ -1,7 +1,8 @@
 // Verification of AVContentSyncAudit (HaishinKit/Sources/Mixer/AVContentSyncAudit.swift)
 // on non-Apple platforms. Compiled together with the real source file:
 //
-//   swiftc HaishinKit/Sources/Mixer/AVContentSyncAudit.swift \
+//   swiftc HaishinKit/Sources/Util/VideoFrameCaptureTimeSource.swift \
+//          HaishinKit/Sources/Mixer/AVContentSyncAudit.swift \
 //          .cortexkit/verify-av-content-sync.swift -o .cortexkit/verify-av-content-sync.exe
 //
 // Covers: arrival-window pairing, handed/content offset separation, capture-time
@@ -57,6 +58,20 @@ struct VerifyAVContentSync {
             expect(close(audit.lastVideoAge, 4), "videoAge = arrival - capturePTS")
             expect(close(audit.lastAgeSkew, 3.99, 1e-6), "ageSkew = videoAge - audioAge")
             expect(audit.summary.contains("captureTime=sourcePTS"), "summary reports sourcePTS")
+        }
+
+        // 3b. Media PTS align, but the real capture time is 4s old: ageSkew catches it.
+        do {
+            var audit = AVContentSyncAudit(pairingWindow: 0.05)
+            _ = audit.observe(kind: .video, handedPTS: 104, capturePTS: 104,
+                              captureHostTime: 100, captureTimeSource: .displayTime,
+                              arrival: 104)
+            _ = audit.observe(kind: .audio, handedPTS: 104, capturePTS: nil, arrival: 104.01)
+            expect(close(audit.lastContentOffset, 0), "media PTS look aligned")
+            expect(close(audit.lastVideoAge, 4), "videoAge uses captureHostTime")
+            expect(close(audit.lastAgeSkew, 3.99, 1e-6), "ageSkew exposes real content lag")
+            expect(audit.summary.contains("captureTime=hostTime"), "summary reports hostTime")
+            expect(audit.summary.contains("captureTimeSources{displayTime=1}"), "summary reports displayTime")
         }
 
         // 4. Missing capture time falls back to handed PTS and says so.
