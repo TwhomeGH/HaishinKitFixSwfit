@@ -117,6 +117,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # SwiftPM 依賴（含 swift-docc-plugin）用匿名 git clone；GitHub 對 hosted
+      # runner 的匿名請求可能要求登入。用本次 workflow token 覆寫 GitHub URL，
+      # 避免文件相依把 RTC build 一起拖垮。
+      - name: Authenticate SwiftPM GitHub dependencies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+
       - name: Print toolchain
         run: |
           xcode-select -p
