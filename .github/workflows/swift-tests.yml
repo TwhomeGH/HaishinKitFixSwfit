@@ -126,6 +126,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config --global url."https://x-access-token:${GH_TOKEN}@github.com/swiftlang/".insteadOf "https://github.com/swiftlang/"
+          # binaryTarget 下載走 URLSession；提供 netrc，讓 GitHub 可以辨識本次
+          # workflow 而不是匿名 CDN 請求。
+          printf 'machine github.com login x-access-token password %s\n' "${GH_TOKEN}" > "${HOME}/.netrc"
+          chmod 600 "${HOME}/.netrc"
 
       # binaryTarget 約 101 MB；快取成功下載的 artifacts，避免每次重抓。
       - name: Cache SwiftPM artifacts and repositories
