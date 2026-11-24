@@ -14,6 +14,8 @@
 | `RTCHaishinKit build + tests` | **INFRA-BLOCKED**（2026-11-24） | `rtc-macos-build.log` 在編譯前出現 SwiftPM dependency download／clone 失敗，且 `build-exit-code != 0`；不是 RTC 原始碼回歸 | 下一個工作日重試；成功後移除此列 |
 
 - `netrc`、artifact 快取、每次 10 分鐘上限＋重試已加；job 仍保持失敗，不把 infra 失敗顯示成綠燈。
+- 下載順序已改為一個 Apple job 先跑：`macos-build` 先解析依賴並把 `.build/artifacts`／`.build/repositories` 存入快取；`rtc-tests`、`rtmp-tests`、HaishinKit jobs 都 `needs` 它並還原同一份快取，避免每個 job 各自重抓約 101 MB，也避免 RTMP 與 RTC 同時下載。
+- 若 `macos-build` 本身在下載階段失敗，後續 Apple jobs 會被跳過；這是刻意的單一下載點，失敗時重試 `macos-build`，不要讓每個 job 各自碰運氣。
 - RTC 空 SDP 修正（`95defc1b`）尚未被任何綠燈 run 驗證；在 RTC job 成功前不可宣稱已修復。
 - 其他 job（Foundation harness、RTMP macOS／iOS、HaishinKit macOS／iOS／TSan）不受此項影響；A1–A6 不因 RTC infra 失敗而停等。
 

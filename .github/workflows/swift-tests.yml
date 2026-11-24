@@ -32,6 +32,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # 第一個 Apple job 下載 binaryTarget 並存入快取；後續 job 只還原，
+      # 避免每個 job 都重抓約 101 MB。
+      - name: Cache SwiftPM artifacts and repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/artifacts
+            .build/repositories
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
       - name: Build RTMPHaishinKit for macOS
         shell: bash
         run: |
@@ -112,6 +124,9 @@ jobs:
     name: RTCHaishinKit build + tests
     runs-on: xcode-27
     timeout-minutes: 45
+    # 等 macos-build 把 binaryTarget 存入快取後再開始，避免兩個 job 同時下載
+    # 同一批 101 MB artifacts。
+    needs: macos-build
 
     steps:
       - name: Checkout
@@ -244,6 +259,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Cache SwiftPM artifacts and repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/artifacts
+            .build/repositories
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
 
       - name: Print toolchain
         run: |
@@ -396,6 +421,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Cache SwiftPM artifacts and repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/artifacts
+            .build/repositories
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
       - name: Print toolchain
         run: |
           xcode-select -p
@@ -544,6 +579,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Cache SwiftPM artifacts and repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/artifacts
+            .build/repositories
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
 
       - name: Print toolchain
         run: |
@@ -699,6 +744,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Cache SwiftPM artifacts and repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/artifacts
+            .build/repositories
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
 
       - name: Print toolchain
         run: |
