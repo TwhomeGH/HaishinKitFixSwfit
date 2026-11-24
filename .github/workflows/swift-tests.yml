@@ -191,6 +191,9 @@ jobs:
         if: always()
         shell: bash
         run: |
+          build_exit="$(cat .build/rtc-test-results/build-exit-code 2>/dev/null || echo missing)"
+          build_log=".build/rtc-test-results/rtc-macos-build.log"
+          infra_blocked=0
           {
             echo "### RTCHaishinKit build + tests"
             echo
@@ -207,7 +210,22 @@ jobs:
             echo '```'
             echo
             echo "</details>"
+            echo
+            if [ "${build_exit}" != "0" ] && [ -f "${build_log}" ] && grep -qE 'Downloading binary artifact|Failed to clone repository|could not read Username|\[rtc-build\] timed out|binary target .* could not be mapped' "${build_log}"; then
+              infra_blocked=1
+              echo
+              echo "### RTC job: INFRA-BLOCKED"
+              echo
+              echo "SwiftPM 依賴在下載／clone 階段失敗，尚未進入編譯；這不是 RTC 原始碼回歸。"
+              echo
+              echo "- 證據：\`rtc-macos-build.log\`，build exit \`${build_exit}\`。"
+              echo "- 狀態與重試條件：\`Docs/TODO.md\` 的「CI 狀態」。"
+              echo "- 此 job 仍保持失敗，不把 infra 失敗冒充成綠燈。"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
+          if [ "${infra_blocked}" = "1" ]; then
+            echo "::warning title=RTC infra-blocked::SwiftPM dependency download failed before compilation; not a code regression."
+          fi
 
       - name: Upload RTCHaishinKit logs
         if: always()

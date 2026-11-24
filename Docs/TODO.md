@@ -5,6 +5,18 @@
 
 以下狀態核對於 2026-11-22，包含底層提交 `d75f53e3`。舊更新歷史中的「待 CI」是當時狀態，不據此推定所有舊項目至今都未通過。
 
+## CI 狀態
+
+狀態核對：2026-11-24。這節只記 CI 基礎設施狀態，不是功能驗收。
+
+| Job | 狀態 | 判定條件 | 重試 |
+|---|---|---|---|
+| `RTCHaishinKit build + tests` | **INFRA-BLOCKED**（2026-11-24） | `rtc-macos-build.log` 在編譯前出現 SwiftPM dependency download／clone 失敗，且 `build-exit-code != 0`；不是 RTC 原始碼回歸 | 下一個工作日重試；成功後移除此列 |
+
+- `netrc`、artifact 快取、每次 10 分鐘上限＋重試已加；job 仍保持失敗，不把 infra 失敗顯示成綠燈。
+- RTC 空 SDP 修正（`95defc1b`）尚未被任何綠燈 run 驗證；在 RTC job 成功前不可宣稱已修復。
+- 其他 job（Foundation harness、RTMP macOS／iOS、HaishinKit macOS／iOS／TSan）不受此項影響；A1–A6 不因 RTC infra 失敗而停等。
+
 ## 二進位依賴盤點後續
 
 - [ ] **SRT／RTC 依賴修正適用性與封裝來源**：第一輪盤點與第二輪升級路徑核對見 [二進位依賴盤點](./BINARY_DEPENDENCY_AUDIT.md)。libdatachannel v0.24.7／libsrt v1.5.7 已改為共享 OpenSSL-Package，必須成對升級；尚未升級，不能以下載／checksum 通過當作安全或可用性驗收。
