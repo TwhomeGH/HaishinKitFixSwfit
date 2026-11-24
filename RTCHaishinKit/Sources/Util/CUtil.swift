@@ -5,6 +5,7 @@ enum CUtil {
         _ lambda: (UnsafeMutablePointer<CChar>?, Int32) -> Int32
     ) throws -> String {
         let size = try RTCError.check(lambda(nil, 0))
+        guard 0 < size else { return "" }
         var buffer = [CChar](repeating: 0, count: Int(size))
         _ = lambda(&buffer, Int32(size))
         return String(cString: &buffer)

@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.24 08:04 RTC offer 空 SDP 與生命週期測試序列化
+
+- RTC CI 的 `createsOfferWithDataChannelThenCloses` 收到空 offer（`v=0`／`m=` 不存在），不是 A1 造成；libdatachannel 在 data channel 剛註冊時可能先回傳空 SDP。
+- `CUtil.getString` 對 `size <= 0` 直接回空字串，避免建立零長度 C 緩衝區；`RTCPeerConnection.createSDP` 對空值／`notAvail` 做 10 次、每次 10ms 的有限重試，仍失敗才丟 `notAvail`，不再回傳空 SDP。
+- `RTCPeerConnectionLifecycleTests` 改為 `.serialized`，避免 32 次建立／釋放的壓力測試與 offer 建立並行競爭。
+- 驗證：語法檢查通過；實際 libdatachannel 行為待下一次 `rtc-tests` CI。
+
 ## 2026.11.24 07:35 A1：區分媒體 PTS 與真正抓幀時間
 
 - `VideoFrameTrace` 新增 `captureHostTime` 與 `captureTimeSource`（Foundation-only `VideoFrameCaptureTimeSource`）；`sourcePTS` 仍是媒體 PTS，用於 A/V 配對。

@@ -267,15 +267,36 @@ a=fmtp:98 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
     }
 
     public func createOffer() throws -> String {
-        return try CUtil.getString { buffer, size in
+        try createSDP { buffer, size in
             rtcCreateOffer(connection, buffer, size)
         }
     }
 
     public func createAnswer() throws -> String {
-        return try CUtil.getString { buffer, size in
+        try createSDP { buffer, size in
             rtcCreateAnswer(connection, buffer, size)
         }
+    }
+
+    /// libdatachannel 在 data channel 剛註冊時可能先回傳空 SDP；短暫重試，
+    /// 但不無限等待，也不把空字串當成有效 offer／answer。
+    private func createSDP(
+        _ lambda: (UnsafeMutablePointer<CChar>?, Int32) -> Int32
+    ) throws -> String {
+        for attempt in 0..<10 {
+            do {
+                let value = try CUtil.getString(lambda)
+                if !value.isEmpty {
+                    return value
+                }
+            } catch let error as RTCError where error.rawValue == RTCError.notAvail.rawValue {
+                // libdatachannel 可能尚未準備好；留給下一次重試。
+            }
+            if attempt < 9 {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+        }
+        throw RTCError.notAvail
     }
 
     public func createDataChannel(_ label: String) throws -> RTCDataChannel {

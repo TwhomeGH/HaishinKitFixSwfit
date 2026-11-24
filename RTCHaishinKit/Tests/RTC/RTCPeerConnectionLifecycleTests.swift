@@ -8,7 +8,7 @@ import Testing
 ///
 /// 這一層需要 Apple 平台與 libdatachannel 二進位；純 Swift 的 RTP／SDP
 /// 測試無法覆蓋 C 物件的建立與釋放，因此另外放在此檔案。
-@Suite struct RTCPeerConnectionLifecycleTests {
+@Suite(.serialized) struct RTCPeerConnectionLifecycleTests {
     /// 建立 data channel 後應能產生非空的本地 offer。
     @Test func createsOfferWithDataChannelThenCloses() throws {
         let peerConnection = try RTCPeerConnection()
