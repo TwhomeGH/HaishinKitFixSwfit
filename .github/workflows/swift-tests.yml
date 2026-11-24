@@ -118,14 +118,25 @@ jobs:
         uses: actions/checkout@v5
 
       # SwiftPM 依賴（含 swift-docc-plugin）用匿名 git clone；GitHub 對 hosted
-      # runner 的匿名請求可能要求登入。用本次 workflow token 覆寫 GitHub URL，
-      # 避免文件相依把 RTC build 一起拖垮。
+      # runner 的匿名請求可能要求登入。只覆寫 swiftlang 文件相依，避免影響
+      # HaishinKit 的 binary artifact URL。
       - name: Authenticate SwiftPM GitHub dependencies
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/swiftlang/".insteadOf "https://github.com/swiftlang/"
+
+      # binaryTarget 約 101 MB；快取成功下載的 artifacts，避免每次重抓。
+      - name: Cache SwiftPM artifacts and repositories
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/artifacts
+            .build/repositories
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
 
       - name: Print toolchain
         run: |
@@ -134,12 +145,13 @@ jobs:
           swift --version
 
       # 只建置 RTC 目標：可單獨暴露 libdatachannel 標頭／符號漂移，不必等整個測試流程。
+      # 網路卡住時不要吃掉 45 分鐘 job timeout：每次最多 10 分鐘，最多兩次。
       - name: Build RTCHaishinKit for macOS
         shell: bash
         run: |
           set +e
           mkdir -p .build/rtc-test-results
-          swift build --target RTCHaishinKit 2>&1 | tee .build/rtc-test-results/rtc-macos-build.log
+          python3 .github/scripts/run_rtc_build.py 2>&1 | tee .build/rtc-test-results/rtc-macos-build.log
           status=${PIPESTATUS[0]}
           echo "${status}" > .build/rtc-test-results/build-exit-code
           if [ "${status}" -ne 0 ]; then
