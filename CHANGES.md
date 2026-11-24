@@ -1,5 +1,11 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.24 10:06 VideoFrameTrace Codable 改用 any Decoder／any Encoder
+
+- 修正 Swift 6 警告：`VideoFrameTrace` 的 `init(from:)`／`encode(to:)` 把協定當型別使用；改寫為 `any Decoder`／`any Encoder`，未來語言模式不會升級成錯誤。
+- 編碼內容與舊 JSON 解碼行為不變；`sourcePTS`、`captureHostTime`、`captureTimeSource` 等欄位語意不變。
+- 驗證：`swiftc -parse` 通過；實際 Codable 來回待 Apple CI 的既有 `VideoFrameTraceTests`。
+
 ## 2026.11.24 08:04 RTC offer 空 SDP 與生命週期測試序列化
 
 - RTC CI 的 `createsOfferWithDataChannelThenCloses` 收到空 offer（`v=0`／`m=` 不存在），不是 A1 造成；libdatachannel 在 data channel 剛註冊時可能先回傳空 SDP。

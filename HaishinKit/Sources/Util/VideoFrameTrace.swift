@@ -51,7 +51,7 @@ public struct VideoFrameTrace: Codable, Sendable {
     }
 
     /// 舊 JSON 沒有抓幀時間欄位時解為未知，不讓新增欄位破壞既有診斷報告。
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         session = try container.decode(String.self, forKey: .session)
         sequence = try container.decode(UInt64.self, forKey: .sequence)
@@ -64,7 +64,7 @@ public struct VideoFrameTrace: Codable, Sendable {
         receivedUptime = try container.decodeIfPresent(Double.self, forKey: .receivedUptime)
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(session, forKey: .session)
         try container.encode(sequence, forKey: .sequence)
