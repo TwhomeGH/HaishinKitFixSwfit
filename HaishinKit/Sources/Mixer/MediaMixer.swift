@@ -334,11 +334,13 @@ public final actor MediaMixer {
         guard time.isValid, time.seconds.isFinite else {
             return
         }
-        let capturePTS = VideoFrameTrace.read(from: buffer)?.sourcePTS
+        let trace = VideoFrameTrace.read(from: buffer)
         let report = outputContentSyncAudit.observe(
             kind: .video,
             handedPTS: time.seconds,
-            capturePTS: capturePTS,
+            capturePTS: trace?.sourcePTS,
+            captureHostTime: trace?.captureHostTime,
+            captureTimeSource: trace?.captureTimeSource ?? .unknown,
             arrival: ProcessInfo.processInfo.systemUptime
         )
         logContentSyncOutput(report, media: "video")

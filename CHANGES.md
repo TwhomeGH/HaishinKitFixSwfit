@@ -11,7 +11,7 @@
 
 - `VideoFrameTrace` 新增 `captureHostTime` 與 `captureTimeSource`（Foundation-only `VideoFrameCaptureTimeSource`）；`sourcePTS` 仍是媒體 PTS，用於 A/V 配對。
 - `AVContentSyncAudit` 的 `videoAge`／`ageSkew` 優先用真正的抓幀時間；`contentOffset` 仍用媒體 PTS，兩者不再混淆。摘要新增 `captureTime=hostTime|sourcePTS|missing`、`captureHostTimeSamples`、`captureTimeSources{...}`。
-- `MediaMixer` 入口把 trace 的抓幀時間傳入 audit；輸出階段沿用附件。
+- `MediaMixer` 入口把 trace 的抓幀時間傳入 audit；輸出階段改讀 trace 的 `captureHostTime`，附件缺失時退回 `captureTime=missing`。
 - 新增 `VideoFrameCaptureTimeSource.swift`，讓內容同步純邏輯可在非 Apple 平台驗證；`verify-av-content-sync` 加入 host-time 案例。
 - 驗證：Windows harness 全數通過、`swiftc -parse` 通過；Apple 編譯、SCK `displayTime` 實機與 motion fixture 待 CI／裝置驗收。這是 A1；A2 的依內容年齡丟棄與 A3 的 flush 事件尚未實作。
 
