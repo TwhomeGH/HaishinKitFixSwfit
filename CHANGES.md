@@ -1,5 +1,12 @@
 # HaishinKitFixSwfit — 改動說明
 
+## 2026.11.24 10:30 CI：SwiftPM 依賴單次下載與全域快取
+
+- `macos-build` 成為唯一下載點：先解析依賴，再把 `.build/artifacts`、`.build/repositories` 與 SwiftPM 全域快取 `~/Library/Caches/org.swift.swiftpm` 存入 Actions cache。
+- `rtc-tests`、`rtmp-tests`、HaishinKit macOS／iOS 與 TSan 都 `needs: macos-build` 並還原同一份 `swiftpm-v2-*` 快取；RTC 在 RTMP 編譯後才啟動，不再同時重抓約 101 MB。
+- 根因：只快取 `.build/artifacts` 時，SwiftPM 仍會檢查全域 binary artifact 下載快取；94 MB 快取命中後日誌仍出現 `Downloading binary artifact`（沒有 `from cache`），代表缺的是 `~/Library/Caches/org.swift.swiftpm`。
+- 驗證：Swift Tests run `45310825713` 八個 job 全綠，含 `RTCHaishinKit build + tests`；空 SDP 重試與 `RTCPeerConnectionLifecycleTests` 序列化已生效。
+
 ## 2026.11.24 10:06 VideoFrameTrace Codable 改用 any Decoder／any Encoder
 
 - 修正 Swift 6 警告：`VideoFrameTrace` 的 `init(from:)`／`encode(to:)` 把協定當型別使用；改寫為 `any Decoder`／`any Encoder`，未來語言模式不會升級成錯誤。
@@ -11,7 +18,7 @@
 - RTC CI 的 `createsOfferWithDataChannelThenCloses` 收到空 offer（`v=0`／`m=` 不存在），不是 A1 造成；libdatachannel 在 data channel 剛註冊時可能先回傳空 SDP。
 - `CUtil.getString` 對 `size <= 0` 直接回空字串，避免建立零長度 C 緩衝區；`RTCPeerConnection.createSDP` 對空值／`notAvail` 做 10 次、每次 10ms 的有限重試，仍失敗才丟 `notAvail`，不再回傳空 SDP。
 - `RTCPeerConnectionLifecycleTests` 改為 `.serialized`，避免 32 次建立／釋放的壓力測試與 offer 建立並行競爭。
-- 驗證：語法檢查通過；實際 libdatachannel 行為待下一次 `rtc-tests` CI。
+- 驗證：語法檢查通過；`rtc-tests` 於 run `45310825713` 成功，空 SDP 重試與測試序列化已生效。
 
 ## 2026.11.24 07:35 A1：區分媒體 PTS 與真正抓幀時間
 
@@ -19,7 +26,7 @@
 - `AVContentSyncAudit` 的 `videoAge`／`ageSkew` 優先用真正的抓幀時間；`contentOffset` 仍用媒體 PTS，兩者不再混淆。摘要新增 `captureTime=hostTime|sourcePTS|missing`、`captureHostTimeSamples`、`captureTimeSources{...}`。
 - `MediaMixer` 入口把 trace 的抓幀時間傳入 audit；輸出階段改讀 trace 的 `captureHostTime`，附件缺失時退回 `captureTime=missing`。
 - 新增 `VideoFrameCaptureTimeSource.swift`，讓內容同步純邏輯可在非 Apple 平台驗證；`verify-av-content-sync` 加入 host-time 案例。
-- 驗證：Windows harness 全數通過、`swiftc -parse` 通過；Apple 編譯、SCK `displayTime` 實機與 motion fixture 待 CI／裝置驗收。這是 A1；A2 的依內容年齡丟棄與 A3 的 flush 事件尚未實作。
+- 驗證：Windows harness 全數通過、`swiftc -parse` 通過；Apple 編譯與 SCK `displayTime` 實機由後續 run 驗證。這是 A1；A2 的依內容年齡丟棄與 A3 的 flush 事件尚未實作。
 
 ## 2026.11.24 06:42 新增編碼壓力快照（encoderPressure）
 
